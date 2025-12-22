@@ -32,7 +32,11 @@ impl Command for UniversalArgument {
     fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
         // If already in universal argument mode, multiply by 4
         if app.universal_argument.is_some() {
-            app.universal_argument = Some(app.universal_argument.unwrap_or(1) * 4);
+            let current = match app.universal_argument {
+                Some(v) => v,
+                None => 1,
+            };
+            app.universal_argument = Some(current * 4);
         } else {
             // First C-u sets to 4
             app.universal_argument = Some(4);

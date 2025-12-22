@@ -11,13 +11,16 @@ pub struct PrintCommand;
 impl Command for PrintCommand {
     fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
         // Check if lpr exists
-        let lpr_exists = ShellCommand::new("which")
+        let lpr_exists = match ShellCommand::new("which")
             .arg("lpr")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
             .map(|s| s.success())
-            .unwrap_or(false);
+        {
+            Ok(v) => v,
+            Err(_) => false,
+        };
 
         if !lpr_exists {
             app.message = Some("No printer driver available".to_string());

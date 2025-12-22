@@ -181,9 +181,10 @@ impl Command for DiffAcceptHunk {
             // Apply hunk to original buffer
             if let Some(start_byte) = buffer.line_to_byte(hunk.start_line) {
                 let end_line_plus_one = hunk.end_line + 1;
-                let end_byte = buffer
-                    .line_to_byte(end_line_plus_one)
-                    .unwrap_or_else(|| buffer.len());
+                let end_byte = match buffer.line_to_byte(end_line_plus_one) {
+                    Some(b) => b,
+                    None => buffer.len(),
+                };
 
                 buffer.delete(start_byte, end_byte - start_byte);
 

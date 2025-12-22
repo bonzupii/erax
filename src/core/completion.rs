@@ -89,13 +89,16 @@ impl WordCompleter {
         let content = buffer.to_string();
 
         // Find word start by scanning backwards from cursor
-        let prefix_start = content[..cursor_byte]
+        let prefix_start = match content[..cursor_byte]
             .char_indices()
             .rev()
             .take_while(|(_, c)| c.is_ascii_alphanumeric() || *c == '_')
             .last()
             .map(|(i, _)| i)
-            .unwrap_or(cursor_byte);
+        {
+            Some(i) => i,
+            None => cursor_byte,
+        };
 
         if prefix_start >= cursor_byte {
             return Vec::new();

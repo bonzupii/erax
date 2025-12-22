@@ -114,8 +114,14 @@ impl Command for JustifyParagraph {
                 }
 
                 // 6. Apply changes to buffer
-                let start_byte = buffer.line_to_byte(start_line).unwrap_or(0);
-                let end_byte = buffer.line_to_byte(end_line).unwrap_or(buffer.len());
+                let start_byte = match buffer.line_to_byte(start_line) {
+                    Some(b) => b,
+                    None => 0,
+                };
+                let end_byte = match buffer.line_to_byte(end_line) {
+                    Some(b) => b,
+                    None => buffer.len(),
+                };
 
                 // Delete old paragraph
                 let delete_len = end_byte - start_byte;
@@ -154,10 +160,11 @@ impl Command for DeleteBlankLines {
                 app.buffers.get_mut(&buffer_id),
             ) {
                 let current_line = window.cursor_y;
-                let is_current_blank = buffer
-                    .line(current_line)
-                    .map(|l| l.trim().is_empty())
-                    .unwrap_or(true);
+                let is_current_blank = match buffer.line(current_line).map(|l| l.trim().is_empty())
+                {
+                    Some(b) => b,
+                    None => true,
+                };
 
                 let mut start_line = current_line;
                 if is_current_blank {
@@ -184,8 +191,14 @@ impl Command for DeleteBlankLines {
                 }
 
                 if end_line > start_line {
-                    let start_byte = buffer.line_to_byte(start_line).unwrap_or(0);
-                    let end_byte = buffer.line_to_byte(end_line).unwrap_or(buffer.len());
+                    let start_byte = match buffer.line_to_byte(start_line) {
+                        Some(b) => b,
+                        None => 0,
+                    };
+                    let end_byte = match buffer.line_to_byte(end_line) {
+                        Some(b) => b,
+                        None => buffer.len(),
+                    };
 
                     buffer.delete(start_byte, end_byte - start_byte);
 
@@ -214,7 +227,10 @@ impl Command for GotoMatchingFence {
 
         if let Some(buffer) = app.buffers.get(&buffer_id) {
             if let Some(window) = app.windows.get_mut(&active_window_id) {
-                let start_pos = window.get_byte_offset(buffer).unwrap_or(0);
+                let start_pos = match window.get_byte_offset(buffer) {
+                    Some(b) => b,
+                    None => 0,
+                };
                 let current_char = buffer.char_at(start_pos);
 
                 if let Some(ch) = current_char {
@@ -277,10 +293,16 @@ impl Command for UpperWord {
         if let Some(buffer_id) = buffer_id {
             if let Some(window) = app.windows.get(&active_window_id) {
                 if let Some(buffer) = app.buffers.get(&buffer_id) {
-                    let start_byte = window.get_byte_offset(buffer).unwrap_or(0);
+                    let start_byte = match window.get_byte_offset(buffer) {
+                        Some(b) => b,
+                        None => 0,
+                    };
                     let mut temp_window = window.clone();
                     temp_window.forward_word(buffer);
-                    let end_byte = temp_window.get_byte_offset(buffer).unwrap_or(0);
+                    let end_byte = match temp_window.get_byte_offset(buffer) {
+                        Some(b) => b,
+                        None => 0,
+                    };
 
                     if end_byte > start_byte {
                         let word_text =
@@ -320,10 +342,16 @@ impl Command for LowerWord {
         if let Some(buffer_id) = buffer_id {
             if let Some(window) = app.windows.get(&active_window_id) {
                 if let Some(buffer) = app.buffers.get(&buffer_id) {
-                    let start_byte = window.get_byte_offset(buffer).unwrap_or(0);
+                    let start_byte = match window.get_byte_offset(buffer) {
+                        Some(b) => b,
+                        None => 0,
+                    };
                     let mut temp_window = window.clone();
                     temp_window.forward_word(buffer);
-                    let end_byte = temp_window.get_byte_offset(buffer).unwrap_or(0);
+                    let end_byte = match temp_window.get_byte_offset(buffer) {
+                        Some(b) => b,
+                        None => 0,
+                    };
 
                     if end_byte > start_byte {
                         let word_text =
@@ -363,10 +391,16 @@ impl Command for CapitalizeWord {
         if let Some(buffer_id) = buffer_id {
             if let Some(window) = app.windows.get(&active_window_id) {
                 if let Some(buffer) = app.buffers.get(&buffer_id) {
-                    let start_byte = window.get_byte_offset(buffer).unwrap_or(0);
+                    let start_byte = match window.get_byte_offset(buffer) {
+                        Some(b) => b,
+                        None => 0,
+                    };
                     let mut temp_window = window.clone();
                     temp_window.forward_word(buffer);
-                    let end_byte = temp_window.get_byte_offset(buffer).unwrap_or(0);
+                    let end_byte = match temp_window.get_byte_offset(buffer) {
+                        Some(b) => b,
+                        None => 0,
+                    };
 
                     if end_byte > start_byte {
                         let word_text =
@@ -442,12 +476,18 @@ impl Command for UppercaseRegion {
             if let Some(window) = app.windows.get(&active_window_id) {
                 if let Some(buffer) = app.buffers.get(&buffer_id) {
                     if let Some(mark) = window.mark {
-                        let cursor_byte = window.get_byte_offset(buffer).unwrap_or(0);
+                        let cursor_byte = match window.get_byte_offset(buffer) {
+                            Some(b) => b,
+                            None => 0,
+                        };
 
                         let mut temp_window = window.clone();
                         temp_window.cursor_x = mark.0;
                         temp_window.cursor_y = mark.1;
-                        let mark_byte = temp_window.get_byte_offset(buffer).unwrap_or(0);
+                        let mark_byte = match temp_window.get_byte_offset(buffer) {
+                            Some(b) => b,
+                            None => 0,
+                        };
 
                         let (start_byte, end_byte) = if cursor_byte < mark_byte {
                             (cursor_byte, mark_byte)
@@ -499,12 +539,18 @@ impl Command for LowercaseRegion {
             if let Some(window) = app.windows.get(&active_window_id) {
                 if let Some(buffer) = app.buffers.get(&buffer_id) {
                     if let Some(mark) = window.mark {
-                        let cursor_byte = window.get_byte_offset(buffer).unwrap_or(0);
+                        let cursor_byte = match window.get_byte_offset(buffer) {
+                            Some(b) => b,
+                            None => 0,
+                        };
 
                         let mut temp_window = window.clone();
                         temp_window.cursor_x = mark.0;
                         temp_window.cursor_y = mark.1;
-                        let mark_byte = temp_window.get_byte_offset(buffer).unwrap_or(0);
+                        let mark_byte = match temp_window.get_byte_offset(buffer) {
+                            Some(b) => b,
+                            None => 0,
+                        };
 
                         let (start_byte, end_byte) = if cursor_byte < mark_byte {
                             (cursor_byte, mark_byte)
@@ -570,7 +616,10 @@ impl Command for WrapWord {
                         return DispatchResult::Success;
                     }
 
-                    let mut current_pos = window.get_byte_offset(buffer).unwrap_or(0);
+                    let mut current_pos = match window.get_byte_offset(buffer) {
+                        Some(b) => b,
+                        None => 0,
+                    };
                     let mut cnt = 0;
                     let mut found = false;
                     let mut hit_start = false;
@@ -592,7 +641,10 @@ impl Command for WrapWord {
                             }
                             break;
                         }
-                        current_pos = window.get_byte_offset(buffer).unwrap_or(0);
+                        current_pos = match window.get_byte_offset(buffer) {
+                            Some(b) => b,
+                            None => 0,
+                        };
 
                         if window.cursor_x == 0 {
                             let c0 = buffer.char_at(current_pos);
@@ -629,20 +681,25 @@ impl Command for WrapWord {
                 if break_pos.is_none() {
                     // Hit start of line
                     window.end_of_line(buffer);
-                    buffer.insert(window.get_byte_offset(buffer).unwrap_or(0), "\n");
+                    let insert_pos = match window.get_byte_offset(buffer) {
+                        Some(b) => b,
+                        None => 0,
+                    };
+                    buffer.insert(insert_pos, "\n");
                     window.move_down(buffer);
                     window.beginning_of_line(buffer);
                 } else {
-                    // Found space at break_pos
-                    let pos = break_pos.unwrap();
-                    buffer.delete(pos, 1); // Delete 1 char (space/tab)
-                    buffer.insert(pos, "\n");
+                    // Found space at break_pos - use if let to safely unwrap
+                    if let Some(pos) = break_pos {
+                        buffer.delete(pos, 1); // Delete 1 char (space/tab)
+                        buffer.insert(pos, "\n");
 
-                    // Move cursor to end of wrap
-                    let new_cursor_byte = pos + 1 + word_len;
-                    let (line, col) = byte_to_cursor_position(buffer, new_cursor_byte);
-                    window.cursor_y = line;
-                    window.cursor_x = col;
+                        // Move cursor to end of wrap
+                        let new_cursor_byte = pos + 1 + word_len;
+                        let (line, col) = byte_to_cursor_position(buffer, new_cursor_byte);
+                        window.cursor_y = line;
+                        window.cursor_x = col;
+                    }
                 }
 
                 window.update_visual_cursor(buffer);

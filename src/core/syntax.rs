@@ -138,16 +138,18 @@ impl LanguageRegistry {
 
     /// Get the language config for a file extension
     pub fn get_config(&self, extension: &str) -> &LanguageConfig {
-        let lang_name = self
-            .extension_map
-            .get(extension)
-            .map(|s| s.as_str())
-            .unwrap_or("generic");
+        let lang_name = match self.extension_map.get(extension) {
+            Some(s) => s.as_str(),
+            None => "generic",
+        };
 
-        self.configs
-            .get(lang_name)
-            .or_else(|| self.configs.get("generic"))
-            .expect("generic config must exist")
+        match self.configs.get(lang_name) {
+            Some(cfg) => cfg,
+            None => match self.configs.get("generic") {
+                Some(cfg) => cfg,
+                None => panic!("generic config must exist"),
+            },
+        }
     }
 }
 

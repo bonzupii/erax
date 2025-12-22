@@ -31,10 +31,16 @@ impl DiffView {
 
             for change in hunk.iter_changes() {
                 if first {
-                    start_line = change.old_index().unwrap_or(0);
+                    start_line = match change.old_index() {
+                        Some(i) => i,
+                        None => 0,
+                    };
                     first = false;
                 }
-                end_line = change.old_index().unwrap_or(end_line);
+                end_line = match change.old_index() {
+                    Some(i) => i,
+                    None => end_line,
+                };
 
                 match change.tag() {
                     ChangeTag::Delete => {

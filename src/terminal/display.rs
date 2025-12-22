@@ -147,16 +147,18 @@ impl Display {
 
         // Load theme from config
         let theme_manager = ThemeManager::new();
-        let theme_name = config
-            .settings
-            .get("theme")
-            .and_then(|v| match v {
-                crate::config::ConfigValue::String(s) => Some(s.as_str()),
-                _ => None,
-            })
-            .unwrap_or("dracula");
+        let theme_name = match config.settings.get("theme").and_then(|v| match v {
+            crate::config::ConfigValue::String(s) => Some(s.as_str()),
+            _ => None,
+        }) {
+            Some(name) => name,
+            None => "dracula",
+        };
 
-        let theme = theme_manager.get(theme_name).unwrap_or_else(Theme::default);
+        let theme = match theme_manager.get(theme_name) {
+            Some(t) => t,
+            None => Theme::default(),
+        };
 
         Self {
             terminal_size: (width, height),
@@ -166,14 +168,13 @@ impl Display {
             key_sequence: String::new(),
             front_buffer,
             back_buffer,
-            show_line_numbers: config
-                .settings
-                .get("line_numbers")
-                .and_then(|v| match v {
-                    crate::config::ConfigValue::Bool(b) => Some(*b),
-                    _ => None,
-                })
-                .unwrap_or(false),
+            show_line_numbers: match config.settings.get("line_numbers").and_then(|v| match v {
+                crate::config::ConfigValue::Bool(b) => Some(*b),
+                _ => None,
+            }) {
+                Some(b) => b,
+                None => false,
+            },
             syntax_highlighter: SyntaxHighlighter::new(),
             theme,
             cursor_pos: None,

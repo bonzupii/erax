@@ -54,10 +54,16 @@ pub fn handle_prompt_action(
                 if let Some(window) = app.windows.get_mut(&app.active_window) {
                     let bid = window.buffer_id;
                     if let Some(buffer) = app.buffers.get(&bid) {
-                        let start_pos = window.get_byte_offset(buffer).unwrap_or(0) + 1;
+                        let start_pos = match window.get_byte_offset(buffer) {
+                            Some(p) => p + 1,
+                            None => 1,
+                        };
                         if let Some(pos) = buffer.find_forward(&input, start_pos) {
                             let line = buffer.byte_to_line(pos);
-                            let line_start = buffer.line_to_byte(line).unwrap_or(0);
+                            let line_start = match buffer.line_to_byte(line) {
+                                Some(b) => b,
+                                None => 0,
+                            };
                             let col = crate::core::utf8::grapheme_count(
                                 &buffer.to_string()[line_start..pos],
                             );
@@ -76,10 +82,16 @@ pub fn handle_prompt_action(
                 if let Some(window) = app.windows.get_mut(&app.active_window) {
                     let bid = window.buffer_id;
                     if let Some(buffer) = app.buffers.get(&bid) {
-                        let cursor_pos = window.get_byte_offset(buffer).unwrap_or(0);
+                        let cursor_pos = match window.get_byte_offset(buffer) {
+                            Some(p) => p,
+                            None => 0,
+                        };
                         if let Some(found_pos) = buffer.find_backward(&input, cursor_pos) {
                             let line = buffer.byte_to_line(found_pos);
-                            let line_start = buffer.line_to_byte(line).unwrap_or(0);
+                            let line_start = match buffer.line_to_byte(line) {
+                                Some(b) => b,
+                                None => 0,
+                            };
                             let slice =
                                 buffer.get_range_as_string(line_start, found_pos - line_start);
                             let col = crate::core::utf8::grapheme_count(&slice);
@@ -134,8 +146,11 @@ pub fn handle_prompt_action(
                 if let Some(filename) = &buffer.filename {
                     let name = filename
                         .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default();
+                        .map(|n| n.to_string_lossy().to_string());
+                    let name = match name {
+                        Some(n) => n,
+                        None => String::new(),
+                    };
                     if name == input || filename.to_string_lossy().contains(&input) {
                         target_id = Some(buffer_id);
                         target_name = name;
@@ -146,11 +161,13 @@ pub fn handle_prompt_action(
             }
             if found {
                 if let Some(window) = app.windows.get_mut(&app.active_window) {
-                    window.buffer_id = target_id.unwrap();
-                    window.cursor_x = 0;
-                    window.cursor_y = 0;
-                    window.scroll_offset = 0;
-                    app.message = Some(format!("Switched to {}", target_name));
+                    if let Some(bid) = target_id {
+                        window.buffer_id = bid;
+                        window.cursor_x = 0;
+                        window.cursor_y = 0;
+                        window.scroll_offset = 0;
+                        app.message = Some(format!("Switched to {}", target_name));
+                    }
                 }
             } else {
                 app.message = Some(format!("Buffer not found: {}", input));

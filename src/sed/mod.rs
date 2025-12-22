@@ -243,92 +243,131 @@ mod tests {
 
     #[test]
     fn test_parse_substitute_basic() {
-        let cmd = parse_sed_command("s/foo/bar/").unwrap();
-        assert!(matches!(cmd.address, Address::All));
-        assert!(matches!(
-            cmd.command,
-            Command::Substitute {
-                global: false,
-                print: false,
-                ..
-            }
-        ));
+        if let Ok(cmd) = parse_sed_command("s/foo/bar/") {
+            assert!(matches!(cmd.address, Address::All));
+            assert!(matches!(
+                cmd.command,
+                Command::Substitute {
+                    global: false,
+                    print: false,
+                    ..
+                }
+            ));
+        } else {
+            panic!("Expected valid parse");
+        }
     }
 
     #[test]
     fn test_parse_substitute_global() {
-        let cmd = parse_sed_command("s/foo/bar/g").unwrap();
-        if let Command::Substitute { global, .. } = cmd.command {
-            assert!(global);
+        if let Ok(cmd) = parse_sed_command("s/foo/bar/g") {
+            if let Command::Substitute { global, .. } = cmd.command {
+                assert!(global);
+            } else {
+                panic!("Expected Substitute command");
+            }
         } else {
-            panic!("Expected Substitute command");
+            panic!("Expected valid parse");
         }
     }
 
     #[test]
     fn test_parse_delete() {
-        let cmd = parse_sed_command("d").unwrap();
-        assert!(matches!(cmd.command, Command::Delete));
+        if let Ok(cmd) = parse_sed_command("d") {
+            assert!(matches!(cmd.command, Command::Delete));
+        } else {
+            panic!("Expected valid parse");
+        }
     }
 
     #[test]
     fn test_parse_print() {
-        let cmd = parse_sed_command("p").unwrap();
-        assert!(matches!(cmd.command, Command::Print));
+        if let Ok(cmd) = parse_sed_command("p") {
+            assert!(matches!(cmd.command, Command::Print));
+        } else {
+            panic!("Expected valid parse");
+        }
     }
 
     #[test]
     fn test_parse_line_address() {
-        let cmd = parse_sed_command("2d").unwrap();
-        assert_eq!(cmd.address, Address::Line(2));
+        if let Ok(cmd) = parse_sed_command("2d") {
+            assert_eq!(cmd.address, Address::Line(2));
+        } else {
+            panic!("Expected valid parse");
+        }
     }
 
     #[test]
     fn test_parse_range_address() {
-        let cmd = parse_sed_command("1,3s/a/b/").unwrap();
-        assert_eq!(cmd.address, Address::Range(1, 3));
+        if let Ok(cmd) = parse_sed_command("1,3s/a/b/") {
+            assert_eq!(cmd.address, Address::Range(1, 3));
+        } else {
+            panic!("Expected valid parse");
+        }
     }
 
     #[test]
     fn test_execute_basic_substitute() {
         let mut config = SedConfig::new();
-        config.add_script("s/hello/world/").unwrap();
+        if config.add_script("s/hello/world/").is_err() {
+            panic!("Failed to add script");
+        }
 
         let input = b"hello there\nhello world\n";
         let mut output = Vec::new();
 
-        config.execute(&input[..], &mut output).unwrap();
+        if config.execute(&input[..], &mut output).is_err() {
+            panic!("Failed to execute");
+        }
 
-        let result = String::from_utf8(output).unwrap();
-        assert_eq!(result, "world there\nworld world\n");
+        if let Ok(result) = String::from_utf8(output) {
+            assert_eq!(result, "world there\nworld world\n");
+        } else {
+            panic!("Invalid UTF-8");
+        }
     }
 
     #[test]
     fn test_execute_delete() {
         let mut config = SedConfig::new();
-        config.add_script("2d").unwrap();
+        if config.add_script("2d").is_err() {
+            panic!("Failed to add script");
+        }
 
         let input = b"line1\nline2\nline3\n";
         let mut output = Vec::new();
 
-        config.execute(&input[..], &mut output).unwrap();
+        if config.execute(&input[..], &mut output).is_err() {
+            panic!("Failed to execute");
+        }
 
-        let result = String::from_utf8(output).unwrap();
-        assert_eq!(result, "line1\nline3\n");
+        if let Ok(result) = String::from_utf8(output) {
+            assert_eq!(result, "line1\nline3\n");
+        } else {
+            panic!("Invalid UTF-8");
+        }
     }
 
     #[test]
     fn test_execute_quiet_print() {
         let mut config = SedConfig::new();
         config.quiet = true;
-        config.add_script("1p").unwrap();
+        if config.add_script("1p").is_err() {
+            panic!("Failed to add script");
+        }
 
         let input = b"line1\nline2\nline3\n";
         let mut output = Vec::new();
 
-        config.execute(&input[..], &mut output).unwrap();
+        if config.execute(&input[..], &mut output).is_err() {
+            panic!("Failed to execute");
+        }
 
-        let result = String::from_utf8(output).unwrap();
-        assert_eq!(result, "line1\n");
+        if let Ok(result) = String::from_utf8(output) {
+            assert_eq!(result, "line1\n");
+        } else {
+            panic!("Invalid UTF-8");
+        }
     }
 }

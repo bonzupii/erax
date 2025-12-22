@@ -223,7 +223,15 @@ fn populate_diagnostics(app: &mut EditorApp, diag_buffer_id: BufferId) {
                 DiagnosticSeverity::Info => "I",
             };
 
-            let loc = format!("{}:{}:{}", filename, diag.line, diag.column.unwrap_or(1));
+            let loc = format!(
+                "{}:{}:{}",
+                filename,
+                diag.line,
+                match diag.column {
+                    Some(c) => c,
+                    None => 1,
+                }
+            );
             content.push_str(&format!(
                 "{} {:<16}   {}: {}\n",
                 sev_icon,

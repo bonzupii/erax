@@ -199,7 +199,10 @@ impl SelectionManager {
 
     /// Check if there's an active selection
     pub fn has_selection(&self) -> bool {
-        self.primary.map(|s| !s.is_empty()).unwrap_or(false)
+        match self.primary {
+            Some(s) => !s.is_empty(),
+            None => false,
+        }
     }
 
     /// Get the current selection
@@ -225,7 +228,10 @@ impl SelectionManager {
 
         // Calculate final cursor position based on mode
         let final_cursor = {
-            let sel = self.primary.as_ref().unwrap();
+            let sel = match self.primary.as_ref() {
+                Some(s) => s,
+                None => return,
+            };
             let anchor = sel.anchor;
 
             match self.mode {
@@ -247,12 +253,21 @@ impl SelectionManager {
 
                     if raw_cursor >= anchor {
                         // Dragging forward: include full line (end including newline)
-                        let start_pos = buffer.line_to_byte(line_idx).unwrap_or(0);
-                        let len = buffer.line_len(line_idx).unwrap_or(0);
+                        let start_pos = match buffer.line_to_byte(line_idx) {
+                            Some(b) => b,
+                            None => 0,
+                        };
+                        let len = match buffer.line_len(line_idx) {
+                            Some(l) => l,
+                            None => 0,
+                        };
                         start_pos + len
                     } else {
                         // Dragging backward: include start of line
-                        buffer.line_to_byte(line_idx).unwrap_or(0)
+                        match buffer.line_to_byte(line_idx) {
+                            Some(b) => b,
+                            None => 0,
+                        }
                     }
                 }
             }
@@ -325,7 +340,10 @@ impl SelectionManager {
     fn find_word_boundaries(buffer: &crate::core::buffer::Buffer, pos: usize) -> (usize, usize) {
         let line_idx = buffer.byte_to_line(pos);
         if let Some(line) = buffer.line(line_idx) {
-            let line_start_byte = buffer.line_to_byte(line_idx).unwrap_or(0);
+            let line_start_byte = match buffer.line_to_byte(line_idx) {
+                Some(b) => b,
+                None => 0,
+            };
             // pos relative to line
             let rel_pos = pos.saturating_sub(line_start_byte);
 
@@ -484,9 +502,12 @@ mod tests {
         mgr.extend_selection(20, &buffer);
 
         assert!(mgr.has_selection());
-        let sel = mgr.get_selection().unwrap();
-        assert_eq!(sel.start(), 10);
-        assert_eq!(sel.end(), 20);
+        if let Some(sel) = mgr.get_selection() {
+            assert_eq!(sel.start(), 10);
+            assert_eq!(sel.end(), 20);
+        } else {
+            panic!("Expected selection");
+        }
     }
 
     #[test]
@@ -496,8 +517,11 @@ mod tests {
 
         let region = mgr.get_region(25);
         assert!(region.is_some());
-        let region = region.unwrap();
-        assert_eq!(region.start(), 10);
-        assert_eq!(region.end(), 25);
+        if let Some(region) = region {
+            assert_eq!(region.start(), 10);
+            assert_eq!(region.end(), 25);
+        } else {
+            panic!("Expected region");
+        }
     }
 }

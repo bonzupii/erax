@@ -212,9 +212,10 @@ impl FocusState {
     /// Delete character before cursor (backspace)
     pub fn delete_backward(&mut self) {
         if self.cursor > 0 {
-            let prev_char = self.input[..self.cursor].chars().last().unwrap();
-            self.cursor -= prev_char.len_utf8();
-            self.input.remove(self.cursor);
+            if let Some(prev_char) = self.input[..self.cursor].chars().last() {
+                self.cursor -= prev_char.len_utf8();
+                self.input.remove(self.cursor);
+            }
         }
     }
 
@@ -228,16 +229,18 @@ impl FocusState {
     /// Move cursor left
     pub fn cursor_left(&mut self) {
         if self.cursor > 0 {
-            let prev_char = self.input[..self.cursor].chars().last().unwrap();
-            self.cursor -= prev_char.len_utf8();
+            if let Some(prev_char) = self.input[..self.cursor].chars().last() {
+                self.cursor -= prev_char.len_utf8();
+            }
         }
     }
 
     /// Move cursor right
     pub fn cursor_right(&mut self) {
         if self.cursor < self.input.len() {
-            let next_char = self.input[self.cursor..].chars().next().unwrap();
-            self.cursor += next_char.len_utf8();
+            if let Some(next_char) = self.input[self.cursor..].chars().next() {
+                self.cursor += next_char.len_utf8();
+            }
         }
     }
 
@@ -267,7 +270,10 @@ impl FocusState {
     /// Select previous item in menu
     pub fn select_prev(&mut self) {
         if !self.items.is_empty() {
-            self.selected = self.selected.checked_sub(1).unwrap_or(self.items.len() - 1);
+            self.selected = match self.selected.checked_sub(1) {
+                Some(idx) => idx,
+                None => self.items.len().saturating_sub(1),
+            };
         }
     }
 
@@ -332,10 +338,10 @@ impl FocusManager {
 
     /// Get the current focus target
     pub fn current_target(&self) -> FocusTarget {
-        self.stack
-            .last()
-            .map(|s| s.target)
-            .unwrap_or(FocusTarget::Editor)
+        match self.stack.last() {
+            Some(state) => state.target,
+            None => FocusTarget::Editor,
+        }
     }
 
     /// Get the current focus state (if any)

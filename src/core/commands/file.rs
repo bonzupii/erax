@@ -133,11 +133,10 @@ impl Command for PrintBuffer {
             let buffer_id = window.buffer_id;
             if let Some(buffer) = app.buffers.get(&buffer_id) {
                 let content = buffer.to_string();
-                let job_name = buffer
-                    .filename
-                    .as_ref()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "untitled".to_string());
+                let job_name = match buffer.filename.as_ref().map(|p| p.display().to_string()) {
+                    Some(s) => s,
+                    None => "untitled".to_string(),
+                };
 
                 let printer = CupsBackend::new();
                 if let Err(e) = printer.print(&job_name, &content) {

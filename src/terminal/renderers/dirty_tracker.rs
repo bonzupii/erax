@@ -63,7 +63,11 @@ impl DirtyTracker {
 
     /// Check if a row needs redrawing
     pub fn is_row_dirty(&self, row: usize) -> bool {
-        self.full_redraw || self.dirty_rows.get(row).copied().unwrap_or(false)
+        self.full_redraw
+            || match self.dirty_rows.get(row).copied() {
+                Some(v) => v,
+                None => false,
+            }
     }
 
     /// Check if full redraw is needed

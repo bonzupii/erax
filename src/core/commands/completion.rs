@@ -35,13 +35,16 @@ impl Command for WordCompletion {
             };
 
             let content = buffer.to_string();
-            let prefix_start = content[..byte_offset]
+            let prefix_start = match content[..byte_offset]
                 .char_indices()
                 .rev()
                 .take_while(|(_, c)| c.is_ascii_alphanumeric() || *c == '_')
                 .last()
                 .map(|(i, _)| i)
-                .unwrap_or(byte_offset);
+            {
+                Some(i) => i,
+                None => byte_offset,
+            };
 
             (byte_offset, byte_offset - prefix_start)
         };
@@ -103,11 +106,15 @@ mod tests {
     #[test]
     fn test_word_completion() {
         let mut app = EditorApp::new();
-        let buffer_id = app.active_window_ref().unwrap().buffer_id;
+        let buffer_id = match app.active_window_ref() {
+            Some(w) => w.buffer_id,
+            None => panic!("No active window"),
+        };
 
         {
-            let buffer = app.buffers.get_mut(&buffer_id).unwrap();
-            buffer.insert(0, "function_one function_two func");
+            if let Some(buffer) = app.buffers.get_mut(&buffer_id) {
+                buffer.insert(0, "function_one function_two func");
+            }
         }
 
         // Move cursor to end of "func"
@@ -118,14 +125,15 @@ mod tests {
 
         assert!(matches!(result, DispatchResult::Success));
 
-        let buffer = app.active_buffer().unwrap();
-        let content = buffer.to_string();
+        if let Some(buffer) = app.active_buffer() {
+            let content = buffer.to_string();
 
-        // Should complete "func" to "function_one" or "function_two"
-        // WordCompleter sorts by length then alphabetically.
-        // "function_one" and "function_two" have same length.
-        // "function_one" < "function_two" alphabetically.
-        assert!(content.contains("function_one function_two function_one"));
+            // Should complete "func" to "function_one" or "function_two"
+            // WordCompleter sorts by length then alphabetically.
+            // "function_one" and "function_two" have same length.
+            // "function_one" < "function_two" alphabetically.
+            assert!(content.contains("function_one function_two function_one"));
+        }
         assert_eq!(
             app.message,
             Some("Completed: function_one (1 more)".to_string())

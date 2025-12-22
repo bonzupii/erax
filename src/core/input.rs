@@ -58,13 +58,15 @@ impl FromStr for Key {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Handle Ctrl notation: ^X or C-x
         if s.starts_with('^') && s.len() == 2 {
-            let c = s.chars().nth(1).unwrap();
-            return Ok(Key::Ctrl(c.to_ascii_lowercase()));
+            if let Some(c) = s.chars().nth(1) {
+                return Ok(Key::Ctrl(c.to_ascii_lowercase()));
+            }
         }
 
         if s.starts_with("C-") && s.len() > 2 {
-            let c = s.chars().nth(2).unwrap();
-            return Ok(Key::Ctrl(c.to_ascii_lowercase()));
+            if let Some(c) = s.chars().nth(2) {
+                return Ok(Key::Ctrl(c.to_ascii_lowercase()));
+            }
         }
 
         // Handle Alt/Meta notation: M-x, ESC-x, or ESC x
@@ -72,8 +74,9 @@ impl FromStr for Key {
             let prefix_len = if s.starts_with("M-") { 2 } else { 4 };
             let rest = &s[prefix_len..];
             if rest.len() == 1 {
-                let c = rest.chars().next().unwrap().to_ascii_lowercase();
-                return Ok(Key::Alt(c));
+                if let Some(c) = rest.chars().next() {
+                    return Ok(Key::Alt(c.to_ascii_lowercase()));
+                }
             }
         }
 
@@ -106,9 +109,10 @@ impl FromStr for Key {
 
                 // Handle single raw character
                 if s.len() == 1 {
-                    let c = s.chars().next().unwrap();
-                    // Preserve case for raw chars
-                    return Ok(Key::Char(c));
+                    if let Some(c) = s.chars().next() {
+                        // Preserve case for raw chars
+                        return Ok(Key::Char(c));
+                    }
                 }
 
                 Err(format!("Unknown key: {}", s))
@@ -210,7 +214,7 @@ impl KeyInput {
             Key::Ctrl(c) => Key::Ctrl(c.to_ascii_lowercase()),
             other => other.clone(),
         };
-        
+
         // For non-character keys (like Arrows), we want to preserve Shift state
         // For Char keys, Shift is implicit in the character itself (e.g. 'A' vs 'a')
         // so we don't usually need the shift flag for Char bindings unless we want explicit "Shift-a"
@@ -227,7 +231,7 @@ impl KeyInput {
     pub fn from_str(s: &str) -> Option<Self> {
         let mut key_str = s;
         let mut shift = false;
-        
+
         if s.starts_with("S-") {
             shift = true;
             key_str = &s[2..];
@@ -242,17 +246,28 @@ impl KeyInput {
                 Key::Alt(_) => alt = true,
                 _ => {}
             }
-            
-            Self { key: k, shift, ctrl, alt }
+
+            Self {
+                key: k,
+                shift,
+                ctrl,
+                alt,
+            }
         })
     }
 }
 
 impl fmt::Display for KeyInput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.ctrl { write!(f, "C-")?; }
-        if self.alt { write!(f, "M-")?; }
-        if self.shift { write!(f, "S-")?; }
+        if self.ctrl {
+            write!(f, "C-")?;
+        }
+        if self.alt {
+            write!(f, "M-")?;
+        }
+        if self.shift {
+            write!(f, "S-")?;
+        }
         write!(f, "{}", self.key)
     }
 }
@@ -360,18 +375,27 @@ mod tests {
 
     #[test]
     fn test_key_input_from_str() {
-        let ctrl_x = KeyInput::from_str("^X").unwrap();
-        assert_eq!(ctrl_x.key, Key::Ctrl('x'));
-        assert!(ctrl_x.ctrl);
+        if let Some(ctrl_x) = KeyInput::from_str("^X") {
+            assert_eq!(ctrl_x.key, Key::Ctrl('x'));
+            assert!(ctrl_x.ctrl);
+        } else {
+            panic!("Failed to parse ^X");
+        }
 
-        let meta_f = KeyInput::from_str("ESC-f").unwrap();
-        assert_eq!(meta_f.key, Key::Alt('f'));
-        assert!(meta_f.alt);
+        if let Some(meta_f) = KeyInput::from_str("ESC-f") {
+            assert_eq!(meta_f.key, Key::Alt('f'));
+            assert!(meta_f.alt);
+        } else {
+            panic!("Failed to parse ESC-f");
+        }
 
-        let plain = KeyInput::from_str("a").unwrap();
-        assert_eq!(plain.key, Key::Char('a'));
-        assert!(!plain.ctrl);
-        assert!(!plain.alt);
+        if let Some(plain) = KeyInput::from_str("a") {
+            assert_eq!(plain.key, Key::Char('a'));
+            assert!(!plain.ctrl);
+            assert!(!plain.alt);
+        } else {
+            panic!("Failed to parse a");
+        }
     }
 
     #[test]

@@ -252,22 +252,40 @@ fn boundary_delete_operations() {
 fn atomic_save_creates_valid_file() {
     use std::io::Read;
 
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = match tempfile::tempdir() {
+        Ok(d) => d,
+        Err(_) => {
+            eprintln!("Could not create temp dir, skipping test");
+            return;
+        }
+    };
     let file_path = temp_dir.path().join("test_save.txt");
 
     // Create file first (save requires existing file for our test)
-    std::fs::write(&file_path, "initial").unwrap();
+    if std::fs::write(&file_path, "initial").is_err() {
+        panic!("Failed to write initial file");
+    }
 
-    let mut buffer = Buffer::from_file(&file_path).unwrap();
+    let mut buffer = match Buffer::from_file(&file_path) {
+        Ok(b) => b,
+        Err(_) => {
+            panic!("Failed to load buffer from file");
+        }
+    };
     buffer.insert(0, "MODIFIED: ");
-    buffer.save().unwrap();
+    if buffer.save().is_err() {
+        panic!("Failed to save buffer");
+    }
 
     // Read back and verify
     let mut saved_content = String::new();
-    std::fs::File::open(&file_path)
-        .unwrap()
-        .read_to_string(&mut saved_content)
-        .unwrap();
+    if let Ok(mut file) = std::fs::File::open(&file_path) {
+        if file.read_to_string(&mut saved_content).is_err() {
+            panic!("Failed to read saved file");
+        }
+    } else {
+        panic!("Failed to open saved file");
+    }
 
     assert_eq!(saved_content, "MODIFIED: initial");
 }

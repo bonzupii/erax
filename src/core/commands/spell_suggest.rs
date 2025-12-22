@@ -57,12 +57,15 @@ impl Command for SpellSuggest {
 
         // This is a placeholder - the suggest() function returns empty for now
         // but this wires the API so it's not dead code
-        let suggestions = app
+        let suggestions = match app
             .buffers
             .values()
             .next()
             .map(|_| crate::core::spell::SpellChecker::new().suggest(&word))
-            .unwrap_or_default();
+        {
+            Some(s) => s,
+            None => Vec::new(),
+        };
 
         if suggestions.is_empty() {
             DispatchResult::Info(format!("No suggestions for '{}'", word))

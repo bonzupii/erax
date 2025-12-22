@@ -22,7 +22,10 @@ impl Command for KillLine {
                                 crate::core::utf8::GraphemeIterator::new(&line).collect();
                             let kill_text: String =
                                 graphemes.iter().skip(window.cursor_x).copied().collect();
-                            let byte_pos = window.get_byte_offset(buffer).unwrap_or(0);
+                            let byte_pos = match window.get_byte_offset(buffer) {
+                                Some(b) => b,
+                                None => 0,
+                            };
                             Some((kill_text, byte_pos))
                         } else {
                             None
@@ -67,10 +70,16 @@ impl Command for KillWord {
             let kill_data: Option<(String, usize, usize, usize)> = {
                 if let Some(window) = app.windows.get(&active_window_id) {
                     if let Some(buffer) = app.buffers.get(&buffer_id) {
-                        let start_byte = window.get_byte_offset(buffer).unwrap_or(0);
+                        let start_byte = match window.get_byte_offset(buffer) {
+                            Some(b) => b,
+                            None => 0,
+                        };
                         let mut temp_window = window.clone();
                         temp_window.forward_word(buffer);
-                        let end_byte = temp_window.get_byte_offset(buffer).unwrap_or(0);
+                        let end_byte = match temp_window.get_byte_offset(buffer) {
+                            Some(b) => b,
+                            None => 0,
+                        };
 
                         if end_byte > start_byte {
                             let text_to_kill =
@@ -122,10 +131,16 @@ impl Command for BackwardKillWord {
             let kill_data: Option<(String, usize, usize)> = {
                 if let Some(window) = app.windows.get(&active_window_id) {
                     if let Some(buffer) = app.buffers.get(&buffer_id) {
-                        let end_byte = window.get_byte_offset(buffer).unwrap_or(0);
+                        let end_byte = match window.get_byte_offset(buffer) {
+                            Some(b) => b,
+                            None => 0,
+                        };
                         let mut temp_window = window.clone();
                         temp_window.backward_word(buffer);
-                        let start_byte = temp_window.get_byte_offset(buffer).unwrap_or(0);
+                        let start_byte = match temp_window.get_byte_offset(buffer) {
+                            Some(b) => b,
+                            None => 0,
+                        };
 
                         if start_byte < end_byte {
                             let text_to_kill =
@@ -210,15 +225,16 @@ impl Command for TransposeWords {
         if let Some(buffer_id) = buffer_id {
             // Get current line content
             let cursor_y = app.windows.get(&active_window_id).map(|w| w.cursor_y);
-            let line_content = cursor_y
-                .and_then(|y| app.buffers.get(&buffer_id).and_then(|b| b.line(y)))
-                .unwrap_or_default();
+            let line_content =
+                match cursor_y.and_then(|y| app.buffers.get(&buffer_id).and_then(|b| b.line(y))) {
+                    Some(s) => s,
+                    None => String::new(),
+                };
 
-            let cursor_x = app
-                .windows
-                .get(&active_window_id)
-                .map(|w| w.cursor_x)
-                .unwrap_or(0);
+            let cursor_x = match app.windows.get(&active_window_id).map(|w| w.cursor_x) {
+                Some(x) => x,
+                None => 0,
+            };
 
             // Find word boundaries
             let graphemes: Vec<&str> =

@@ -28,7 +28,10 @@ pub fn process_terminal_event(
     state_machine.sync_from_app(
         &app.focus_manager,
         display.is_menu_open(),
-        display.menu_bar.active_menu.unwrap_or(0),
+        match display.menu_bar.active_menu {
+            Some(m) => m,
+            None => 0,
+        },
         buffer_kind,
     );
 

@@ -134,40 +134,64 @@ impl Perform for GridHandler {
     ) {
         let params: Vec<u16> = params
             .iter()
-            .map(|p| p.first().copied().unwrap_or(0))
+            .map(|p| match p.first().copied() {
+                Some(v) => v,
+                None => 0,
+            })
             .collect();
 
         match action {
             'A' => {
                 // Cursor Up
-                let n = params.first().copied().unwrap_or(1).max(1) as usize;
+                let n = match params.first().copied() {
+                    Some(v) => v.max(1) as usize,
+                    None => 1,
+                };
                 self.cursor_y = self.cursor_y.saturating_sub(n);
             }
             'B' => {
                 // Cursor Down
-                let n = params.first().copied().unwrap_or(1).max(1) as usize;
+                let n = match params.first().copied() {
+                    Some(v) => v.max(1) as usize,
+                    None => 1,
+                };
                 self.cursor_y = (self.cursor_y + n).min(self.rows.saturating_sub(1));
             }
             'C' => {
                 // Cursor Forward
-                let n = params.first().copied().unwrap_or(1).max(1) as usize;
+                let n = match params.first().copied() {
+                    Some(v) => v.max(1) as usize,
+                    None => 1,
+                };
                 self.cursor_x = (self.cursor_x + n).min(self.cols.saturating_sub(1));
             }
             'D' => {
                 // Cursor Back
-                let n = params.first().copied().unwrap_or(1).max(1) as usize;
+                let n = match params.first().copied() {
+                    Some(v) => v.max(1) as usize,
+                    None => 1,
+                };
                 self.cursor_x = self.cursor_x.saturating_sub(n);
             }
             'H' | 'f' => {
                 // Cursor Position
-                let row = params.first().copied().unwrap_or(1).max(1) as usize;
-                let col = params.get(1).copied().unwrap_or(1).max(1) as usize;
+                let row = match params.first().copied() {
+                    Some(v) => v.max(1) as usize,
+                    None => 1,
+                };
+                let col = match params.get(1).copied() {
+                    Some(v) => v.max(1) as usize,
+                    None => 1,
+                };
                 self.cursor_y = (row - 1).min(self.rows.saturating_sub(1));
                 self.cursor_x = (col - 1).min(self.cols.saturating_sub(1));
             }
             'J' => {
                 // Erase in Display
-                let mode = params.first().copied().unwrap_or(0);
+                let mode = match params.first().copied() {
+                    Some(v) => v,
+                    None => 0,
+                };
                 match mode {
                     0 => {
                         // Clear from cursor to end
@@ -200,7 +224,10 @@ impl Perform for GridHandler {
             }
             'K' => {
                 // Erase in Line
-                let mode = params.first().copied().unwrap_or(0);
+                let mode = match params.first().copied() {
+                    Some(v) => v,
+                    None => 0,
+                };
                 if self.cursor_y < self.rows {
                     match mode {
                         0 => {

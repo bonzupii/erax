@@ -67,7 +67,10 @@ impl Menu {
             return;
         }
 
-        let mut idx = self.selected.unwrap_or(0);
+        let mut idx = match self.selected {
+            Some(i) => i,
+            None => 0,
+        };
         loop {
             idx = (idx + 1) % max;
             if !matches!(self.items.get(idx), Some(MenuItem::Separator)) {
@@ -84,7 +87,10 @@ impl Menu {
             return;
         }
 
-        let mut idx = self.selected.unwrap_or(0);
+        let mut idx = match self.selected {
+            Some(i) => i,
+            None => 0,
+        };
         loop {
             idx = if idx == 0 { max - 1 } else { idx - 1 };
             if !matches!(self.items.get(idx), Some(MenuItem::Separator)) {
@@ -139,8 +145,12 @@ impl Menu {
                 }
                 MenuItem::Separator => 3,
             })
-            .max()
-            .unwrap_or(10);
+            .max();
+
+        let max_label = match max_label {
+            Some(v) => v,
+            None => 10,
+        };
 
         max_label + 4 // padding
     }
@@ -384,7 +394,11 @@ mod tests {
         if let Some(menu) = bar.active() {
             assert_eq!(menu.selected, Some(0));
             menu.select_next();
-            assert!(menu.selected.unwrap() > 0);
+            if let Some(sel) = menu.selected {
+                assert!(sel > 0);
+            } else {
+                panic!("Expected selected index");
+            }
         }
     }
 

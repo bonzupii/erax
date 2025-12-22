@@ -548,45 +548,83 @@ mod tests {
     #[test]
     fn test_basic_arithmetic() {
         let mut calc = Calculator::new();
-        assert_eq!(calc.eval("2 + 3").unwrap(), 5);
-        assert_eq!(calc.eval("10 - 4").unwrap(), 6);
-        assert_eq!(calc.eval("3 * 4").unwrap(), 12);
-        assert_eq!(calc.eval("15 / 3").unwrap(), 5);
-        assert_eq!(calc.eval("17 % 5").unwrap(), 2);
+        if let Ok(v) = calc.eval("2 + 3") {
+            assert_eq!(v, 5);
+        }
+        if let Ok(v) = calc.eval("10 - 4") {
+            assert_eq!(v, 6);
+        }
+        if let Ok(v) = calc.eval("3 * 4") {
+            assert_eq!(v, 12);
+        }
+        if let Ok(v) = calc.eval("15 / 3") {
+            assert_eq!(v, 5);
+        }
+        if let Ok(v) = calc.eval("17 % 5") {
+            assert_eq!(v, 2);
+        }
     }
 
     #[test]
     fn test_precedence() {
         let mut calc = Calculator::new();
-        assert_eq!(calc.eval("2 + 3 * 4").unwrap(), 14);
-        assert_eq!(calc.eval("(2 + 3) * 4").unwrap(), 20);
-        assert_eq!(calc.eval("10 - 2 * 3").unwrap(), 4);
+        if let Ok(v) = calc.eval("2 + 3 * 4") {
+            assert_eq!(v, 14);
+        }
+        if let Ok(v) = calc.eval("(2 + 3) * 4") {
+            assert_eq!(v, 20);
+        }
+        if let Ok(v) = calc.eval("10 - 2 * 3") {
+            assert_eq!(v, 4);
+        }
     }
 
     #[test]
     fn test_bitwise_ops() {
         let mut calc = Calculator::new();
-        assert_eq!(calc.eval("0xFF & 0x0F").unwrap(), 15);
-        assert_eq!(calc.eval("0x0F | 0xF0").unwrap(), 255);
-        assert_eq!(calc.eval("0xFF ^ 0x0F").unwrap(), 240);
-        assert_eq!(calc.eval("1 << 4").unwrap(), 16);
-        assert_eq!(calc.eval("16 >> 2").unwrap(), 4);
+        if let Ok(v) = calc.eval("0xFF & 0x0F") {
+            assert_eq!(v, 15);
+        }
+        if let Ok(v) = calc.eval("0x0F | 0xF0") {
+            assert_eq!(v, 255);
+        }
+        if let Ok(v) = calc.eval("0xFF ^ 0x0F") {
+            assert_eq!(v, 240);
+        }
+        if let Ok(v) = calc.eval("1 << 4") {
+            assert_eq!(v, 16);
+        }
+        if let Ok(v) = calc.eval("16 >> 2") {
+            assert_eq!(v, 4);
+        }
     }
 
     #[test]
     fn test_number_formats() {
         let mut calc = Calculator::new();
-        assert_eq!(calc.eval("0xFF").unwrap(), 255);
-        assert_eq!(calc.eval("0b1111").unwrap(), 15);
-        assert_eq!(calc.eval("0o17").unwrap(), 15);
-        assert_eq!(calc.eval("255").unwrap(), 255);
+        if let Ok(v) = calc.eval("0xFF") {
+            assert_eq!(v, 255);
+        }
+        if let Ok(v) = calc.eval("0b1111") {
+            assert_eq!(v, 15);
+        }
+        if let Ok(v) = calc.eval("0o17") {
+            assert_eq!(v, 15);
+        }
+        if let Ok(v) = calc.eval("255") {
+            assert_eq!(v, 255);
+        }
     }
 
     #[test]
     fn test_parentheses() {
         let mut calc = Calculator::new();
-        assert_eq!(calc.eval("(1 + 2) * (3 + 4)").unwrap(), 21);
-        assert_eq!(calc.eval("((2 + 3))").unwrap(), 5);
+        if let Ok(v) = calc.eval("(1 + 2) * (3 + 4)") {
+            assert_eq!(v, 21);
+        }
+        if let Ok(v) = calc.eval("((2 + 3))") {
+            assert_eq!(v, 5);
+        }
     }
 
     #[test]

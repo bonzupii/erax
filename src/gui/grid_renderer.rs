@@ -145,7 +145,7 @@ impl GridRenderer {
         // Theme colors are already in sRGB space, so we render directly without GPU gamma
         let surface_caps = surface.get_capabilities(&adapter);
         // Prefer Bgra8Unorm/Rgba8Unorm which are universally supported
-        let surface_format = surface_caps
+        let surface_format = match surface_caps
             .formats
             .iter()
             .find(|f| {
@@ -156,7 +156,10 @@ impl GridRenderer {
             })
             .or_else(|| surface_caps.formats.iter().find(|f| f.is_srgb()))
             .copied()
-            .unwrap_or(surface_caps.formats[0]);
+        {
+            Some(f) => f,
+            None => surface_caps.formats[0],
+        };
 
         // Use Immediate or Mailbox for faster first frame (no vsync wait)
         let present_mode = if surface_caps
@@ -989,17 +992,18 @@ impl GridRenderer {
 
                         if has_glyph {
                             // Try to rasterize from the newly loaded font
-                            let new_font = self.loaded_fallbacks.last().unwrap();
-                            if try_rasterize(
-                                new_font,
-                                self.font_scale,
-                                ch,
-                                &mut bitmap,
-                                cell_w,
-                                cell_h,
-                            ) {
-                                rasterized = true;
-                                break;
+                            if let Some(new_font) = self.loaded_fallbacks.last() {
+                                if try_rasterize(
+                                    new_font,
+                                    self.font_scale,
+                                    ch,
+                                    &mut bitmap,
+                                    cell_w,
+                                    cell_h,
+                                ) {
+                                    rasterized = true;
+                                    break;
+                                }
                             }
                         }
                     }

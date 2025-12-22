@@ -23,13 +23,16 @@ impl CupsBackend {
 
     /// Check if CUPS is available
     pub fn is_available() -> bool {
-        Command::new("which")
+        match Command::new("which")
             .arg("lp")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
             .map(|s| s.success())
-            .unwrap_or(false)
+        {
+            Ok(v) => v,
+            Err(_) => false,
+        }
     }
 }
 

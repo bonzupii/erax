@@ -19,7 +19,10 @@ impl Command for MarkWord {
             let buffer = app.active_buffer();
 
             if let (Some(w), Some(b)) = (window, buffer) {
-                let cursor_byte = w.get_byte_offset(b).unwrap_or(0);
+                let cursor_byte = match w.get_byte_offset(b) {
+                    Some(pos) => pos,
+                    None => 0,
+                };
                 let content = b.to_string();
                 expand_to_word(&content, cursor_byte)
             } else {
@@ -132,10 +135,13 @@ pub fn expand_to_line(buffer_content: &str, line_num: usize) -> Option<(usize, u
     for (i, ch) in buffer_content.char_indices() {
         if current_line == line_num {
             // Found the start of our line
-            let line_end = buffer_content[i..]
+            let line_end = match buffer_content[i..]
                 .find('\n')
                 .map(|pos| i + pos + 1) // Include the newline
-                .unwrap_or(buffer_content.len());
+            {
+                Some(end) => end,
+                None => buffer_content.len(),
+            };
             return Some((line_start, line_end));
         }
 
@@ -259,7 +265,10 @@ impl Command for ExpandSelection {
                     let w = app.active_window_ref();
                     let b = app.active_buffer();
                     if let (Some(w), Some(b)) = (w, b) {
-                        let cursor = w.get_byte_offset(b).unwrap_or(0);
+                        let cursor = match w.get_byte_offset(b) {
+                            Some(pos) => pos,
+                            None => 0,
+                        };
                         expand_to_word(&b.to_string(), cursor)
                     } else {
                         None
@@ -373,9 +382,10 @@ mod tests {
         // In paragraph 1
         let result = expand_to_paragraph(content, 0);
         assert!(result.is_some());
-        let (start, end) = result.unwrap();
-        assert_eq!(start, 0);
-        assert!(end > 0);
+        if let Some((start, end)) = result {
+            assert_eq!(start, 0);
+            assert!(end > 0);
+        }
 
         // In paragraph 2
         let result = expand_to_paragraph(content, 3);

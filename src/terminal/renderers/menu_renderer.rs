@@ -78,7 +78,10 @@ impl MenuRenderer {
         }
 
         // Calculate where menu titles end
-        let menu_end = layout.last().map(|(_, _, end)| *end).unwrap_or(0);
+        let menu_end = match layout.last().map(|(_, _, end)| *end) {
+            Some(e) => e,
+            None => 0,
+        };
 
         // Reserve space for X button (2 chars: space + X)
         let x_button_start = width.saturating_sub(2);

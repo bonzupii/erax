@@ -471,7 +471,10 @@ impl Buffer {
         let path = self.filename.as_ref().ok_or("No filename set for buffer")?;
 
         // Write to temp file first for atomic save
-        let parent = path.parent().unwrap_or(Path::new("."));
+        let parent = match path.parent() {
+            Some(p) => p,
+            None => Path::new("."),
+        };
         let mut temp_file = NamedTempFile::new_in(parent)?;
 
         // Write content chunk by chunk to avoid large allocations
@@ -541,12 +544,11 @@ impl Buffer {
         self.buffer_kind
     }
 
-    /// Get the filename as a string for display
     pub fn display_name(&self) -> String {
-        self.filename
-            .as_ref()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "*scratch*".to_string())
+        match self.filename.as_ref() {
+            Some(p) => p.display().to_string(),
+            None => "*scratch*".to_string(),
+        }
     }
 
     /// Check if file has been modified externally
@@ -946,17 +948,17 @@ mod tests {
             result.is_ok(),
             "Buffer::from_file should handle invalid UTF-8"
         );
-        let buffer = result.unwrap();
-
-        // Invalid bytes should be replaced with replacement character(s)
-        let content = buffer.to_string();
-        assert!(
-            content.contains("Hello"),
-            "Should contain valid text before invalid bytes"
-        );
-        assert!(
-            content.contains("World"),
-            "Should contain valid text after invalid bytes"
-        );
+        if let Ok(buffer) = result {
+            // Invalid bytes should be replaced with replacement character(s)
+            let content = buffer.to_string();
+            assert!(
+                content.contains("Hello"),
+                "Should contain valid text before invalid bytes"
+            );
+            assert!(
+                content.contains("World"),
+                "Should contain valid text after invalid bytes"
+            );
+        }
     }
 }

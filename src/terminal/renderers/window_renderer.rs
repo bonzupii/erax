@@ -204,15 +204,19 @@ impl WindowRenderer {
                 {
                     if buffer_line_idx >= start_y && buffer_line_idx <= end_y {
                         let start_byte = if buffer_line_idx == start_y {
-                            crate::core::utf8::grapheme_byte_index(line_content, start_x)
-                                .unwrap_or(0)
+                            match crate::core::utf8::grapheme_byte_index(line_content, start_x) {
+                                Some(b) => b,
+                                None => 0,
+                            }
                         } else {
                             0
                         };
 
                         let end_byte = if buffer_line_idx == end_y {
-                            crate::core::utf8::grapheme_byte_index(line_content, end_x)
-                                .unwrap_or(line_content.len())
+                            match crate::core::utf8::grapheme_byte_index(line_content, end_x) {
+                                Some(b) => b,
+                                None => line_content.len(),
+                            }
                         } else {
                             line_content.len()
                         };
@@ -229,16 +233,19 @@ impl WindowRenderer {
                     None
                 };
 
-                let extension = filename
+                let extension = match filename
                     .as_ref()
                     .and_then(|p| p.extension())
                     .and_then(|e| e.to_str())
-                    .unwrap_or("");
+                {
+                    Some(e) => e,
+                    None => "",
+                };
 
-                let current_state = syntax_cache
-                    .get(buffer_line_idx)
-                    .copied()
-                    .unwrap_or(crate::core::syntax::SyntaxLexerState::Normal);
+                let current_state = match syntax_cache.get(buffer_line_idx).copied() {
+                    Some(s) => s,
+                    None => crate::core::syntax::SyntaxLexerState::Normal,
+                };
 
                 let (highlight_spans, next_state) = syntax_highlighter.highlight_line_with_state(
                     extension,

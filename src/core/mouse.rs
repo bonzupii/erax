@@ -85,14 +85,19 @@ impl MouseHandler {
                 return (0, 0);
             }
             let last_line_idx = line_count - 1;
-            let last_line = buffer.line(last_line_idx).unwrap_or_default();
-            let last_col = crate::core::utf8::grapheme_count(&last_line);
+            let last_col = match buffer.line(last_line_idx) {
+                Some(text) => crate::core::utf8::grapheme_count(&text),
+                None => 0,
+            };
             return (last_col, last_line_idx);
         }
 
         // Calculate column index
         let visual_x = window.scroll_x + screen_x;
-        let line_text = buffer.line(buffer_y).unwrap_or_default();
+        let line_text = match buffer.line(buffer_y) {
+            Some(text) => text,
+            None => return (0, buffer_y),
+        };
 
         // Use utf8 helper to convert visual X (accounting for tabs) to grapheme index
         let buffer_x =
@@ -209,7 +214,10 @@ impl MouseHandler {
             }
 
             // Calculate byte offsets
-            let line_start_byte = buffer.line_to_byte(row).unwrap_or(0);
+            let line_start_byte = match buffer.line_to_byte(row) {
+                Some(b) => b,
+                None => 0,
+            };
 
             let start_byte_offset = graphemes[0..start].iter().map(|g| g.len()).sum::<usize>();
             let len_byte_offset = graphemes[start..end].iter().map(|g| g.len()).sum::<usize>();
@@ -330,9 +338,12 @@ mod tests {
 
         assert_eq!(window.cursor_x, 3);
         assert!(window.selection_manager.has_selection());
-        let sel = window.selection_manager.get_selection().unwrap();
-        assert_eq!(sel.start(), 0);
-        assert_eq!(sel.end(), 3);
+        if let Some(sel) = window.selection_manager.get_selection() {
+            assert_eq!(sel.start(), 0);
+            assert_eq!(sel.end(), 3);
+        } else {
+            panic!("Expected selection");
+        }
     }
 
     #[test]
@@ -344,11 +355,14 @@ mod tests {
         handler.handle_event(&event, &mut window, &buffer);
 
         assert!(window.selection_manager.has_selection());
-        let sel = window.selection_manager.get_selection().unwrap();
-        // "Hello" is 5 bytes. Start 0, End 5.
-        assert_eq!(sel.start(), 0);
-        assert_eq!(sel.end(), 5);
-        assert_eq!(window.selection_manager.mode, SelectionMode::Word);
+        if let Some(sel) = window.selection_manager.get_selection() {
+            // "Hello" is 5 bytes. Start 0, End 5.
+            assert_eq!(sel.start(), 0);
+            assert_eq!(sel.end(), 5);
+            assert_eq!(window.selection_manager.mode, SelectionMode::Word);
+        } else {
+            panic!("Expected selection");
+        }
     }
 
     #[test]
@@ -360,11 +374,14 @@ mod tests {
         handler.handle_event(&event, &mut window, &buffer);
 
         assert!(window.selection_manager.has_selection());
-        let sel = window.selection_manager.get_selection().unwrap();
-        // "Hello\n" is 6 bytes
-        assert_eq!(sel.start(), 0);
-        assert_eq!(sel.end(), 6);
-        assert_eq!(window.selection_manager.mode, SelectionMode::Line);
+        if let Some(sel) = window.selection_manager.get_selection() {
+            // "Hello\n" is 6 bytes
+            assert_eq!(sel.start(), 0);
+            assert_eq!(sel.end(), 6);
+            assert_eq!(window.selection_manager.mode, SelectionMode::Line);
+        } else {
+            panic!("Expected selection");
+        }
     }
 
     #[test]

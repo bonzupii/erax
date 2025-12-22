@@ -21,17 +21,16 @@ pub fn run_gui_mode(files: &[PathBuf], config: &Config) -> Result<(), Box<dyn st
             None
         }
     });
-    let font_size = config
-        .settings
-        .get("font_size")
-        .and_then(|v| {
-            if let ConfigValue::Int(i) = v {
-                Some(*i as f32 + 1.0)
-            } else {
-                None
-            }
-        })
-        .unwrap_or(crate::gui::DEFAULT_FONT_SIZE + 1.0);
+    let font_size = match config.settings.get("font_size").and_then(|v| {
+        if let ConfigValue::Int(i) = v {
+            Some(*i as f32 + 1.0)
+        } else {
+            None
+        }
+    }) {
+        Some(f) => f,
+        None => crate::gui::DEFAULT_FONT_SIZE + 1.0,
+    };
 
     let mut keybind_manager = terminal::keybinds::KeyBindingManager::new();
     for (binding, command) in &config.keybindings {
@@ -356,15 +355,17 @@ impl GuiApp {
         let (col, row) =
             if let (Some((x, y)), Some(renderer)) = (self.cursor_pos, self.renderer.as_ref()) {
                 let (vw, vh) = renderer.size();
-                crate::gui::input::mouse_pos_to_grid(
+                match crate::gui::input::mouse_pos_to_grid(
                     x as f32,
                     y as f32,
                     renderer.cell_width,
                     renderer.cell_height,
                     vw as f32,
                     vh as f32,
-                )
-                .unwrap_or((0, 0))
+                ) {
+                    Some(pos) => pos,
+                    None => (0, 0),
+                }
             } else {
                 (0, 0)
             };

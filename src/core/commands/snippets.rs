@@ -46,13 +46,16 @@ impl Command for ExpandSnippet {
             let trigger = graphemes[word_start..word_end].join("");
 
             // Determine language based on file extension
-            let extension = buffer
+            let extension = match buffer
                 .filename
                 .as_ref()
                 .and_then(|p| p.extension())
                 .and_then(|e| e.to_str())
-                .unwrap_or("txt")
-                .to_lowercase();
+            {
+                Some(e) => e,
+                None => "txt",
+            }
+            .to_lowercase();
 
             let language = match extension.as_str() {
                 "rs" => "rust",
@@ -86,11 +89,17 @@ impl Command for ExpandSnippet {
 
                 let mut byte_start = 0;
                 for i in 0..word_start_col {
-                    byte_start += graphemes.get(i).map(|g| g.len()).unwrap_or(0);
+                    byte_start += match graphemes.get(i).map(|g| g.len()) {
+                        Some(l) => l,
+                        None => 0,
+                    };
                 }
                 let mut byte_end = byte_start;
                 for i in word_start_col..word_end_col {
-                    byte_end += graphemes.get(i).map(|g| g.len()).unwrap_or(0);
+                    byte_end += match graphemes.get(i).map(|g| g.len()) {
+                        Some(l) => l,
+                        None => 0,
+                    };
                 }
 
                 let Some(line_start_byte) = buffer.line_to_byte(window.cursor_y) else {

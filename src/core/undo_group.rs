@@ -184,9 +184,15 @@ impl UndoGrouper {
         // The boundary is between the last character of prev_text and first character of curr_text
 
         // Get the last character of previous edit
-        let last_char = prev_text.chars().last().unwrap();
+        let last_char = match prev_text.chars().last() {
+            Some(c) => c,
+            None => return true,
+        };
         // Get the first character of current edit
-        let first_char = curr_text.chars().next().unwrap();
+        let first_char = match curr_text.chars().next() {
+            Some(c) => c,
+            None => return true,
+        };
 
         // Determine token types for both characters
         let last_char_token = self.classify_char_token(last_char);

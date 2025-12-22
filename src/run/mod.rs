@@ -179,28 +179,40 @@ mod tests {
     #[test]
     fn test_detect_terminal_caps_ascii_default() {
         let env = mock_env(&[]);
-        let result = detect_terminal_caps_with_env(env).unwrap();
-        assert_eq!(result, TerminalCaps::Ascii);
+        if let Ok(result) = detect_terminal_caps_with_env(env) {
+            assert_eq!(result, TerminalCaps::Ascii);
+        } else {
+            panic!("Detection should succeed");
+        }
     }
 
     #[test]
     fn test_detect_terminal_caps_utf8() {
         let env = mock_env(&[("LANG", "en_US.UTF-8")]);
-        let result = detect_terminal_caps_with_env(env).unwrap();
-        assert_eq!(result, TerminalCaps::Utf8);
+        if let Ok(result) = detect_terminal_caps_with_env(env) {
+            assert_eq!(result, TerminalCaps::Utf8);
+        } else {
+            panic!("Detection should succeed");
+        }
     }
 
     #[test]
     fn test_detect_mode_sed() {
         let env = mock_env(&[]);
-        let result = detect_mode_internal(false, env).unwrap();
-        assert_eq!(result, EditorMode::Sed);
+        if let Ok(result) = detect_mode_internal(false, env) {
+            assert_eq!(result, EditorMode::Sed);
+        } else {
+            panic!("Detection should succeed");
+        }
     }
 
     #[test]
     fn test_detect_mode_terminal_fallback() {
         let env = mock_env(&[]);
-        let result = detect_mode_internal(true, env).unwrap();
-        assert_eq!(result, EditorMode::AsciiTerminal);
+        if let Ok(result) = detect_mode_internal(true, env) {
+            assert_eq!(result, EditorMode::AsciiTerminal);
+        } else {
+            panic!("Detection should succeed");
+        }
     }
 }

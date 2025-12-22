@@ -34,11 +34,10 @@ impl StatusRenderer {
             theme.status_line_inactive_fg().clone().into()
         };
 
-        let filename = buffer
-            .filename
-            .as_ref()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "[No Name]".to_string());
+        let filename = match buffer.filename.as_ref().map(|p| p.display().to_string()) {
+            Some(s) => s,
+            None => "[No Name]".to_string(),
+        };
 
         let modified = if buffer.modified { "[+]" } else { "" };
         let pos_info = format!("Ln {}, Col {}", window.cursor_y + 1, window.cursor_x + 1);

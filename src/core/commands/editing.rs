@@ -112,24 +112,21 @@ impl Command for TransposeChars {
         let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
 
         if let Some(buffer_id) = buffer_id {
-            // Collect all needed data as owned values before mutable borrow
             let data = {
-                let cursor_x = app
-                    .windows
-                    .get(&active_window_id)
-                    .map(|w| w.cursor_x)
-                    .unwrap_or(0);
-                let cursor_y = app
-                    .windows
-                    .get(&active_window_id)
-                    .map(|w| w.cursor_y)
-                    .unwrap_or(0);
+                let cursor_x = match app.windows.get(&active_window_id).map(|w| w.cursor_x) {
+                    Some(x) => x,
+                    None => 0,
+                };
+                let cursor_y = match app.windows.get(&active_window_id).map(|w| w.cursor_y) {
+                    Some(y) => y,
+                    None => 0,
+                };
 
-                let line_content = app
-                    .buffers
-                    .get(&buffer_id)
-                    .and_then(|b| b.line(cursor_y))
-                    .unwrap_or_default();
+                let line_content = match app.buffers.get(&buffer_id).and_then(|b| b.line(cursor_y))
+                {
+                    Some(s) => s,
+                    None => String::new(),
+                };
 
                 let graphemes: Vec<String> =
                     crate::core::utf8::GraphemeIterator::new(&line_content)
@@ -147,8 +144,14 @@ impl Command for TransposeChars {
                     return DispatchResult::Success;
                 };
 
-                let char1 = graphemes.get(pos1).cloned().unwrap_or_default();
-                let char2 = graphemes.get(pos2).cloned().unwrap_or_default();
+                let char1 = match graphemes.get(pos1).cloned() {
+                    Some(s) => s,
+                    None => String::new(),
+                };
+                let char2 = match graphemes.get(pos2).cloned() {
+                    Some(s) => s,
+                    None => String::new(),
+                };
 
                 if char1.is_empty() || char2.is_empty() {
                     return DispatchResult::Success;
@@ -251,14 +254,14 @@ impl Command for NewlineAndIndent {
         let indent = {
             if let Some(window) = app.windows.get(&active_window_id) {
                 if let Some(buffer) = app.buffers.get(&window.buffer_id) {
-                    buffer
-                        .line(window.cursor_y)
-                        .map(|line| {
-                            line.chars()
-                                .take_while(|c| c.is_whitespace() && *c != '\n')
-                                .collect::<String>()
-                        })
-                        .unwrap_or_default()
+                    match buffer.line(window.cursor_y).map(|line| {
+                        line.chars()
+                            .take_while(|c| c.is_whitespace() && *c != '\n')
+                            .collect::<String>()
+                    }) {
+                        Some(s) => s,
+                        None => String::new(),
+                    }
                 } else {
                     String::new()
                 }

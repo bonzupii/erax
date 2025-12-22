@@ -284,7 +284,10 @@ impl DiagnosticParser {
                         DiagnosticSeverity::Error,
                         "Makefile",
                         line_num,
-                        parts.get(2).unwrap_or(&"").trim(),
+                        match parts.get(2) {
+                            Some(s) => s.trim(),
+                            None => "",
+                        },
                     ));
                 }
             }
@@ -310,7 +313,11 @@ mod tests {
 
         assert_eq!(diags.len(), 1);
         assert!(diags[0].is_error());
-        assert_eq!(diags[0].file.to_str().unwrap(), "main.c");
+        if let Some(path_str) = diags[0].file.to_str() {
+            assert_eq!(path_str, "main.c");
+        } else {
+            panic!("Invalid path");
+        }
         assert_eq!(diags[0].line, 10);
         assert_eq!(diags[0].column, Some(5));
         assert!(diags[0].message.contains("expected ';'"));
@@ -346,7 +353,11 @@ mod tests {
         let diags = parser.finish();
 
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].file.to_str().unwrap(), "src/main.rs");
+        if let Some(path_str) = diags[0].file.to_str() {
+            assert_eq!(path_str, "src/main.rs");
+        } else {
+            panic!("Invalid path");
+        }
         assert_eq!(diags[0].line, 42);
         assert_eq!(diags[0].column, Some(10));
     }
@@ -359,7 +370,11 @@ mod tests {
 
         assert_eq!(diags.len(), 1);
         assert!(diags[0].is_error());
-        assert_eq!(diags[0].file.to_str().unwrap(), "Makefile");
+        if let Some(path_str) = diags[0].file.to_str() {
+            assert_eq!(path_str, "Makefile");
+        } else {
+            panic!("Invalid path");
+        }
     }
 
     #[test]

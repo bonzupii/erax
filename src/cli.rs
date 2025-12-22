@@ -82,6 +82,29 @@ impl Cli {
                         return Err("--theme requires a value".into());
                     }
                 }
+                "-h" | "--help" => {
+                    println!("erax - A multi-modal text editor");
+                    println!();
+                    println!("Usage: erax [OPTIONS] [FILES...]");
+                    println!();
+                    println!("Options:");
+                    println!("  -h, --help        Show this help message");
+                    println!("  -g, --gui         Force GUI mode");
+                    println!("  -u, --utf8        Force UTF-8 terminal mode");
+                    println!("  -a, --ascii       Force ASCII terminal mode");
+                    println!("  -t, --theme NAME  Set color theme");
+                    println!();
+                    println!("Sed mode options:");
+                    println!("  -s, --sed         Force stream editor mode");
+                    println!("  -n, --quiet       Suppress automatic printing");
+                    println!("  -e, --expression  Add script to commands");
+                    println!("  -f, --file        Add script file");
+                    println!("  -i, --in-place    Edit files in place");
+                    std::process::exit(0);
+                }
+                arg if arg.starts_with('-') => {
+                    return Err(format!("Unknown flag: {}. Use --help for usage.", arg).into());
+                }
                 _ => {
                     // Positional arguments are files
                     cli.files.push(PathBuf::from(arg));

@@ -28,7 +28,7 @@ const GPM_B_RIGHT: u8 = 1;
 /// Gpm_Connect struct: eventMask(2) + defaultMask(2) + minMod(2) + maxMod(2) + pid(4) + vc(4) = 16 bytes
 const CONNECT_SIZE: usize = 16;
 
-/// Gpm_Event struct: buttons(1) + modifiers(1) + vc(2) + dx(2) + dy(2) + x(2) + y(2) + 
+/// Gpm_Event struct: buttons(1) + modifiers(1) + vc(2) + dx(2) + dy(2) + x(2) + y(2) +
 /// type(4) + clicks(4) + margin(4) + wdx(2) + wdy(2) = 28 bytes
 const EVENT_SIZE: usize = 28;
 
@@ -61,9 +61,10 @@ impl GpmClient {
             return false;
         }
         // Must be linux or vt terminal type
-        std::env::var("TERM")
-            .map(|t| t == "linux" || t.starts_with("vt"))
-            .unwrap_or(false)
+        match std::env::var("TERM").map(|t| t == "linux" || t.starts_with("vt")) {
+            Ok(v) => v,
+            Err(_) => false,
+        }
     }
 
     /// Get current virtual console number from /sys
@@ -94,14 +95,17 @@ impl GpmClient {
 
         // Connect to GPM control socket
         let socket = UnixStream::connect("/dev/gpmctl")?;
-        
+
         // Get current VC - required for GPM to send us events
-        let vc = Self::get_vc().unwrap_or(0);
+        let vc = match Self::get_vc() {
+            Some(v) => v,
+            None => 0,
+        };
         let pid = std::process::id() as i32;
 
         // Build Gpm_Connect struct (all fields little-endian on x86)
         let mut conn = [0u8; CONNECT_SIZE];
-        
+
         // eventMask: request all events (0xFFFF)
         conn[0..2].copy_from_slice(&0xFFFFu16.to_ne_bytes());
         // defaultMask: don't pass events to selection (0)
@@ -117,10 +121,10 @@ impl GpmClient {
 
         let mut sock = socket;
         sock.write_all(&conn)?;
-        
+
         // Set non-blocking AFTER the connect handshake
         sock.set_nonblocking(true)?;
-        
+
         self.socket = Some(sock);
         Ok(())
     }
@@ -149,7 +153,7 @@ impl GpmClient {
     fn parse_event(&self, buf: &[u8; EVENT_SIZE]) -> MouseEvent {
         // Gpm_Event struct layout (from gpm.h):
         // unsigned char buttons;      // byte 0
-        // unsigned char modifiers;    // byte 1  
+        // unsigned char modifiers;    // byte 1
         // unsigned short vc;          // bytes 2-3
         // short dx, dy;               // bytes 4-7 (relative movement)
         // short x, y;                 // bytes 8-11 (absolute position, 1-based)
@@ -157,7 +161,7 @@ impl GpmClient {
         // int clicks;                 // bytes 16-19
         // enum Gpm_Margin margin;     // bytes 20-23
         // short wdx, wdy;             // bytes 24-27 (wheel movement)
-        
+
         let buttons = buf[0];
         let modifiers = buf[1];
         let x = i16::from_ne_bytes([buf[8], buf[9]]);
@@ -220,8 +224,6 @@ impl GpmClient {
     pub fn cursor_pos(&self) -> (u16, u16) {
         (self.last_x, self.last_y)
     }
-
-
 }
 
 #[cfg(test)]
@@ -257,7 +259,7 @@ mod tests {
         let client = GpmClient::new();
         let buf = make_event(0, 0, 10, 5, 1, 0); // GPM_MOVE = 1
         let event = client.parse_event(&buf);
-        
+
         assert_eq!(event.column, 9); // 1-based to 0-based
         assert_eq!(event.row, 4);
         assert!(matches!(event.kind, MouseEventKind::Moved));
@@ -271,10 +273,13 @@ mod tests {
         let client = GpmClient::new();
         let buf = make_event(GPM_B_LEFT, 0, 20, 15, GPM_DOWN, 0);
         let event = client.parse_event(&buf);
-        
+
         assert_eq!(event.column, 19);
         assert_eq!(event.row, 14);
-        assert!(matches!(event.kind, MouseEventKind::Down(MouseButton::Left)));
+        assert!(matches!(
+            event.kind,
+            MouseEventKind::Down(MouseButton::Left)
+        ));
     }
 
     #[test]
@@ -282,7 +287,7 @@ mod tests {
         let client = GpmClient::new();
         let buf = make_event(GPM_B_RIGHT, 0, 30, 25, GPM_UP, 0);
         let event = client.parse_event(&buf);
-        
+
         assert_eq!(event.column, 29);
         assert_eq!(event.row, 24);
         assert!(matches!(event.kind, MouseEventKind::Up(MouseButton::Right)));
@@ -293,8 +298,11 @@ mod tests {
         let client = GpmClient::new();
         let buf = make_event(GPM_B_MIDDLE, 0, 40, 35, GPM_DRAG, 0);
         let event = client.parse_event(&buf);
-        
-        assert!(matches!(event.kind, MouseEventKind::Drag(MouseButton::Middle)));
+
+        assert!(matches!(
+            event.kind,
+            MouseEventKind::Drag(MouseButton::Middle)
+        ));
     }
 
     #[test]
@@ -302,7 +310,7 @@ mod tests {
         let client = GpmClient::new();
         let buf = make_event(0, 0, 10, 10, 1, 1); // wdy > 0 = scroll up
         let event = client.parse_event(&buf);
-        
+
         assert!(matches!(event.kind, MouseEventKind::ScrollUp));
     }
 
@@ -311,7 +319,7 @@ mod tests {
         let client = GpmClient::new();
         let buf = make_event(0, 0, 10, 10, 1, -1); // wdy < 0 = scroll down
         let event = client.parse_event(&buf);
-        
+
         assert!(matches!(event.kind, MouseEventKind::ScrollDown));
     }
 
@@ -321,7 +329,7 @@ mod tests {
         // Shift = 1, Ctrl = 4, Alt = 8
         let buf = make_event(0, 1 | 4 | 8, 10, 10, 1, 0);
         let event = client.parse_event(&buf);
-        
+
         assert!(event.shift);
         assert!(event.ctrl);
         assert!(event.alt);
@@ -332,7 +340,7 @@ mod tests {
         let client = GpmClient::new();
         let buf = make_event(0, 1, 10, 10, 1, 0);
         let event = client.parse_event(&buf);
-        
+
         assert!(event.shift);
         assert!(!event.ctrl);
         assert!(!event.alt);
@@ -343,9 +351,12 @@ mod tests {
         let client = GpmClient::new();
         let buf = make_event(GPM_B_LEFT, 0, 10, 10, GPM_DOWN | GPM_DOUBLE, 0);
         let event = client.parse_event(&buf);
-        
+
         assert_eq!(event.click_count, 2);
-        assert!(matches!(event.kind, MouseEventKind::Down(MouseButton::Left)));
+        assert!(matches!(
+            event.kind,
+            MouseEventKind::Down(MouseButton::Left)
+        ));
     }
 
     #[test]
@@ -353,7 +364,7 @@ mod tests {
         let client = GpmClient::new();
         let buf = make_event(GPM_B_LEFT, 0, 10, 10, GPM_DOWN | GPM_TRIPLE, 0);
         let event = client.parse_event(&buf);
-        
+
         assert_eq!(event.click_count, 3);
     }
 
@@ -363,7 +374,7 @@ mod tests {
         // Test with x=0, y=0 (edge case - GPM uses 1-based)
         let buf = make_event(0, 0, 0, 0, 1, 0);
         let event = client.parse_event(&buf);
-        
+
         // Should clamp to 0, not underflow
         assert_eq!(event.column, 0);
         assert_eq!(event.row, 0);
@@ -375,7 +386,7 @@ mod tests {
         // Test with negative coordinates (shouldn't happen but be safe)
         let buf = make_event(0, 0, -5, -3, 1, 0);
         let event = client.parse_event(&buf);
-        
+
         // Should clamp to 0
         assert_eq!(event.column, 0);
         assert_eq!(event.row, 0);

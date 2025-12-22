@@ -201,7 +201,10 @@ impl SnippetManager {
             i += 1;
         }
 
-        let final_offset = cursor_offset.unwrap_or(result.len());
+        let final_offset = match cursor_offset {
+            Some(o) => o,
+            None => result.len(),
+        };
         (result, final_offset)
     }
 }

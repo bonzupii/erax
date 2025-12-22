@@ -213,11 +213,14 @@ impl Command for ListBuffers {
 
             let modified_marker = if buffer.modified { "*" } else { " " };
 
-            let filename_str = buffer
+            let filename_str = match buffer
                 .filename
                 .as_ref()
                 .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| "untitled".to_string());
+            {
+                Some(s) => s,
+                None => "untitled".to_string(),
+            };
 
             buffer_list.push_str(&format!(
                 "{} {} {}\n",

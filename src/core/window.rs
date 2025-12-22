@@ -250,9 +250,12 @@ impl Window {
 
     /// Update the visual cursor position based on content width (tabs, wide chars)
     pub fn update_visual_cursor(&mut self, buffer: &Buffer) {
-        let line_text = buffer.line(self.cursor_y).unwrap_or_default();
-        self.visual_cursor_x =
-            crate::core::utf8::visual_width_up_to(&line_text, self.cursor_x, self.tab_width);
+        if let Some(line_text) = buffer.line(self.cursor_y) {
+            self.visual_cursor_x =
+                crate::core::utf8::visual_width_up_to(&line_text, self.cursor_x, self.tab_width);
+        } else {
+            self.visual_cursor_x = 0;
+        }
     }
 
     /// Ensure cursor is within valid bounds
@@ -308,7 +311,10 @@ impl Window {
         let max_scroll = line_count.saturating_sub(self.height);
 
         if lines > 0 {
-            self.scroll_offset = self.scroll_offset.saturating_add(lines as usize).min(max_scroll);
+            self.scroll_offset = self
+                .scroll_offset
+                .saturating_add(lines as usize)
+                .min(max_scroll);
         } else {
             self.scroll_offset = self.scroll_offset.saturating_sub((-lines) as usize);
         }
@@ -357,7 +363,10 @@ impl Window {
 
     /// Insert a character at the cursor position
     pub fn insert_char(&mut self, buffer: &mut Buffer, c: char) {
-        let absolute_pos = self.get_byte_offset(buffer).unwrap_or(0);
+        let absolute_pos = match self.get_byte_offset(buffer) {
+            Some(pos) => pos,
+            None => 0,
+        };
 
         // Use stack buffer to avoid heap allocation
         let mut char_buf = [0u8; 4];
@@ -394,14 +403,20 @@ impl Window {
                         self.cursor_x = 0;
                     }
                     // Now delete the newline character at cursor position
-                    let absolute_pos = self.get_byte_offset(buffer).unwrap_or(0);
+                    let absolute_pos = match self.get_byte_offset(buffer) {
+                        Some(pos) => pos,
+                        None => 0,
+                    };
                     buffer.delete(absolute_pos, 1);
                 }
                 // Else: at beginning of buffer, nothing to delete
             } else {
                 // Delete character before cursor
                 self.cursor_x -= 1;
-                let absolute_pos = self.get_byte_offset(buffer).unwrap_or(0);
+                let absolute_pos = match self.get_byte_offset(buffer) {
+                    Some(pos) => pos,
+                    None => 0,
+                };
 
                 // Get the byte length of the grapheme at cursor position
                 if let Some(ref text) = line_text {
@@ -415,7 +430,10 @@ impl Window {
             }
         } else {
             // Delete forward
-            let absolute_pos = self.get_byte_offset(buffer).unwrap_or(0);
+            let absolute_pos = match self.get_byte_offset(buffer) {
+                Some(pos) => pos,
+                None => 0,
+            };
 
             if let Some(ref text) = line_text {
                 let graphemes: Vec<&str> = crate::core::utf8::GraphemeIterator::new(text).collect();

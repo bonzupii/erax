@@ -57,7 +57,10 @@ pub fn byte_to_grapheme_col(text: &str, byte_offset: usize) -> usize {
 /// Get the display width of a single character (for monospace terminal display)
 /// Returns 0 for control characters, 1 for ASCII, 2 for wide CJK characters, etc.
 pub fn char_width(c: char) -> usize {
-    unicode_width::UnicodeWidthChar::width(c).unwrap_or(0)
+    match unicode_width::UnicodeWidthChar::width(c) {
+        Some(w) => w,
+        None => 0,
+    }
 }
 
 /// Get the display width of a grapheme cluster (sum of all character widths)
