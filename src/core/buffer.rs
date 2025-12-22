@@ -3,7 +3,6 @@
 //!
 //! Simplified architecture: Uses ropey Rope for all files.
 //! - Rope provides O(log n) line operations natively - no need for custom SumTree
-//! - For huge files (>500MB), ChunkedBuffer will be used (TODO: Phase 3)
 
 use ropey::Rope;
 use std::collections::VecDeque;
@@ -116,12 +115,9 @@ impl Buffer {
         let file_size = metadata.len();
         let modified_time = metadata.modified().ok();
 
-        // TODO: For files >500MB, use ChunkedBuffer (Phase 3)
-        // For now, use Rope for all files
         const HUGE_FILE_THRESHOLD: u64 = 500 * 1024 * 1024; // 500MB
 
         if file_size > HUGE_FILE_THRESHOLD {
-            // Warn but still load - ChunkedBuffer will be added in Phase 3
             eprintln!(
                 "Warning: File is very large ({:.1}MB). Loading may be slow.",
                 file_size as f64 / (1024.0 * 1024.0)

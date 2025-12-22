@@ -22,7 +22,7 @@
 //!
 //! Software terminology dictionary (~3,000 terms) for programming and tech jargon.
 
-// Wired into display.rs for tint rendering. Underline requires terminal support.
+// Wired into display.rs for tint rendering.
 
 use std::collections::HashSet;
 

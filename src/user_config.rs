@@ -229,34 +229,6 @@ pub fn configure(config: &mut Config) {
     //   "monochrome_high_contrast", "deuteranopia_azure", "protanopia_lumos",
     //   "tritanopia_blossom", "achroma_noir"
     config.set("theme", "dracula");
-
-    // =========================================================================
-    // LSP SERVERS
-    // =========================================================================
-    // Configure language servers for IDE features
-    // Format: config.lsp("language", "server-command");
-    config.lsp("c", "clangd");
-    config.lsp("cpp", "clangd");
-    config.lsp("rust", "rust-analyzer");
-    config.lsp("python", "pyright");
-    config.lsp("sh", "bash-language-server");
-    config.lsp("json", "vscode-json-languageserver");
-    config.lsp("yaml", "yaml-language-server");
-    config.lsp("toml", "taplo");
-
-    // =========================================================================
-    // OPTIONAL FEATURES
-    // =========================================================================
-    // Git integration (shows modified lines, branch info)
-    config.set("git_integration", true);
-
-    // AI completion (experimental, off by default)
-    config.set("ai_completion", false);
-    config.set(
-        "ai_api_endpoint",
-        "http://localhost:11434/v1/chat/completions",
-    ); // Ollama endpoint
-    config.set("ai_api_key_env", ""); // Empty for Ollama, or "OPENAI_API_KEY" for OpenAI
 }
 
 #[cfg(test)]
@@ -483,19 +455,5 @@ mod tests {
         assert_eq!(config.get_int("tab_width"), Some(8));
         assert_eq!(config.get_bool("use_tabs"), Some(true));
         assert_eq!(config.get_bool("line_numbers"), Some(true));
-
-        // Verify LSP
-        assert_eq!(config.lsp_servers.get("c"), Some(&"clangd".to_string()));
-        assert_eq!(
-            config.lsp_servers.get("rust"),
-            Some(&"rust-analyzer".to_string())
-        );
-
-        // Verify AI config
-        assert_eq!(config.get_bool("ai_completion"), Some(false));
-        assert_eq!(
-            config.get_string("ai_api_endpoint"),
-            Some("http://localhost:11434/v1/chat/completions")
-        );
     }
 }
