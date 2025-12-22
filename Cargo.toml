@@ -1,0 +1,63 @@
+[package]
+name = "erax"
+version = "0.8.0-alpha"
+edition = "2024"
+license = "GPL-2.0-only"
+description = "A modern, high-performance code editor for systems developers"
+repository = "https://github.com/bonzupii/erax"
+readme = "README.md"
+keywords = ["editor", "text-editor", "code-editor", "terminal", "gpu"]
+categories = ["command-line-utilities", "text-editors"]
+
+[lints.rust]
+warnings = "deny"      # DO NOT CHANGE
+unsafe_code = "deny"   # DO NOT CHANGE
+dead_code = "deny"     # DO NOT CHANGE
+missing_docs = "allow" # TODO: Enable once APIs stabilize
+
+[dependencies]
+# Async
+pollster = "0.4"
+
+# System
+libc = "0.2"
+crossterm = "0.29"
+portable-pty = "0.9"
+
+# Unicode
+unicode-segmentation = "1.12"
+unicode-width = "0.2"
+
+# GUI
+winit = { version = "0.30", optional = true }
+wgpu = { version = "27", optional = true }
+bytemuck = { version = "1.21", features = ["derive"], optional = true }
+ab_glyph = { version = "0.2", optional = true }
+font-kit = { version = "0.14", optional = true }
+
+# Core
+ropey = "1.6"
+tempfile = "3.15"
+fs4 = "0.12"
+
+# Sed
+regex = "1.12"
+similar = "2.7.0"
+
+# Terminal emulation (optional)
+vte = { version = "0.15", optional = true } # CHANGE TO ALACRITTY
+
+[features]
+default = ["gui"]
+gui = ["dep:winit", "dep:wgpu", "dep:bytemuck", "dep:ab_glyph", "dep:font-kit"]
+terminal = ["dep:vte"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
