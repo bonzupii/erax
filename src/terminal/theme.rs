@@ -23,7 +23,6 @@ macro_rules! rgb {
 /// This eliminates RGB duplication by defining colors once per theme,
 /// then mapping them to UI/syntax roles via accessor methods.
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // secondary field reserved for future UI accents
 pub struct Palette {
     pub bg: Color,
     pub fg: Color,
@@ -103,7 +102,6 @@ pub struct Theme {
     pub palette: Palette,
 }
 
-#[allow(dead_code)]
 impl Theme {
     /// Create a new theme with the given name and palette
     pub fn new(name: impl Into<String>, palette: Palette) -> Self {
@@ -182,9 +180,9 @@ impl Theme {
         self.status_fg()
     }
 
-    /// Inactive status line background
+    /// Inactive status line background (uses secondary accent)
     pub fn status_line_inactive_bg(&self) -> &Color {
-        &self.palette.gray_dark
+        self.secondary()
     }
 
     /// Inactive status line foreground
@@ -207,7 +205,7 @@ impl Theme {
         &self.palette.info
     }
 
-    /// Secondary color
+    /// Secondary color (used for inactive UI elements)
     pub fn secondary(&self) -> &Color {
         &self.palette.secondary
     }

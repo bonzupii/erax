@@ -3,8 +3,6 @@
 //! This module provides a robust VT100/xterm compliant terminal emulator
 //! backed by the VTE parser for ANSI escape sequence handling.
 
-#![allow(dead_code)]
-
 use portable_pty::{Child, CommandBuilder, NativePtySystem, PtyPair, PtySize, PtySystem};
 use std::io::{Read, Write};
 use std::sync::mpsc::{self, Receiver};

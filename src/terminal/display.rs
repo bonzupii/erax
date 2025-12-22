@@ -208,27 +208,6 @@ impl Display {
         self.dirty = true;
     }
 
-    /// Mark a specific row as needing redraw
-    #[allow(dead_code)] // Will be used when integrating with EditorApp edit tracking
-    pub fn mark_row_dirty(&mut self, row: usize) {
-        self.dirty_tracker.mark_row(row);
-        self.dirty = true;
-    }
-
-    /// Mark a rectangular region as needing redraw
-    #[allow(dead_code)] // Will be used when integrating with EditorApp edit tracking
-    pub fn mark_rect_dirty(&mut self, rect: &Rect) {
-        self.dirty_tracker.mark_rect(rect);
-        self.dirty = true;
-    }
-
-    /// Mark entire screen as needing redraw
-    #[allow(dead_code)] // Will be used when integrating with EditorApp edit tracking
-    pub fn mark_all_dirty(&mut self) {
-        self.dirty_tracker.mark_full_redraw();
-        self.dirty = true;
-    }
-
     /// Set the current key sequence state
     pub fn set_key_sequence(&mut self, seq: String) {
         self.key_sequence = seq;

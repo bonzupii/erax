@@ -114,57 +114,6 @@ impl GridMetrics {
     }
 }
 
-/// Calculate scrollbar thumb position and size.
-///
-/// Returns (thumb_start, thumb_end) as absolute positions within the track.
-/// Both TUI and GUI should use this for consistent scrollbar rendering.
-///
-/// # Arguments
-/// * `visible_rows` - Number of rows currently visible in the viewport
-/// * `total_rows` - Total number of rows in the buffer
-/// * `scroll_offset` - Current scroll position (first visible row index)
-/// * `track_height` - Height of the scrollbar track in rows/pixels
-///
-/// # Returns
-/// (thumb_start, thumb_end) - Start and end positions of the scrollbar thumb
-#[allow(dead_code)] // Will be used when TUI/GUI scrollbar rendering is unified
-pub fn scrollbar_thumb_range(
-    visible_rows: usize,
-    total_rows: usize,
-    scroll_offset: usize,
-    track_height: usize,
-) -> (usize, usize) {
-    if total_rows == 0 || track_height == 0 {
-        return (0, track_height.max(1));
-    }
-
-    // Minimum thumb size (at least 1 unit, or 10% of track)
-    let min_thumb_size = (track_height / 10).max(1);
-
-    // Calculate thumb size proportional to visible/total ratio
-    let thumb_size = if total_rows <= visible_rows {
-        track_height // Full track if all content is visible
-    } else {
-        let ratio = visible_rows as f64 / total_rows as f64;
-        (ratio * track_height as f64).round() as usize
-    }
-    .max(min_thumb_size);
-
-    // Calculate thumb position
-    let scrollable_range = total_rows.saturating_sub(visible_rows);
-    let thumb_start = if scrollable_range == 0 {
-        0
-    } else {
-        let position_ratio = scroll_offset as f64 / scrollable_range as f64;
-        let available_track = track_height.saturating_sub(thumb_size);
-        (position_ratio * available_track as f64).round() as usize
-    };
-
-    let thumb_end = (thumb_start + thumb_size).min(track_height);
-
-    (thumb_start, thumb_end)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

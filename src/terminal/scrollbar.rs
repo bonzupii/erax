@@ -26,6 +26,50 @@ impl ScrollbarTheme {
     };
 }
 
+/// Calculate scrollbar thumb position and size.
+///
+/// Returns (thumb_start, thumb_size) positions within the track.
+/// This is the unified calculation used by both vertical and horizontal scrollbars.
+///
+/// # Arguments
+/// * `visible` - Number of rows/cols currently visible in the viewport
+/// * `total` - Total number of rows/cols in the content
+/// * `scroll_offset` - Current scroll position (first visible row/col index)
+/// * `track_size` - Size of the scrollbar track in rows/cols
+pub fn thumb_range(
+    visible: usize,
+    total: usize,
+    scroll_offset: usize,
+    track_size: usize,
+) -> (usize, usize) {
+    if total == 0 || track_size == 0 {
+        return (0, track_size.max(1));
+    }
+
+    // Minimum thumb size (at least 2 units)
+    let min_thumb_size = 2;
+
+    // Calculate thumb size proportional to visible/total ratio
+    let thumb_size = if total <= visible {
+        track_size // Full track if all content is visible
+    } else {
+        (visible * track_size / total)
+            .max(min_thumb_size)
+            .min(track_size)
+    };
+
+    // Calculate thumb position
+    let scrollable_range = total.saturating_sub(visible);
+    let thumb_start = if scrollable_range == 0 {
+        0
+    } else {
+        let available_track = track_size.saturating_sub(thumb_size);
+        (scroll_offset * available_track / scrollable_range).min(available_track)
+    };
+
+    (thumb_start, thumb_size)
+}
+
 /// Render a vertical scrollbar on the right edge of a window
 pub fn render_vertical(
     buffer: &mut ScreenBuffer,
@@ -46,17 +90,9 @@ pub fn render_vertical(
     let track_height = text_height.saturating_sub(arrow_rows * 2);
     let line_count = line_count.max(1);
 
-    // Calculate thumb position and size
-    let visible_lines = track_height;
-    let thumb_size = (visible_lines * visible_lines / line_count)
-        .max(2)
-        .min(track_height);
-    let max_scroll = line_count.saturating_sub(visible_lines);
-    let thumb_start = if max_scroll > 0 {
-        (scroll_offset * (track_height - thumb_size) / max_scroll).min(track_height - thumb_size)
-    } else {
-        0
-    };
+    // Use unified thumb calculation
+    let (thumb_start, thumb_size) =
+        thumb_range(track_height, line_count, scroll_offset, track_height);
 
     let theme = ScrollbarTheme::HEAVY;
 
@@ -106,16 +142,9 @@ pub fn render_horizontal(
 
     let content_width = content_width.max(scroll_x + text_width);
 
-    // Calculate thumb size and position (same logic as vertical)
-    let thumb_size = (scrollbar_width * text_width / content_width)
-        .max(2)
-        .min(scrollbar_width);
-    let max_scroll = content_width.saturating_sub(text_width);
-    let thumb_start = if max_scroll > 0 {
-        (scroll_x * (scrollbar_width - thumb_size) / max_scroll).min(scrollbar_width - thumb_size)
-    } else {
-        0
-    };
+    // Use unified thumb calculation
+    let (thumb_start, thumb_size) =
+        thumb_range(text_width, content_width, scroll_x, scrollbar_width);
 
     let theme = ScrollbarTheme::HEAVY;
 

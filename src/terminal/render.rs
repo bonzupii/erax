@@ -23,7 +23,9 @@ pub fn render_display_to_terminal(
     write!(stdout, "\x1b[?25l")?;
 
     // Handle full redraw request (e.g. after resize) - use ANSI clear sequence
-    if display.needs_full_redraw {
+    // Check both display flag AND dirty_tracker's full redraw state
+    let needs_full = display.needs_full_redraw || display.dirty_tracker.needs_full_redraw();
+    if needs_full {
         write!(stdout, "\x1b[2J\x1b[H")?; // Clear screen and move cursor to top-left
     }
 
@@ -38,6 +40,11 @@ pub fn render_display_to_terminal(
     let mut cursor_moved = false;
 
     for y in 0..display.terminal_size.1 {
+        // Use dirty_tracker for row-level incremental rendering
+        if !needs_full && !display.dirty_tracker.is_row_dirty(y as usize) {
+            continue; // Skip clean rows entirely
+        }
+
         for x in 0..display.terminal_size.0 {
             let new_cell = match back_buffer.get(x, y) {
                 Some(cell) => cell,
@@ -47,7 +54,7 @@ pub fn render_display_to_terminal(
             let old_cell = front_buffer.get(x, y);
 
             // If not full redraw, check if cell changed
-            if !display.needs_full_redraw {
+            if !needs_full {
                 if let Some(old) = old_cell {
                     if old == new_cell {
                         continue; // No change, skip

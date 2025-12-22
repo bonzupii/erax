@@ -20,6 +20,29 @@ fn byte_to_cursor_position(
     (line, 0)
 }
 
+/// Get the byte range of the word at cursor position.
+/// Returns (start_byte, end_byte) of the word, or None if no word is found.
+fn get_word_range_at_cursor(
+    window: &crate::core::window::Window,
+    buffer: &crate::core::buffer::Buffer,
+) -> Option<(usize, usize)> {
+    let start_byte = match window.get_byte_offset(buffer) {
+        Some(b) => b,
+        None => return None,
+    };
+    let mut temp_window = window.clone();
+    temp_window.forward_word(buffer);
+    let end_byte = match temp_window.get_byte_offset(buffer) {
+        Some(b) => b,
+        None => return None,
+    };
+    if end_byte > start_byte {
+        Some((start_byte, end_byte))
+    } else {
+        None
+    }
+}
+
 /// Reformat paragraph to fit window width
 #[derive(Clone)]
 pub struct JustifyParagraph;
@@ -288,41 +311,44 @@ pub struct UpperWord;
 impl Command for UpperWord {
     fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
         let active_window_id = app.active_window;
-        let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
+        let buffer_id = match app.windows.get(&active_window_id).map(|w| w.buffer_id) {
+            Some(id) => id,
+            None => return DispatchResult::Success,
+        };
 
-        if let Some(buffer_id) = buffer_id {
-            if let Some(window) = app.windows.get(&active_window_id) {
+        let range = {
+            let window = match app.windows.get(&active_window_id) {
+                Some(w) => w,
+                None => return DispatchResult::Success,
+            };
+            let buffer = match app.buffers.get(&buffer_id) {
+                Some(b) => b,
+                None => return DispatchResult::Success,
+            };
+            get_word_range_at_cursor(window, buffer)
+        };
+
+        if let Some((start_byte, end_byte)) = range {
+            let new_text = {
+                let buffer = match app.buffers.get(&buffer_id) {
+                    Some(b) => b,
+                    None => return DispatchResult::Success,
+                };
+                buffer
+                    .get_range_as_string(start_byte, end_byte - start_byte)
+                    .to_uppercase()
+            };
+
+            if let Some(buffer_mut) = app.buffers.get_mut(&buffer_id) {
+                buffer_mut.delete(start_byte, end_byte - start_byte);
+                buffer_mut.insert(start_byte, &new_text);
+            }
+
+            if let Some(window_mut) = app.windows.get_mut(&active_window_id) {
                 if let Some(buffer) = app.buffers.get(&buffer_id) {
-                    let start_byte = match window.get_byte_offset(buffer) {
-                        Some(b) => b,
-                        None => 0,
-                    };
-                    let mut temp_window = window.clone();
-                    temp_window.forward_word(buffer);
-                    let end_byte = match temp_window.get_byte_offset(buffer) {
-                        Some(b) => b,
-                        None => 0,
-                    };
-
-                    if end_byte > start_byte {
-                        let word_text =
-                            buffer.get_range_as_string(start_byte, end_byte - start_byte);
-                        let new_text = word_text.to_uppercase();
-
-                        if let Some(buffer_mut) = app.buffers.get_mut(&buffer_id) {
-                            buffer_mut.delete(start_byte, end_byte - start_byte);
-                            buffer_mut.insert(start_byte, &new_text);
-                        }
-
-                        if let Some(window_mut) = app.windows.get_mut(&active_window_id) {
-                            if let Some(buffer) = app.buffers.get(&buffer_id) {
-                                let (line, col) =
-                                    byte_to_cursor_position(buffer, start_byte + new_text.len());
-                                window_mut.cursor_y = line;
-                                window_mut.cursor_x = col;
-                            }
-                        }
-                    }
+                    let (line, col) = byte_to_cursor_position(buffer, start_byte + new_text.len());
+                    window_mut.cursor_y = line;
+                    window_mut.cursor_x = col;
                 }
             }
         }
@@ -337,41 +363,44 @@ pub struct LowerWord;
 impl Command for LowerWord {
     fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
         let active_window_id = app.active_window;
-        let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
+        let buffer_id = match app.windows.get(&active_window_id).map(|w| w.buffer_id) {
+            Some(id) => id,
+            None => return DispatchResult::Success,
+        };
 
-        if let Some(buffer_id) = buffer_id {
-            if let Some(window) = app.windows.get(&active_window_id) {
+        let range = {
+            let window = match app.windows.get(&active_window_id) {
+                Some(w) => w,
+                None => return DispatchResult::Success,
+            };
+            let buffer = match app.buffers.get(&buffer_id) {
+                Some(b) => b,
+                None => return DispatchResult::Success,
+            };
+            get_word_range_at_cursor(window, buffer)
+        };
+
+        if let Some((start_byte, end_byte)) = range {
+            let new_text = {
+                let buffer = match app.buffers.get(&buffer_id) {
+                    Some(b) => b,
+                    None => return DispatchResult::Success,
+                };
+                buffer
+                    .get_range_as_string(start_byte, end_byte - start_byte)
+                    .to_lowercase()
+            };
+
+            if let Some(buffer_mut) = app.buffers.get_mut(&buffer_id) {
+                buffer_mut.delete(start_byte, end_byte - start_byte);
+                buffer_mut.insert(start_byte, &new_text);
+            }
+
+            if let Some(window_mut) = app.windows.get_mut(&active_window_id) {
                 if let Some(buffer) = app.buffers.get(&buffer_id) {
-                    let start_byte = match window.get_byte_offset(buffer) {
-                        Some(b) => b,
-                        None => 0,
-                    };
-                    let mut temp_window = window.clone();
-                    temp_window.forward_word(buffer);
-                    let end_byte = match temp_window.get_byte_offset(buffer) {
-                        Some(b) => b,
-                        None => 0,
-                    };
-
-                    if end_byte > start_byte {
-                        let word_text =
-                            buffer.get_range_as_string(start_byte, end_byte - start_byte);
-                        let new_text = word_text.to_lowercase();
-
-                        if let Some(buffer_mut) = app.buffers.get_mut(&buffer_id) {
-                            buffer_mut.delete(start_byte, end_byte - start_byte);
-                            buffer_mut.insert(start_byte, &new_text);
-                        }
-
-                        if let Some(window_mut) = app.windows.get_mut(&active_window_id) {
-                            if let Some(buffer) = app.buffers.get(&buffer_id) {
-                                let (line, col) =
-                                    byte_to_cursor_position(buffer, start_byte + new_text.len());
-                                window_mut.cursor_y = line;
-                                window_mut.cursor_x = col;
-                            }
-                        }
-                    }
+                    let (line, col) = byte_to_cursor_position(buffer, start_byte + new_text.len());
+                    window_mut.cursor_y = line;
+                    window_mut.cursor_x = col;
                 }
             }
         }
@@ -386,50 +415,47 @@ pub struct CapitalizeWord;
 impl Command for CapitalizeWord {
     fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
         let active_window_id = app.active_window;
-        let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
+        let buffer_id = match app.windows.get(&active_window_id).map(|w| w.buffer_id) {
+            Some(id) => id,
+            None => return DispatchResult::Success,
+        };
 
-        if let Some(buffer_id) = buffer_id {
-            if let Some(window) = app.windows.get(&active_window_id) {
+        let range = {
+            let window = match app.windows.get(&active_window_id) {
+                Some(w) => w,
+                None => return DispatchResult::Success,
+            };
+            let buffer = match app.buffers.get(&buffer_id) {
+                Some(b) => b,
+                None => return DispatchResult::Success,
+            };
+            get_word_range_at_cursor(window, buffer)
+        };
+
+        if let Some((start_byte, end_byte)) = range {
+            let new_text = {
+                let buffer = match app.buffers.get(&buffer_id) {
+                    Some(b) => b,
+                    None => return DispatchResult::Success,
+                };
+                let word_text = buffer.get_range_as_string(start_byte, end_byte - start_byte);
+                let mut c = word_text.chars();
+                match c.next() {
+                    None => String::new(),
+                    Some(f) => f.to_uppercase().collect::<String>() + &c.as_str().to_lowercase(),
+                }
+            };
+
+            if let Some(buffer_mut) = app.buffers.get_mut(&buffer_id) {
+                buffer_mut.delete(start_byte, end_byte - start_byte);
+                buffer_mut.insert(start_byte, &new_text);
+            }
+
+            if let Some(window_mut) = app.windows.get_mut(&active_window_id) {
                 if let Some(buffer) = app.buffers.get(&buffer_id) {
-                    let start_byte = match window.get_byte_offset(buffer) {
-                        Some(b) => b,
-                        None => 0,
-                    };
-                    let mut temp_window = window.clone();
-                    temp_window.forward_word(buffer);
-                    let end_byte = match temp_window.get_byte_offset(buffer) {
-                        Some(b) => b,
-                        None => 0,
-                    };
-
-                    if end_byte > start_byte {
-                        let word_text =
-                            buffer.get_range_as_string(start_byte, end_byte - start_byte);
-                        let new_text = {
-                            let mut c = word_text.chars();
-                            match c.next() {
-                                None => String::new(),
-                                Some(f) => {
-                                    f.to_uppercase().collect::<String>()
-                                        + &c.as_str().to_lowercase()
-                                }
-                            }
-                        };
-
-                        if let Some(buffer_mut) = app.buffers.get_mut(&buffer_id) {
-                            buffer_mut.delete(start_byte, end_byte - start_byte);
-                            buffer_mut.insert(start_byte, &new_text);
-                        }
-
-                        if let Some(window_mut) = app.windows.get_mut(&active_window_id) {
-                            if let Some(buffer) = app.buffers.get(&buffer_id) {
-                                let (line, col) =
-                                    byte_to_cursor_position(buffer, start_byte + new_text.len());
-                                window_mut.cursor_y = line;
-                                window_mut.cursor_x = col;
-                            }
-                        }
-                    }
+                    let (line, col) = byte_to_cursor_position(buffer, start_byte + new_text.len());
+                    window_mut.cursor_y = line;
+                    window_mut.cursor_x = col;
                 }
             }
         }

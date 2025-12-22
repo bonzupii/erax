@@ -3,13 +3,10 @@
 //! Tracks which regions of the screen need redrawing to minimize
 //! unnecessary full redraws and improve performance.
 
-#![allow(dead_code)] // Full integration pending - methods will be used in render loop optimization
-
 use crate::core::layout::Rect;
 
 /// Tracks dirty regions of the screen for incremental rendering
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Methods will be used when incremental rendering is fully integrated
 pub struct DirtyTracker {
     /// Full screen dimensions
     width: u16,
@@ -84,6 +81,7 @@ impl DirtyTracker {
     }
 
     /// Get dimensions
+    #[cfg(test)]
     pub fn dimensions(&self) -> (u16, u16) {
         (self.width, self.height)
     }
