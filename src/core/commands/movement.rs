@@ -1,9 +1,9 @@
 use crate::core::app::EditorApp;
+use crate::core::buffer::Buffer;
 /// Cursor movement commands
 use crate::core::command::Command;
 use crate::core::dispatcher::DispatchResult;
 use crate::core::window::Window;
-use crate::core::buffer::Buffer;
 
 /// Helper to update selection after cursor movement
 fn update_selection(window: &mut Window, buffer: &Buffer) {
@@ -15,23 +15,47 @@ fn update_selection(window: &mut Window, buffer: &Buffer) {
     }
 }
 
+/// Helper to execute a movement command with the standard boilerplate pattern.
+/// Reduces duplication across all movement commands.
+fn execute_movement<F>(app: &mut EditorApp, count: usize, movement_fn: F) -> DispatchResult
+where
+    F: Fn(&mut Window, &Buffer),
+{
+    let active_window_id = app.active_window;
+    let buffer_id = match app.windows.get(&active_window_id) {
+        Some(w) => w.buffer_id,
+        None => return DispatchResult::Success,
+    };
+
+    if let Some(buffer) = app.buffers.get(&buffer_id) {
+        if let Some(window) = app.windows.get_mut(&active_window_id) {
+            for _ in 0..count {
+                movement_fn(window, buffer);
+                update_selection(window, buffer);
+            }
+            window.ensure_cursor_visible(buffer);
+        }
+    }
+    DispatchResult::Success
+}
+
+/// Helper for single-execution movements (no count loop)
+fn execute_movement_once<F>(app: &mut EditorApp, movement_fn: F) -> DispatchResult
+where
+    F: Fn(&mut Window, &Buffer),
+{
+    execute_movement(app, 1, movement_fn)
+}
+
 /// Move cursor forward by character(s)
 #[derive(Clone)]
 pub struct ForwardChar;
 
 impl Command for ForwardChar {
     fn execute(&self, app: &mut EditorApp, count: usize) -> DispatchResult {
-        let active_window_id = app.active_window;
-        if let Some(window) = app.windows.get_mut(&active_window_id) {
-            if let Some(buffer) = app.buffers.get(&window.buffer_id) {
-                for _ in 0..count {
-                    window.move_forward(buffer);
-                    update_selection(window, buffer);
-                }
-                window.ensure_cursor_visible(buffer);
-            }
-        }
-        DispatchResult::Success
+        execute_movement(app, count, |window, buffer| {
+            window.move_forward(buffer);
+        })
     }
 }
 
@@ -41,17 +65,9 @@ pub struct BackwardChar;
 
 impl Command for BackwardChar {
     fn execute(&self, app: &mut EditorApp, count: usize) -> DispatchResult {
-        let active_window_id = app.active_window;
-        if let Some(window) = app.windows.get_mut(&active_window_id) {
-            if let Some(buffer) = app.buffers.get(&window.buffer_id) {
-                for _ in 0..count {
-                    window.move_backward(buffer);
-                    update_selection(window, buffer);
-                }
-                window.ensure_cursor_visible(buffer);
-            }
-        }
-        DispatchResult::Success
+        execute_movement(app, count, |window, buffer| {
+            window.move_backward(buffer);
+        })
     }
 }
 
@@ -61,21 +77,9 @@ pub struct NextLine;
 
 impl Command for NextLine {
     fn execute(&self, app: &mut EditorApp, count: usize) -> DispatchResult {
-        let active_window_id = app.active_window;
-        let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
-
-        if let Some(buffer_id) = buffer_id {
-            for _ in 0..count {
-                if let Some(window) = app.windows.get_mut(&active_window_id) {
-                    if let Some(buffer) = app.buffers.get(&buffer_id) {
-                        window.move_down(buffer);
-                        update_selection(window, buffer);
-                        window.ensure_cursor_visible(buffer);
-                    }
-                }
-            }
-        }
-        DispatchResult::Success
+        execute_movement(app, count, |window, buffer| {
+            window.move_down(buffer);
+        })
     }
 }
 
@@ -85,21 +89,9 @@ pub struct PreviousLine;
 
 impl Command for PreviousLine {
     fn execute(&self, app: &mut EditorApp, count: usize) -> DispatchResult {
-        let active_window_id = app.active_window;
-        let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
-
-        if let Some(buffer_id) = buffer_id {
-            for _ in 0..count {
-                if let Some(window) = app.windows.get_mut(&active_window_id) {
-                    if let Some(buffer) = app.buffers.get(&buffer_id) {
-                        window.move_up(buffer);
-                        update_selection(window, buffer);
-                        window.ensure_cursor_visible(buffer);
-                    }
-                }
-            }
-        }
-        DispatchResult::Success
+        execute_movement(app, count, |window, buffer| {
+            window.move_up(buffer);
+        })
     }
 }
 
@@ -109,19 +101,9 @@ pub struct BeginningOfLine;
 
 impl Command for BeginningOfLine {
     fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
-        let active_window_id = app.active_window;
-        let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
-
-        if let Some(buffer_id) = buffer_id {
-            if let Some(window) = app.windows.get_mut(&active_window_id) {
-                if let Some(buffer) = app.buffers.get(&buffer_id) {
-                    window.beginning_of_line(buffer);
-                    update_selection(window, buffer);
-                    window.ensure_cursor_visible(buffer);
-                }
-            }
-        }
-        DispatchResult::Success
+        execute_movement_once(app, |window, buffer| {
+            window.beginning_of_line(buffer);
+        })
     }
 }
 
@@ -131,19 +113,9 @@ pub struct EndOfLine;
 
 impl Command for EndOfLine {
     fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
-        let active_window_id = app.active_window;
-        let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
-
-        if let Some(buffer_id) = buffer_id {
-            if let Some(window) = app.windows.get_mut(&active_window_id) {
-                if let Some(buffer) = app.buffers.get(&buffer_id) {
-                    window.end_of_line(buffer);
-                    update_selection(window, buffer);
-                    window.ensure_cursor_visible(buffer);
-                }
-            }
-        }
-        DispatchResult::Success
+        execute_movement_once(app, |window, buffer| {
+            window.end_of_line(buffer);
+        })
     }
 }
 
@@ -153,19 +125,9 @@ pub struct BeginningOfBuffer;
 
 impl Command for BeginningOfBuffer {
     fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
-        let active_window_id = app.active_window;
-        let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
-
-        if let Some(buffer_id) = buffer_id {
-            if let Some(window) = app.windows.get_mut(&active_window_id) {
-                if let Some(buffer) = app.buffers.get(&buffer_id) {
-                    window.beginning_of_buffer(buffer);
-                    update_selection(window, buffer);
-                    window.ensure_cursor_visible(buffer);
-                }
-            }
-        }
-        DispatchResult::Success
+        execute_movement_once(app, |window, buffer| {
+            window.beginning_of_buffer(buffer);
+        })
     }
 }
 
@@ -175,19 +137,9 @@ pub struct EndOfBuffer;
 
 impl Command for EndOfBuffer {
     fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
-        let active_window_id = app.active_window;
-        let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
-
-        if let Some(buffer_id) = buffer_id {
-            if let Some(window) = app.windows.get_mut(&active_window_id) {
-                if let Some(buffer) = app.buffers.get(&buffer_id) {
-                    window.end_of_buffer(buffer);
-                    update_selection(window, buffer);
-                    window.ensure_cursor_visible(buffer);
-                }
-            }
-        }
-        DispatchResult::Success
+        execute_movement_once(app, |window, buffer| {
+            window.end_of_buffer(buffer);
+        })
     }
 }
 
@@ -197,21 +149,9 @@ pub struct ForwardWord;
 
 impl Command for ForwardWord {
     fn execute(&self, app: &mut EditorApp, count: usize) -> DispatchResult {
-        let active_window_id = app.active_window;
-        let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
-
-        if let Some(buffer_id) = buffer_id {
-            for _ in 0..count {
-                if let Some(window) = app.windows.get_mut(&active_window_id) {
-                    if let Some(buffer) = app.buffers.get(&buffer_id) {
-                        window.forward_word(buffer);
-                        update_selection(window, buffer);
-                        window.ensure_cursor_visible(buffer);
-                    }
-                }
-            }
-        }
-        DispatchResult::Success
+        execute_movement(app, count, |window, buffer| {
+            window.forward_word(buffer);
+        })
     }
 }
 
@@ -221,21 +161,9 @@ pub struct BackwardWord;
 
 impl Command for BackwardWord {
     fn execute(&self, app: &mut EditorApp, count: usize) -> DispatchResult {
-        let active_window_id = app.active_window;
-        let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
-
-        if let Some(buffer_id) = buffer_id {
-            for _ in 0..count {
-                if let Some(window) = app.windows.get_mut(&active_window_id) {
-                    if let Some(buffer) = app.buffers.get(&buffer_id) {
-                        window.backward_word(buffer);
-                        update_selection(window, buffer);
-                        window.ensure_cursor_visible(buffer);
-                    }
-                }
-            }
-        }
-        DispatchResult::Success
+        execute_movement(app, count, |window, buffer| {
+            window.backward_word(buffer);
+        })
     }
 }
 

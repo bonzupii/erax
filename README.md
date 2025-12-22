@@ -67,7 +67,7 @@ cargo build --release
 - Some keybindings may not work properly, the ones that do may not work in all terminal emulators.
 - Large file performance (>100MB) is largely untested, but for the few large tests I've done it seemed reasonably performant.
 - Only tested on Fedora Linux, your mileage may vary on other distros or operating systems. Theoretically it should run on mac or windows but I have not tested it.
-- Documentation is incomplete and not polished. The --help command line arguement was broken during a refactoring stage and has not yet been restored.
+- Documentation is incomplete, innaccurate in many places, and not polished. 
 - Lossy UTF-8 decoding for corrupted/invalid UTF-8 has significant performance issues and is mostly untested at this time. Lossless UTF-8 encoding seems to work fine.
 - Syntax highlighting could be smarter and more generalized.
 - I've chosen many lightweight but experimental alternatives to heavy IDE features that one would expect in a code editor, these features will be refined and improved in future releases.
