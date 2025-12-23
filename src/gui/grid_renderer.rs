@@ -3,13 +3,14 @@
 //! This is a terminal emulator that renders the TUI's ScreenBuffer using wgpu.
 //! Each cell is rendered as a colored quad with a glyph texture.
 
-use ab_glyph::{Font, FontVec, PxScale, ScaleFont};
 use bytemuck::{Pod, Zeroable};
+use fontdue::Font;
 use pollster::block_on;
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 
 use crate::core::geometry::GridMetrics;
+use crate::gui::font_loader::FontLoader;
 use crate::terminal::display::ScreenBuffer;
 
 /// Vertex data for instanced cell rendering
@@ -63,15 +64,9 @@ pub struct GridRenderer {
     grid_pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
 
-    // Primary font and lazy-loaded fallbacks for missing glyphs
-    font: FontVec,
-    /// Names of fallback fonts to attempt loading (OS-specific priority order)
-    fallback_font_names: Vec<&'static str>,
-    /// Already loaded fallback fonts
-    loaded_fallbacks: Vec<FontVec>,
-    /// Index to next unloaded fallback name to try
-    next_fallback_index: usize,
-    font_scale: PxScale,
+    // Font loading and fallback management
+    font_loader: FontLoader,
+    font_size: f32,
     pub cell_width: f32,
     pub cell_height: f32,
 
@@ -188,29 +183,28 @@ impl GridRenderer {
         };
         surface.configure(&device, &config);
 
-        // Load font
-        let font_data = Self::load_font(font_path)?;
-        let font = FontVec::try_from_vec(font_data)?;
-        let font_scale = PxScale::from(scaled_font_size);
-        let scaled_font = font.as_scaled(font_scale);
+        // Load font via FontLoader
+        let font_loader = FontLoader::new(font_path)?;
 
-        // Calculate cell dimensions - round to integers for pixel-perfect rendering
-        // Use floor() for consistency: ensures cells never exceed the glyph advance
-        // Box-drawing characters will fill exactly this space
-        let glyph_id = font.glyph_id('M');
-        let cell_width = scaled_font.h_advance(glyph_id).round();
-        let cell_height = scaled_font.height().round();
+        // Calculate cell dimensions using fontdue metrics
+        // fontdue returns metrics at the specified pixel size
+        let (m_metrics, _) = font_loader.primary.rasterize('M', scaled_font_size);
+        let cell_width = m_metrics.advance_width.round();
+
+        // Get line height from font metrics
+        let line_metrics = font_loader
+            .primary
+            .horizontal_line_metrics(scaled_font_size);
+        let cell_height = match line_metrics {
+            Some(lm) => (lm.ascent - lm.descent + lm.line_gap).round(),
+            None => scaled_font_size.round(), // Fallback
+        };
 
         #[cfg(debug_assertions)]
         {
-            let test_glyph = font.glyph_id('─');
-            let box_advance = scaled_font.h_advance(test_glyph);
             eprintln!(
-                "GUI: cell={}x{}, h_advance(M)={:.2}, h_advance(─)={:.2}",
-                cell_width,
-                cell_height,
-                scaled_font.h_advance(glyph_id),
-                box_advance
+                "GUI: cell={}x{}, font_size={}",
+                cell_width, cell_height, scaled_font_size
             );
         }
 
@@ -381,11 +375,8 @@ impl GridRenderer {
             size: (size.width, size.height),
             grid_pipeline,
             bind_group_layout,
-            font,
-            fallback_font_names: Self::get_fallback_font_names(),
-            loaded_fallbacks: Vec::new(),
-            next_fallback_index: 0,
-            font_scale,
+            font_loader,
+            font_size: scaled_font_size,
             cell_width,
             cell_height,
             glyph_atlas,
@@ -402,210 +393,6 @@ impl GridRenderer {
         })
     }
 
-    /// Load font from path or system font database using font-kit
-    /// Uses proper system APIs: fontconfig (Linux), Core Text (macOS), DirectWrite (Windows)
-    fn load_font(configured_font: Option<&str>) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        use font_kit::family_name::FamilyName;
-        use font_kit::properties::{Properties, Weight};
-        use font_kit::source::SystemSource;
-
-        // If user specified a font path, try loading it directly first (fast path)
-        if let Some(path) = configured_font {
-            if let Ok(data) = std::fs::read(path) {
-                #[cfg(debug_assertions)]
-                eprintln!("GUI: Using configured font path: {}", path);
-                return Ok(data);
-            }
-        }
-
-        // Create SystemSource ONCE - this is expensive on Linux (fontconfig init)
-        let source = SystemSource::new();
-        let mut props_builder = Properties::new();
-        let props = props_builder.weight(Weight::NORMAL);
-
-        // If user specified a font name, try it first
-        if let Some(name) = configured_font {
-            if let Ok(handle) =
-                source.select_best_match(&[FamilyName::Title(name.to_string())], &props)
-            {
-                if let Ok(font) = handle.load() {
-                    if let Some(data) = font.copy_font_data() {
-                        #[cfg(debug_assertions)]
-                        eprintln!("GUI: Using configured font: {}", name);
-                        return Ok(data.to_vec());
-                    }
-                }
-            }
-        }
-
-        // Try system monospace first (fastest - single fontconfig query)
-        if let Ok(handle) = source.select_best_match(&[FamilyName::Monospace], &props) {
-            if let Ok(font) = handle.load() {
-                if let Some(data) = font.copy_font_data() {
-                    #[cfg(debug_assertions)]
-                    eprintln!("GUI: Using system default monospace");
-                    return Ok(data.to_vec());
-                }
-            }
-        }
-
-        // Fallback: try common monospace fonts (reduced list for speed)
-        let fallbacks = [
-            "DejaVu Sans Mono", // Very common on Linux
-            "Noto Sans Mono",
-            "Liberation Mono",
-            "Consolas", // Windows
-            "Menlo",    // macOS
-        ];
-
-        for name in &fallbacks {
-            if let Ok(handle) =
-                source.select_best_match(&[FamilyName::Title(name.to_string())], &props)
-            {
-                if let Ok(font) = handle.load() {
-                    if let Some(data) = font.copy_font_data() {
-                        #[cfg(debug_assertions)]
-                        eprintln!("GUI: Using fallback font: {}", name);
-                        return Ok(data.to_vec());
-                    }
-                }
-            }
-        }
-
-        Err("No monospace font found. Install a monospace font (e.g., noto-fonts-mono).".into())
-    }
-
-    /// Get list of fallback font names to try (lazy loaded on-demand)
-    /// OS-specific fonts prioritized, then universal fallbacks
-    fn get_fallback_font_names() -> Vec<&'static str> {
-        let mut names: Vec<&'static str> = Vec::new();
-
-        // OS-specific priority fonts first
-        #[cfg(target_os = "macos")]
-        {
-            names.extend_from_slice(&[
-                "Menlo",
-                "Monaco",
-                "Hiragino Sans",
-                "Hiragino Kaku Gothic Pro",
-                "Apple Color Emoji",
-            ]);
-        }
-
-        #[cfg(target_os = "windows")]
-        {
-            names.extend_from_slice(&[
-                "Consolas",
-                "Cascadia Code",
-                "MS Gothic",
-                "MS Mincho",
-                "Segoe UI Emoji",
-                "Segoe UI Historic",
-            ]);
-        }
-
-        #[cfg(target_os = "linux")]
-        {
-            names.extend_from_slice(&[
-                "DejaVu Sans Mono",
-                "Noto Sans Mono",
-                "Noto Color Emoji",
-                "WenQuanYi Micro Hei Mono",
-            ]);
-        }
-
-        // Universal fallbacks (cross-platform)
-        // Ordered by script importance and availability
-        names.extend_from_slice(&[
-            // === Wide Unicode Coverage ===
-            "Noto Sans Mono",
-            "DejaVu Sans Mono",
-            "DejaVu Sans", // Has many scripts
-            "Unifont",     // Massive coverage - prioritize
-            "GNU Unifont",
-            "FreeMono",
-            "FreeSans",
-            // === CJK ===
-            "Noto Sans Mono CJK JP",
-            "Noto Sans Mono CJK SC",
-            "Noto Sans CJK JP",
-            "Source Han Sans",
-            // === Caucasian Scripts ===
-            "Noto Sans Georgian", // Georgian ონი, etc.
-            "DejaVu Sans",        // Has Georgian
-            "Noto Sans Armenian",
-            // === Middle East & Africa ===
-            "Noto Sans Arabic",
-            "Noto Sans Hebrew",
-            "Noto Sans Ethiopic",
-            "Noto Sans Thai",
-            // === Indic ===
-            "Noto Sans Devanagari",
-            "Noto Sans Tamil",
-            "Noto Sans Bengali",
-            // === Symbols & Math ===
-            "Noto Sans Symbols",
-            "Noto Sans Symbols 2",
-            "Noto Sans Math",
-            "Symbola",
-            // === Historic/Runic ===
-            "Noto Sans Runic",
-            "Junicode",
-            "Segoe UI Historic",
-            // === Emoji ===
-            "Noto Emoji",
-            "Noto Color Emoji",
-        ]);
-
-        names
-    }
-
-    /// Load a single fallback font by name
-    fn load_fallback_font(name: &str) -> Option<FontVec> {
-        use font_kit::family_name::FamilyName;
-        use font_kit::properties::{Properties, Weight};
-        use font_kit::source::SystemSource;
-
-        let source = SystemSource::new();
-        let handle = source
-            .select_best_match(
-                &[FamilyName::Title(name.to_string())],
-                &Properties::new().weight(Weight::NORMAL),
-            )
-            .ok()?;
-        let font = handle.load().ok()?;
-        let data = font.copy_font_data()?;
-        FontVec::try_from_vec(data.to_vec()).ok()
-    }
-
-    /// Search ALL system fonts for one that contains a specific character
-    /// This is used as a last resort when our fallback list doesn't have the glyph
-    fn find_font_for_char(ch: char) -> Option<FontVec> {
-        use font_kit::source::SystemSource;
-
-        let source = SystemSource::new();
-        let handles = source.all_fonts().ok()?;
-
-        for handle in handles {
-            if let Ok(font) = handle.load() {
-                // Check if this font has the character
-                if font.glyph_for_char(ch).is_some() {
-                    if let Some(data) = font.copy_font_data() {
-                        if let Ok(font_vec) = FontVec::try_from_vec(data.to_vec()) {
-                            #[cfg(debug_assertions)]
-                            eprintln!(
-                                "GUI: Found font for '{}' via system search: {:?}",
-                                ch,
-                                font.full_name()
-                            );
-                            return Some(font_vec);
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
     /// Compute grid dimensions in cells
     fn compute_grid_dimensions(width: f32, height: f32, cell_w: f32, cell_h: f32) -> (u32, u32) {
         let usable_width = (width - MIN_PADDING * 2.0).max(0.0);
@@ -677,186 +464,6 @@ impl GridRenderer {
         metrics.grid_dimensions()
     }
 
-    /// Draw a box drawing character procedurally for perfect alignment
-    /// Box drawing chars (U+2500-U+257F) are rendered as lines that span edge-to-edge
-    fn draw_box_char(bitmap: &mut [u8], ch: char, cell_w: u32, cell_h: u32) {
-        let cx = cell_w / 2; // Center X
-        let cy = cell_h / 2; // Center Y
-        let light = 1u32.max(cell_h / 12); // Light line thickness
-        let heavy = (light * 2).max(2); // Heavy line thickness
-
-        // Parse character into line segments: (left, right, up, down)
-        // Each value: 0=none, 1=light, 2=heavy
-        // Based on Unicode Box Drawing character names and positions
-        let (left, right, up, down) = match ch {
-            // Light/heavy horizontal and vertical lines
-            '─' => (1, 1, 0, 0), // U+2500
-            '━' => (2, 2, 0, 0), // U+2501
-            '│' => (0, 0, 1, 1), // U+2502
-            '┃' => (0, 0, 2, 2), // U+2503
-            // Down and Right corners (┌ variants)
-            '┌' => (0, 1, 0, 1), // U+250C
-            '┍' => (0, 2, 0, 1), // U+250D
-            '┎' => (0, 1, 0, 2), // U+250E
-            '┏' => (0, 2, 0, 2), // U+250F
-            // Down and Left corners (┐ variants)
-            '┐' => (1, 0, 0, 1), // U+2510
-            '┑' => (2, 0, 0, 1), // U+2511
-            '┒' => (1, 0, 0, 2), // U+2512
-            '┓' => (2, 0, 0, 2), // U+2513
-            // Up and Right corners (└ variants)
-            '└' => (0, 1, 1, 0), // U+2514
-            '┕' => (0, 2, 1, 0), // U+2515
-            '┖' => (0, 1, 2, 0), // U+2516
-            '┗' => (0, 2, 2, 0), // U+2517
-            // Up and Left corners (┘ variants)
-            '┘' => (1, 0, 1, 0), // U+2518
-            '┙' => (2, 0, 1, 0), // U+2519
-            '┚' => (1, 0, 2, 0), // U+251A
-            '┛' => (2, 0, 2, 0), // U+251B
-            // Vertical and Right tee (├ variants)
-            '├' => (0, 1, 1, 1), // U+251C
-            '┝' => (0, 2, 1, 1), // U+251D
-            '┞' => (0, 1, 2, 1), // U+251E
-            '┟' => (0, 1, 1, 2), // U+251F
-            '┠' => (0, 1, 2, 2), // U+2520
-            '┡' => (0, 2, 2, 1), // U+2521
-            '┢' => (0, 2, 1, 2), // U+2522
-            '┣' => (0, 2, 2, 2), // U+2523
-            // Vertical and Left tee (┤ variants)
-            '┤' => (1, 0, 1, 1), // U+2524
-            '┥' => (2, 0, 1, 1), // U+2525
-            '┦' => (1, 0, 2, 1), // U+2526
-            '┧' => (1, 0, 1, 2), // U+2527
-            '┨' => (1, 0, 2, 2), // U+2528
-            '┩' => (2, 0, 2, 1), // U+2529
-            '┪' => (2, 0, 1, 2), // U+252A
-            '┫' => (2, 0, 2, 2), // U+252B
-            // Down and Horizontal tee (┬ variants)
-            '┬' => (1, 1, 0, 1), // U+252C
-            '┭' => (2, 1, 0, 1), // U+252D
-            '┮' => (1, 2, 0, 1), // U+252E
-            '┯' => (2, 2, 0, 1), // U+252F
-            '┰' => (1, 1, 0, 2), // U+2530
-            '┱' => (2, 1, 0, 2), // U+2531
-            '┲' => (1, 2, 0, 2), // U+2532
-            '┳' => (2, 2, 0, 2), // U+2533
-            // Up and Horizontal tee (┴ variants)
-            '┴' => (1, 1, 1, 0), // U+2534
-            '┵' => (2, 1, 1, 0), // U+2535
-            '┶' => (1, 2, 1, 0), // U+2536
-            '┷' => (2, 2, 1, 0), // U+2537
-            '┸' => (1, 1, 2, 0), // U+2538
-            '┹' => (2, 1, 2, 0), // U+2539
-            '┺' => (1, 2, 2, 0), // U+253A
-            '┻' => (2, 2, 2, 0), // U+253B
-            // Cross (┼ variants)
-            '┼' => (1, 1, 1, 1), // U+253C
-            '┽' => (2, 1, 1, 1), // U+253D
-            '┾' => (1, 2, 1, 1), // U+253E
-            '┿' => (2, 2, 1, 1), // U+253F
-            '╀' => (1, 1, 2, 1), // U+2540
-            '╁' => (1, 1, 1, 2), // U+2541
-            '╂' => (1, 1, 2, 2), // U+2542
-            '╃' => (2, 1, 2, 1), // U+2543
-            '╄' => (1, 2, 2, 1), // U+2544
-            '╅' => (2, 1, 1, 2), // U+2545
-            '╆' => (1, 2, 1, 2), // U+2546
-            '╇' => (2, 2, 2, 1), // U+2547
-            '╈' => (2, 2, 1, 2), // U+2548
-            '╉' => (2, 1, 2, 2), // U+2549
-            '╊' => (1, 2, 2, 2), // U+254A
-            '╋' => (2, 2, 2, 2), // U+254B
-            // Double line characters
-            '═' => (2, 2, 0, 0), // U+2550 double horizontal
-            '║' => (0, 0, 2, 2), // U+2551 double vertical
-            '╔' => (0, 2, 0, 2), // U+2554 double down-right
-            '╗' => (2, 0, 0, 2), // U+2557 double down-left
-            '╚' => (0, 2, 2, 0), // U+255A double up-right
-            '╝' => (2, 0, 2, 0), // U+255D double up-left
-            '╠' => (0, 2, 2, 2), // U+2560 double vert-right
-            '╣' => (2, 0, 2, 2), // U+2563 double vert-left
-            '╦' => (2, 2, 0, 2), // U+2566 double down-horiz
-            '╩' => (2, 2, 2, 0), // U+2569 double up-horiz
-            '╬' => (2, 2, 2, 2), // U+256C double cross
-            // Default fallback for other box chars
-            _ => {
-                let code = ch as u32;
-                if (0x2500..=0x257F).contains(&code) {
-                    (1, 1, 1, 1) // Default to light cross
-                } else {
-                    return; // Not a box drawing char
-                }
-            }
-        };
-
-        // Draw horizontal line segments
-        if left > 0 || right > 0 {
-            let t = if left == 2 || right == 2 {
-                heavy
-            } else {
-                light
-            };
-            let start_x = if left > 0 { 0 } else { cx };
-            let end_x = if right > 0 { cell_w } else { cx + t };
-            let y_start = cy.saturating_sub(t / 2);
-            let y_end = (cy + (t + 1) / 2).min(cell_h);
-            for y in y_start..y_end {
-                for x in start_x..end_x.min(cell_w) {
-                    let idx = (y * cell_w + x) as usize;
-                    if idx < bitmap.len() {
-                        bitmap[idx] = 255;
-                    }
-                }
-            }
-        }
-
-        // Draw vertical line segments
-        if up > 0 || down > 0 {
-            let t = if up == 2 || down == 2 { heavy } else { light };
-            let start_y = if up > 0 { 0 } else { cy };
-            let end_y = if down > 0 { cell_h } else { cy + t };
-            let x_start = cx.saturating_sub(t / 2);
-            let x_end = (cx + (t + 1) / 2).min(cell_w);
-            for y in start_y..end_y.min(cell_h) {
-                for x in x_start..x_end {
-                    let idx = (y * cell_w + x) as usize;
-                    if idx < bitmap.len() {
-                        bitmap[idx] = 255;
-                    }
-                }
-            }
-        }
-    }
-
-    /// Draw a block element character procedurally
-    /// Block elements (U+2580-U+259F) are rendered by filling portions of the cell
-    fn draw_block_char(bitmap: &mut [u8], ch: char, cell_w: u32, cell_h: u32) {
-        let code = ch as u32 - 0x2580;
-
-        // Determine fill pattern based on character
-        let (x_start, x_end, y_start, y_end, intensity) = match code {
-            0x00 => (0, cell_w, 0, cell_h / 2, 255u8), // ▀ upper half
-            0x04 => (0, cell_w, cell_h / 2, cell_h, 255), // ▄ lower half
-            0x08 => (0, cell_w, 0, cell_h, 255),       // █ full block
-            0x0C => (cell_w / 2, cell_w, 0, cell_h, 255), // ▐ right half
-            0x10 => (0, cell_w, 0, cell_h, 64),        // ░ light shade
-            0x11 => (0, cell_w, 0, cell_h, 128),       // ▒ medium shade
-            0x12 => (0, cell_w, 0, cell_h, 192),       // ▓ dark shade
-            0x0F => (0, cell_w / 2, 0, cell_h, 255),   // ▌ left half
-            _ => (0, cell_w, 0, cell_h, 255),          // default: full
-        };
-
-        for y in y_start..y_end.min(cell_h) {
-            for x in x_start..x_end.min(cell_w) {
-                let idx = (y * cell_w + x) as usize;
-                if idx < bitmap.len() {
-                    bitmap[idx] = intensity;
-                }
-            }
-        }
-    }
-
     /// Ensure a glyph is in the atlas, returns UV coordinates
     /// Glyphs are rasterized into cell-sized regions for 1:1 pixel mapping
     fn ensure_glyph(&mut self, ch: char) -> GlyphInfo {
@@ -895,78 +502,86 @@ impl GridRenderer {
         // Create cell-sized bitmap
         let mut bitmap = vec![0u8; (cell_w * cell_h) as usize];
 
-        // Check if this is a box drawing character - render procedurally for perfect alignment
-        let is_box_drawing = ('\u{2500}'..='\u{257F}').contains(&ch);
-        let is_block_element = ('\u{2580}'..='\u{259F}').contains(&ch);
+        // Helper to rasterize a glyph from a fontdue Font
+        // Returns true if glyph was successfully rasterized
+        let try_rasterize_fontdue = |font: &Font,
+                                     font_size: f32,
+                                     ch: char,
+                                     bitmap: &mut [u8],
+                                     cell_w: u32,
+                                     cell_h: u32|
+         -> bool {
+            // Check if font has this glyph (glyph_index 0 = .notdef/missing)
+            if font.lookup_glyph_index(ch) == 0 {
+                return false;
+            }
 
-        if is_box_drawing {
-            // Render box drawing characters procedurally
-            Self::draw_box_char(&mut bitmap, ch, cell_w, cell_h);
-        } else if is_block_element {
-            // Render block elements procedurally
-            Self::draw_block_char(&mut bitmap, ch, cell_w, cell_h);
-        } else {
-            // Regular font-based rendering for non-box-drawing characters
+            // Rasterize the glyph
+            let (metrics, glyph_bitmap) = font.rasterize(ch, font_size);
 
-            // Helper closure to rasterize a glyph from a given font
-            // Returns true if glyph was successfully rasterized
-            let try_rasterize = |font: &FontVec,
-                                 scale: PxScale,
-                                 ch: char,
-                                 bitmap: &mut [u8],
-                                 cell_w: u32,
-                                 cell_h: u32|
-             -> bool {
-                use ab_glyph::Font;
+            if glyph_bitmap.is_empty() {
+                return false; // No bitmap (space or similar)
+            }
 
-                // First check if font has this glyph at all (glyph_id 0 = .notdef/missing)
-                let glyph_id = font.glyph_id(ch);
-                if glyph_id.0 == 0 {
-                    return false; // Font doesn't have this character
-                }
+            let glyph_w = metrics.width as u32;
+            let glyph_h = metrics.height as u32;
 
-                let scaled_font = font.as_scaled(scale);
-                let glyph = scaled_font.scaled_glyph(ch);
+            // Horizontal positioning - center in cell
+            let offset_x = ((cell_w.saturating_sub(glyph_w)) / 2) as i32;
 
-                if let Some(outlined) = scaled_font.outline_glyph(glyph) {
-                    let bounds = outlined.px_bounds();
-                    let glyph_w = bounds.width() as u32;
+            // Vertical positioning - fontdue provides ymin (negative for below baseline)
+            // We need to position relative to cell baseline
+            let line_metrics = font.horizontal_line_metrics(font_size);
+            let descent = line_metrics.map(|lm| lm.descent).unwrap_or(0.0);
+            let baseline_from_bottom = (-descent).ceil() as i32 + 1;
+            let baseline_y = cell_h as i32 - baseline_from_bottom;
+            let offset_y = baseline_y - metrics.height as i32 - metrics.ymin;
 
-                    // Horizontal positioning - center in cell
-                    let offset_x = ((cell_w.saturating_sub(glyph_w)) / 2) as i32;
-
-                    // Vertical positioning - align baseline
-                    let descent = scaled_font.descent();
-                    let baseline_from_bottom = (-descent).ceil() as i32 + 1;
-                    let baseline_y = cell_h as i32 - baseline_from_bottom;
-                    let offset_y = baseline_y + bounds.min.y.round() as i32;
-
-                    // Draw glyph with offset
-                    outlined.draw(|x, y, c| {
-                        let px = x as i32 + offset_x;
-                        let py = y as i32 + offset_y;
-                        if px >= 0 && py >= 0 && (px as u32) < cell_w && (py as u32) < cell_h {
-                            let idx = (py as u32 * cell_w + px as u32) as usize;
-                            if idx < bitmap.len() {
-                                bitmap[idx] = (c * 255.0) as u8;
-                            }
+            // Copy glyph bitmap into cell bitmap
+            for gy in 0..glyph_h {
+                for gx in 0..glyph_w {
+                    let px = gx as i32 + offset_x;
+                    let py = gy as i32 + offset_y;
+                    if px >= 0 && py >= 0 && (px as u32) < cell_w && (py as u32) < cell_h {
+                        let src_idx = (gy * glyph_w + gx) as usize;
+                        let dst_idx = (py as u32 * cell_w + px as u32) as usize;
+                        if src_idx < glyph_bitmap.len() && dst_idx < bitmap.len() {
+                            bitmap[dst_idx] = glyph_bitmap[src_idx];
                         }
-                    });
-                    return true;
+                    }
                 }
+            }
+            true
+        };
 
-                // Font has glyph ID but no outline
-                false
-            };
+        // Track if we successfully rasterized this glyph
+        let mut rasterized = false;
 
+        // Check negative cache first - skip if we know this char has no font
+        if self.font_loader.is_known_missing(ch) {
+            // Skip to placeholder rendering (rasterized stays false)
+        } else {
             // Try primary font first
-            let mut rasterized =
-                try_rasterize(&self.font, self.font_scale, ch, &mut bitmap, cell_w, cell_h);
+            rasterized = try_rasterize_fontdue(
+                &self.font_loader.primary,
+                self.font_size,
+                ch,
+                &mut bitmap,
+                cell_w,
+                cell_h,
+            );
 
             // If primary font doesn't have this glyph, try already-loaded fallbacks
             if !rasterized {
-                for fallback in &self.loaded_fallbacks {
-                    if try_rasterize(fallback, self.font_scale, ch, &mut bitmap, cell_w, cell_h) {
+                for fallback in &self.font_loader.fallbacks {
+                    if try_rasterize_fontdue(
+                        fallback,
+                        self.font_size,
+                        ch,
+                        &mut bitmap,
+                        cell_w,
+                        cell_h,
+                    ) {
                         rasterized = true;
                         break;
                     }
@@ -975,82 +590,50 @@ impl GridRenderer {
 
             // If still not found, progressively load new fallback fonts
             if !rasterized {
-                while self.next_fallback_index < self.fallback_font_names.len() {
-                    let name = self.fallback_font_names[self.next_fallback_index];
-                    self.next_fallback_index += 1;
-
-                    if let Some(font_vec) = Self::load_fallback_font(name) {
-                        #[cfg(debug_assertions)]
-                        eprintln!("GUI: Lazy-loaded fallback font: {}", name);
-
-                        // Check if this font has the glyph
-                        use ab_glyph::Font;
-                        let has_glyph = font_vec.glyph_id(ch).0 != 0;
-
-                        // Always keep the loaded font for future use
-                        self.loaded_fallbacks.push(font_vec);
-
-                        if has_glyph {
-                            // Try to rasterize from the newly loaded font
-                            if let Some(new_font) = self.loaded_fallbacks.last() {
-                                if try_rasterize(
-                                    new_font,
-                                    self.font_scale,
-                                    ch,
-                                    &mut bitmap,
-                                    cell_w,
-                                    cell_h,
-                                ) {
-                                    rasterized = true;
-                                    break;
-                                }
+                while self.font_loader.has_more_fallbacks() {
+                    if self.font_loader.load_next_fallback() {
+                        // Try the newly loaded font
+                        if let Some(new_font) = self.font_loader.fallbacks.last() {
+                            if try_rasterize_fontdue(
+                                new_font,
+                                self.font_size,
+                                ch,
+                                &mut bitmap,
+                                cell_w,
+                                cell_h,
+                            ) {
+                                rasterized = true;
+                                break;
                             }
                         }
                     }
                 }
             }
 
-            // Last resort: search ALL system fonts for this character
+            // If still not found after all fallbacks, mark as missing
             if !rasterized && ch != ' ' {
-                if let Some(font_vec) = Self::find_font_for_char(ch) {
-                    // Check and try to rasterize
-                    use ab_glyph::Font;
-                    if font_vec.glyph_id(ch).0 != 0 {
-                        if try_rasterize(
-                            &font_vec,
-                            self.font_scale,
-                            ch,
-                            &mut bitmap,
-                            cell_w,
-                            cell_h,
-                        ) {
-                            rasterized = true;
-                        }
-                    }
-                    // Keep this font for future characters
-                    self.loaded_fallbacks.push(font_vec);
+                self.font_loader.mark_missing(ch);
+            }
+        }
+
+        // If still not rasterized and not a space, draw a placeholder box
+        if !rasterized && ch != ' ' {
+            #[cfg(debug_assertions)]
+            eprintln!("GUI: No glyph found for '{}'", ch);
+
+            // Draw a simple box outline as "missing glyph" indicator
+            let margin = 2u32;
+            for x in margin..(cell_w - margin) {
+                if (margin as usize) < bitmap.len() / cell_w as usize {
+                    bitmap[(margin * cell_w + x) as usize] = 128; // Top
+                }
+                if ((cell_h - margin - 1) as usize) < bitmap.len() / cell_w as usize {
+                    bitmap[((cell_h - margin - 1) * cell_w + x) as usize] = 128; // Bottom
                 }
             }
-
-            // If still not rasterized and not a space, draw a placeholder box
-            if !rasterized && ch != ' ' {
-                #[cfg(debug_assertions)]
-                eprintln!("GUI: No glyph found for '{}'", ch);
-
-                // Draw a simple box outline as "missing glyph" indicator
-                let margin = 2u32;
-                for x in margin..(cell_w - margin) {
-                    if (margin as usize) < bitmap.len() / cell_w as usize {
-                        bitmap[(margin * cell_w + x) as usize] = 128; // Top
-                    }
-                    if ((cell_h - margin - 1) as usize) < bitmap.len() / cell_w as usize {
-                        bitmap[((cell_h - margin - 1) * cell_w + x) as usize] = 128; // Bottom
-                    }
-                }
-                for y in margin..(cell_h - margin) {
-                    bitmap[(y * cell_w + margin) as usize] = 128; // Left
-                    bitmap[(y * cell_w + cell_w - margin - 1) as usize] = 128; // Right
-                }
+            for y in margin..(cell_h - margin) {
+                bitmap[(y * cell_w + margin) as usize] = 128; // Left
+                bitmap[(y * cell_w + cell_w - margin - 1) as usize] = 128; // Right
             }
         }
 

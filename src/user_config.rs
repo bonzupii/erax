@@ -210,7 +210,7 @@ pub fn configure(config: &mut Config) {
     // Examples: "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
     //           "" (empty = auto-detect via fc-match)
     config.set("font_path", "JetBrains Mono");
-    config.set("font_size", 22); // Font size in pixels
+    config.set("font_size", 16); // Font size in pixels
 
     // =========================================================================
     // COLOR SETTINGS

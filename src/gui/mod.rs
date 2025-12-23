@@ -5,6 +5,7 @@
 //! stays in the TUI layer. The menu system is now in core/ and rendered via
 //! the TUI's ScreenBuffer for feature parity.
 
+pub mod font_loader;
 mod grid_renderer;
 pub mod input;
 

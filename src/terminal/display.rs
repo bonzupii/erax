@@ -380,8 +380,8 @@ impl Display {
         // self.swap_buffers_with_validation();
         self.dirty = false; // Clear dirty flag after successful render
 
-        // Clear dirty tracker after successful render
-        self.dirty_tracker.clear();
+        // NOTE: dirty_tracker is cleared in swap_buffers(), not here, so that
+        // render_display_to_terminal can still check dirty state
 
         Ok(())
     }
@@ -621,6 +621,8 @@ impl Display {
     pub fn swap_buffers(&mut self) {
         self.swap_buffers_with_validation();
         self.dirty = false;
+        // Clear dirty tracker AFTER terminal output is complete
+        self.dirty_tracker.clear();
     }
 
     /// Internal swap implementation
