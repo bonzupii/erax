@@ -102,7 +102,7 @@ impl ApplicationHandler for GuiApp {
                         self.font_size,
                         window.scale_factor(),
                     ) {
-                        Ok(renderer) => {
+                        Ok(mut renderer) => {
                             let (cols, rows) = renderer.grid_size();
 
                             // Delegate resize handling to TUI
@@ -114,6 +114,10 @@ impl ApplicationHandler for GuiApp {
                                 &mut self.keybinds,
                                 resize_event,
                             );
+
+                            // Preload fonts for initial buffer content
+                            let _ = self.display.render(&mut self.editor);
+                            renderer.preload_fonts_for_buffer(&self.display.back_buffer);
 
                             self.renderer = Some(renderer);
                             self.dirty = true;
@@ -269,8 +273,8 @@ impl GuiApp {
             crate::gui::input::mouse_pos_to_grid(
                 position.x as f32,
                 position.y as f32,
-                renderer.cell_width,
-                renderer.cell_height,
+                renderer.cell_width(),
+                renderer.cell_height(),
                 vw as f32,
                 vh as f32,
             )
@@ -358,8 +362,8 @@ impl GuiApp {
                 match crate::gui::input::mouse_pos_to_grid(
                     x as f32,
                     y as f32,
-                    renderer.cell_width,
-                    renderer.cell_height,
+                    renderer.cell_width(),
+                    renderer.cell_height(),
                     vw as f32,
                     vh as f32,
                 ) {
@@ -422,8 +426,8 @@ impl GuiApp {
                 crate::gui::input::mouse_pos_to_grid(
                     x as f32,
                     y as f32,
-                    renderer.cell_width,
-                    renderer.cell_height,
+                    renderer.cell_width(),
+                    renderer.cell_height(),
                     vw as f32,
                     vh as f32,
                 )

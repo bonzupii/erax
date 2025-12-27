@@ -100,6 +100,16 @@ impl Color {
         }
     }
 
+    /// Convert color to packed u32 RGBA (for GPU storage buffers)
+    pub fn to_packed_rgba(&self) -> u32 {
+        let [r, g, b, a] = self.to_rgba_f32();
+        let r = (r * 255.0) as u32;
+        let g = (g * 255.0) as u32;
+        let b = (b * 255.0) as u32;
+        let a = (a * 255.0) as u32;
+        r | (g << 8) | (b << 16) | (a << 24)
+    }
+
     /// Convert RGB color to nearest 16-color ANSI for terminals without TrueColor
     pub fn to_ansi_fallback(self) -> Self {
         match self {

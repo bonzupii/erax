@@ -1,15 +1,20 @@
-//! GUI module for era using wgpu + winit
+//! GUI module for erax using wgpu + winit + cosmic-text
 //!
-//! This is a terminal emulator shell that renders the TUI's ScreenBuffer
-//! using GPU acceleration. The GUI handles display only - all editing logic
-//! stays in the TUI layer. The menu system is now in core/ and rendered via
-//! the TUI's ScreenBuffer for feature parity.
+//! Architecture: Two-pass rendering with cosmic-text shaping
+//! - cosmic-text handles font discovery, shaping, and rasterization
+//! - Background pass: gap-free cell colors via storage buffer
+//! - Glyph pass: instanced sprites at pixel positions
 
-pub mod font_loader;
-mod grid_renderer;
+pub mod atlas;
+pub mod font_manager;
 pub mod input;
+pub mod quad_renderer;
+pub mod renderer;
 
-pub use grid_renderer::GridRenderer;
+pub use renderer::Renderer;
+
+// Legacy compatibility alias
+pub type GridRenderer = Renderer;
 
 /// Default font size in pixels
 pub const DEFAULT_FONT_SIZE: f32 = 16.0;

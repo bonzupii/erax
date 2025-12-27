@@ -1,0 +1,272 @@
+# GUI Module Rewrite - Implementation Plan
+
+## Requirements
+
+1. **Full Stack**: winit, wgpu 27, font-kit, fontdue, rustybuzz
+2. **Clean Modules**: Separation of concerns, no god modules
+3. **Worldwide UTF-8**: ASCII, CJK, emoji, graphemes, ligatures, control codes
+4. **Efficient Font Loading**: No fork bombs, no scanning on scroll
+5. **Graceful Fallback**: Placeholder for truly missing glyphs
+6. **Smooth Scrolling**: No hangs
+
+---
+
+## Module Structure
+
+```
+src/gui/
+├── mod.rs              # Public exports
+├── grid_renderer.rs    # GPU rendering (wgpu)
+├── glyph_atlas.rs      # Texture atlas management
+├── font_loader.rs      # Font discovery (font-kit)
+├── text_shaper.rs      # Text shaping (rustybuzz) [NEW]
+├── glyph_cache.rs      # Glyph caching & rasterization [NEW]
+├── input.rs            # Input passthrough (winit)
+└── grid_shader.wgsl    # GPU shader
+```
+
+---
+
+## Module Responsibilities
+
+### 1. [font_loader.rs](file:///home/bonzupii/Projects/erax/src/gui/font_loader.rs) - Font Discovery
+
+**Responsibility**: Find and load fonts from the system.
+
+```rust
+pub struct FontLoader {
+    source: font_kit::source::SystemSource,
+    primary: LoadedFont,
+    fallbacks: Vec<LoadedFont>,
+    fallback_names: Vec<&'static str>,
+    next_fallback_idx: usize,
+    negative_cache: HashSet<char>,  // Chars with NO font anywhere
+}
+
+pub struct LoadedFont {
+    fontdue: fontdue::Font,
+    rustybuzz: rustybuzz::Face<'static>,
+    data: Arc<Vec<u8>>,  // Shared for both fontdue and rustybuzz
+}
+```
+
+**Key Rules**:
+- Extract `font_index` from `Handle` for TTC fonts
+- Pass same `font_index` to both fontdue and rustybuzz
+- Cache font data in `Arc<Vec<u8>>` to share between fontdue/rustybuzz
+- Lazy load fallbacks (only when needed)
+- Track `negative_cache` to avoid re-scanning for known-missing chars
+
+### 2. `text_shaper.rs` - Text Shaping (rustybuzz)
+
+**Responsibility**: Convert text to positioned glyphs with ligatures/graphemes.
+
+```rust
+pub struct TextShaper {
+    shape_cache: HashMap<ShapeKey, ShapedRun>,
+}
+
+pub struct ShapeKey {
+    text: String,
+    font_index: usize,
+}
+
+pub struct ShapedRun {
+    glyphs: Vec<ShapedGlyph>,
+}
+
+pub struct ShapedGlyph {
+    glyph_id: u16,
+    cluster: usize,      // Maps back to original text
+    x_advance: i32,
+    x_offset: i32,
+    y_offset: i32,
+}
+```
+
+**Key Functions**:
+- `shape(text: &str, font: &LoadedFont) -> ShapedRun`
+- Uses `rustybuzz::shape()` for proper ligature/grapheme handling
+- Caches shaped results for repeated text
+
+### 3. `glyph_cache.rs` - Glyph Caching & Rasterization
+
+**Responsibility**: Rasterize glyphs and cache them.
+
+```rust
+pub struct GlyphCache {
+    cache: HashMap<GlyphKey, CachedGlyph>,
+    font_loader: FontLoader,
+}
+
+pub struct GlyphKey {
+    glyph_id: u16,       // From rustybuzz, NOT char
+    font_index: usize,
+}
+
+pub struct CachedGlyph {
+    uv: (f32, f32, f32, f32),
+    metrics: GlyphMetrics,
+    last_used_frame: u64,
+}
+```
+
+**Key Rules**:
+- Cache by [(glyph_id, font_index)](file:///home/bonzupii/Projects/erax/src/gui/glyph_atlas.rs#22-32), NOT by [char](file:///home/bonzupii/Projects/erax/src/core/utf8.rs#57-65)
+- Use fontdue's `rasterize_indexed(glyph_id, size)` 
+- Track `last_used_frame` for LRU eviction
+
+### 4. [glyph_atlas.rs](file:///home/bonzupii/Projects/erax/src/gui/glyph_atlas.rs) - GPU Texture Atlas
+
+**Responsibility**: Manage GPU texture for glyph bitmaps.
+
+```rust
+pub struct GlyphAtlas {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    sampler: wgpu::Sampler,
+    cursor: (u32, u32),
+    row_height: u32,
+    width: u32,
+    height: u32,
+}
+```
+
+**Key Functions**:
+- [allocate(width, height) -> AtlasSlot](file:///home/bonzupii/Projects/erax/src/gui/glyph_atlas.rs#147-178)
+- [upload(queue, slot, bitmap)](file:///home/bonzupii/Projects/erax/src/gui/glyph_atlas.rs#179-205)
+- [reset()](file:///home/bonzupii/Projects/erax/src/gui/glyph_atlas.rs#206-214) - Clear for LRU eviction
+
+### 5. [grid_renderer.rs](file:///home/bonzupii/Projects/erax/src/gui/grid_renderer.rs) - GPU Rendering
+
+**Responsibility**: Draw cells using wgpu.
+
+```rust
+pub struct GridRenderer {
+    // wgpu handles
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    surface: wgpu::Surface<'static>,
+    pipeline: wgpu::RenderPipeline,
+    
+    // Modules
+    atlas: GlyphAtlas,
+    glyph_cache: GlyphCache,
+    shaper: TextShaper,
+    
+    // Grid metrics
+    cell_width: u32,
+    cell_height: u32,
+}
+```
+
+**Render Loop**:
+```
+1. For each cell in ScreenBuffer:
+   a. Get char and attributes
+   b. Shape text (rustybuzz) → glyph_id
+   c. Lookup glyph in cache
+   d. If miss: rasterize, upload to atlas, cache
+   e. Emit vertex with position + UV + colors
+
+2. Draw all vertices in one draw call
+```
+
+---
+
+## Font Loading Strategy (Upfront, Non-Blocking)
+
+### At Document Load (BEFORE rendering)
+```
+1. Scan entire document → collect unique chars
+2. For each char range (CJK, Thai, Arabic, etc.):
+   - Identify required font
+   - Load font immediately
+3. Store mapping: char_range → font_index
+4. Only THEN start rendering
+```
+
+### Font Range Detection
+```rust
+fn font_range(ch: char) -> FontRange {
+    match ch {
+        '\u{0000}'..='\u{007F}' => FontRange::Ascii,
+        '\u{0080}'..='\u{00FF}' => FontRange::Latin1,
+        '\u{0E00}'..='\u{0E7F}' => FontRange::Thai,
+        '\u{3040}'..='\u{309F}' => FontRange::Hiragana,
+        '\u{30A0}'..='\u{30FF}' => FontRange::Katakana,
+        '\u{4E00}'..='\u{9FFF}' => FontRange::CJKUnified,
+        '\u{1F600}'..='\u{1F64F}' => FontRange::Emoji,
+        // ... other ranges
+        _ => FontRange::Unknown,
+    }
+}
+```
+
+### Startup Sequence
+```
+1. Load primary monospace font
+2. Load document
+3. Scan document → get required FontRanges
+4. For each FontRange:
+   - Load appropriate fallback font
+   - Map range → font
+5. Start render loop (all fonts loaded)
+```
+
+### At Render Time
+- Look up font by char range (O(1) hash lookup)
+- NO font loading during render
+- NO blocking
+- Smooth scrolling
+
+### Missing Glyphs
+- If char's font range has no font → placeholder
+- Already determined at load time
+- No scanning during render
+
+---
+
+## Control Code Handling
+
+```rust
+fn should_render(ch: char) -> bool {
+    match ch {
+        '\x00'..='\x1F' => false,  // C0 control codes
+        '\x7F' => false,           // DEL
+        '\u{0080}'..='\u{009F}' => false,  // C1 control codes
+        '\u{FFFE}' | '\u{FFFF}' => false,  // BOM/nonchars
+        _ => true,
+    }
+}
+```
+
+---
+
+## Malformed UTF-8 Handling
+
+Already handled by Rust's `&str` - invalid sequences are replaced with U+FFFD (replacement character) before reaching the GUI.
+
+---
+
+## Implementation Order
+
+1. **`text_shaper.rs`** - New module for rustybuzz integration
+2. **`glyph_cache.rs`** - New module for glyph caching by glyph_id
+3. **Update [font_loader.rs](file:///home/bonzupii/Projects/erax/src/gui/font_loader.rs)** - Add rustybuzz Face alongside fontdue Font
+4. **Update [grid_renderer.rs](file:///home/bonzupii/Projects/erax/src/gui/grid_renderer.rs)** - Use shaper and cache
+5. **Verify** - Test with UTF-8 demo file
+
+---
+
+## Files Changed
+
+| File | Action |
+|------|--------|
+| `text_shaper.rs` | NEW |
+| `glyph_cache.rs` | NEW |
+| [font_loader.rs](file:///home/bonzupii/Projects/erax/src/gui/font_loader.rs) | MODIFY - Add rustybuzz Face, fix TTC handling |
+| [grid_renderer.rs](file:///home/bonzupii/Projects/erax/src/gui/grid_renderer.rs) | MODIFY - Use shaper, simplify |
+| [glyph_atlas.rs](file:///home/bonzupii/Projects/erax/src/gui/glyph_atlas.rs) | KEEP - Already correct |
+| [glyph_rasterizer.rs](file:///home/bonzupii/Projects/erax/src/gui/glyph_rasterizer.rs) | DELETE - Logic moves to glyph_cache |
+| [input.rs](file:///home/bonzupii/Projects/erax/src/gui/input.rs) | KEEP - Already correct |

@@ -31,9 +31,7 @@ unicode-width = "0.2"
 winit = { version = "0.30", optional = true }
 wgpu = { version = "27", optional = true }
 bytemuck = { version = "1.21", features = ["derive"], optional = true }
-fontdue = { version = "0.9", optional = true }
-rustybuzz = { version = "0.20", optional = true }
-font-kit = { version = "0.14", optional = true }
+cosmic-text = { version = "0.12", optional = true }
 
 # Core
 ropey = "1.6"
@@ -44,11 +42,11 @@ regex = "1.12"
 similar = "2.7.0"
 
 # Terminal emulation (optional)
-vte = { version = "0.15", optional = true } # CHANGE TO ALACRITTY
+vte = { version = "0.15", optional = true }
 
 [features]
 default = ["gui"]
-gui = ["dep:winit", "dep:wgpu", "dep:bytemuck", "dep:fontdue", "dep:rustybuzz", "dep:font-kit"]
+gui = ["dep:winit", "dep:wgpu", "dep:bytemuck", "dep:cosmic-text"]
 terminal = ["dep:vte"]
 
 [profile.release]
