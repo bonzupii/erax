@@ -24,6 +24,7 @@ Thumbs.db
 test_*.txt
 *.proptest-regressions
 test.txt
+UTF-8-Unicode-Test-Documents/
 
 # Debug artifacts
 dump.txt
