@@ -1,6 +1,6 @@
 //! Font system using cosmic-text
 
-use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache};
+use cosmic_text::{Align, Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache};
 
 pub struct FontManager {
     pub font_system: FontSystem,
@@ -25,7 +25,13 @@ impl FontManager {
         }
 
         let mut buffer = Buffer::new(&mut font_system, metrics);
-        buffer.set_text(&mut font_system, "M", attrs, Shaping::Advanced);
+        buffer.set_text(
+            &mut font_system,
+            "M",
+            &attrs,
+            Shaping::Advanced,
+            Some(Align::Left),
+        );
         buffer.shape_until_scroll(&mut font_system, false);
 
         let cell_width = buffer

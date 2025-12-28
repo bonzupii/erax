@@ -74,7 +74,7 @@ impl Renderer {
         let size = window.inner_size();
         let scaled_font_size = font_size * scale_factor as f32;
         // Use integer line height to prevent rounding drift
-        let line_height = (scaled_font_size * 1.2).ceil();
+        let line_height = (scaled_font_size * 1.2).round();
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
@@ -97,7 +97,11 @@ impl Renderer {
         }))?;
 
         let caps = surface.get_capabilities(&adapter);
-        let format = caps.formats.iter().find(|f| !f.is_srgb()).copied()
+        let format = caps
+            .formats
+            .iter()
+            .find(|f| !f.is_srgb())
+            .copied()
             .unwrap_or(wgpu::TextureFormat::Bgra8Unorm);
 
         let config = wgpu::SurfaceConfiguration {
@@ -114,11 +118,16 @@ impl Renderer {
 
         let mut font_manager = FontManager::new(scaled_font_size, line_height, font_path);
         let (cw, ch) = font_manager.cell_dimensions();
-        
+
         // Round cell dimensions to integers to prevent gaps
-        let cell_width = cw.ceil();
+        let cell_width = cw.round();
         let cell_height = ch.ceil();
-        let metrics = GridMetrics::new(cell_width, cell_height, size.width as f32, size.height as f32);
+        let metrics = GridMetrics::new(
+            cell_width,
+            cell_height,
+            size.width as f32,
+            size.height as f32,
+        );
 
         let atlas = Atlas::new(&device, 2048, 2048);
         let quad_renderer = QuadRenderer::new(&device, format, 8192);
@@ -183,11 +192,31 @@ impl Renderer {
                     array_stride: std::mem::size_of::<GlyphInstance>() as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Instance,
                     attributes: &[
-                        wgpu::VertexAttribute { offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x2 },
-                        wgpu::VertexAttribute { offset: 8, shader_location: 1, format: wgpu::VertexFormat::Float32x2 },
-                        wgpu::VertexAttribute { offset: 16, shader_location: 2, format: wgpu::VertexFormat::Float32x2 },
-                        wgpu::VertexAttribute { offset: 24, shader_location: 3, format: wgpu::VertexFormat::Float32x2 },
-                        wgpu::VertexAttribute { offset: 32, shader_location: 4, format: wgpu::VertexFormat::Float32x4 },
+                        wgpu::VertexAttribute {
+                            offset: 0,
+                            shader_location: 0,
+                            format: wgpu::VertexFormat::Float32x2,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 8,
+                            shader_location: 1,
+                            format: wgpu::VertexFormat::Float32x2,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 16,
+                            shader_location: 2,
+                            format: wgpu::VertexFormat::Float32x2,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 24,
+                            shader_location: 3,
+                            format: wgpu::VertexFormat::Float32x2,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 32,
+                            shader_location: 4,
+                            format: wgpu::VertexFormat::Float32x4,
+                        },
                     ],
                 }],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -209,12 +238,20 @@ impl Renderer {
             cache: None,
         });
 
-        let shape_buffer = Buffer::new(&mut font_manager.font_system, Metrics::new(scaled_font_size, line_height));
+        let shape_buffer = Buffer::new(
+            &mut font_manager.font_system,
+            Metrics::new(scaled_font_size, line_height),
+        );
 
         Ok(Self {
-            device, queue, surface, config,
+            device,
+            queue,
+            surface,
+            config,
             size: (size.width, size.height),
-            font_manager, atlas, quad_renderer,
+            font_manager,
+            atlas,
+            quad_renderer,
             char_cache: HashMap::new(),
             shape_buffer,
             last_atlas_gen: 0,
@@ -245,10 +282,18 @@ impl Renderer {
         }
     }
 
-    pub fn grid_size(&self) -> (u32, u32) { self.metrics.grid_dimensions() }
-    pub fn size(&self) -> (u32, u32) { self.size }
-    pub fn cell_width(&self) -> f32 { self.metrics.cell_width }
-    pub fn cell_height(&self) -> f32 { self.metrics.cell_height }
+    pub fn grid_size(&self) -> (u32, u32) {
+        self.metrics.grid_dimensions()
+    }
+    pub fn size(&self) -> (u32, u32) {
+        self.size
+    }
+    pub fn cell_width(&self) -> f32 {
+        self.metrics.cell_width
+    }
+    pub fn cell_height(&self) -> f32 {
+        self.metrics.cell_height
+    }
     pub fn preload_fonts_for_buffer(&mut self, _: &ScreenBuffer) {}
 
     /// Get glyph info for a character (cached forever - independent of atlas)
@@ -265,14 +310,24 @@ impl Renderer {
         }
 
         let s = ch.to_string();
-        self.shape_buffer.set_text(&mut self.font_manager.font_system, &s, attrs, Shaping::Advanced);
-        self.shape_buffer.shape_until_scroll(&mut self.font_manager.font_system, false);
+        self.shape_buffer.set_text(
+            &mut self.font_manager.font_system,
+            &s,
+            &attrs,
+            Shaping::Advanced,
+            None,
+        );
+        self.shape_buffer
+            .shape_until_scroll(&mut self.font_manager.font_system, false);
 
         for run in self.shape_buffer.layout_runs() {
             if let Some(g) = run.glyphs.first() {
                 let pg = g.physical((0.0, 0.0), 1.0);
                 let cg = CharGlyph {
-                    key: GlyphKey { font_id: pg.cache_key.font_id, glyph_index: pg.cache_key.glyph_id as u32 },
+                    key: GlyphKey {
+                        font_id: pg.cache_key.font_id,
+                        glyph_index: pg.cache_key.glyph_id as u32,
+                    },
                     cache_key: pg.cache_key,
                 };
                 self.char_cache.insert(ch, cg);
@@ -293,7 +348,11 @@ impl Renderer {
         let atlas_changed = self.atlas.generation() != self.last_atlas_gen;
 
         // Backgrounds
-        let bg: Vec<u32> = screen_buffer.cells.iter().map(|c| c.bg.to_packed_rgba()).collect();
+        let bg: Vec<u32> = screen_buffer
+            .cells
+            .iter()
+            .map(|c| c.bg.to_packed_rgba())
+            .collect();
 
         // Glyphs
         self.instances.clear();
@@ -324,29 +383,53 @@ impl Renderer {
                     // Check atlas first, then rasterize if needed
                     let cached = if let Some(g) = self.atlas.get(char_glyph.key) {
                         Some(g)
-                    } else if let Some(img) = self.font_manager.swash_cache.get_image(
-                        &mut self.font_manager.font_system,
-                        char_glyph.cache_key,
-                    ) {
+                    } else if let Some(img) = self
+                        .font_manager
+                        .swash_cache
+                        .get_image(&mut self.font_manager.font_system, char_glyph.cache_key)
+                    {
                         if img.placement.width > 0 && img.placement.height > 0 {
-                            if let Some(slot) = self.atlas.allocate(img.placement.width, img.placement.height) {
+                            if let Some(slot) = self
+                                .atlas
+                                .allocate(img.placement.width, img.placement.height)
+                            {
                                 let px = (img.placement.width * img.placement.height) as usize;
                                 let data: Vec<u8> = match img.content {
                                     SwashContent::Mask => img.data.clone(),
-                                    SwashContent::Color => img.data.chunks(4).map(|c| c[3]).collect(),
+                                    SwashContent::Color => {
+                                        img.data.chunks(4).map(|c| c[3]).collect()
+                                    }
                                     _ => {
                                         if img.data.len() == px * 3 {
-                                            img.data.chunks(3).map(|c| ((c[0] as u32 + c[1] as u32 + c[2] as u32) / 3) as u8).collect()
+                                            img.data
+                                                .chunks(3)
+                                                .map(|c| {
+                                                    ((c[0] as u32 + c[1] as u32 + c[2] as u32) / 3)
+                                                        as u8
+                                                })
+                                                .collect()
                                         } else {
                                             img.data.clone()
                                         }
                                     }
                                 };
-                                self.atlas.insert(char_glyph.key, slot, data, img.placement.left as f32, img.placement.top as f32);
+                                self.atlas.insert(
+                                    char_glyph.key,
+                                    slot,
+                                    data,
+                                    img.placement.left as f32,
+                                    img.placement.top as f32,
+                                );
                                 self.atlas.get(char_glyph.key)
-                            } else { None }
-                        } else { None }
-                    } else { None };
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
 
                     if let Some(g) = cached {
                         // Position: cell origin + bearing offsets
@@ -376,19 +459,31 @@ impl Renderer {
             grid_dims: [cols as u32, rows as u32],
         };
         self.quad_renderer.update_uniforms(&self.queue, &uniforms);
-        self.quad_renderer.upload_colors(&self.device, &self.queue, &bg);
+        self.quad_renderer
+            .upload_colors(&self.device, &self.queue, &bg);
 
         if self.glyph_bind_group.is_none() || atlas_changed {
-            self.queue.write_buffer(&self.glyph_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-            self.glyph_bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Glyph BG"),
-                layout: &self.glyph_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: self.glyph_uniform_buffer.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(self.atlas.texture_view()) },
-                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(self.atlas.sampler()) },
-                ],
-            }));
+            self.queue
+                .write_buffer(&self.glyph_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+            self.glyph_bind_group =
+                Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Glyph BG"),
+                    layout: &self.glyph_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: self.glyph_uniform_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(self.atlas.texture_view()),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(self.atlas.sampler()),
+                        },
+                    ],
+                }));
         }
 
         if !self.instances.is_empty() {
@@ -409,8 +504,14 @@ impl Renderer {
 
         // Render
         let out = self.surface.get_current_texture()?;
-        let view = out.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Render") });
+        let view = out
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut enc = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render"),
+            });
 
         {
             let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -419,7 +520,12 @@ impl Renderer {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.1, g: 0.1, b: 0.12, a: 1.0 }),
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.1,
+                            b: 0.12,
+                            a: 1.0,
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,
