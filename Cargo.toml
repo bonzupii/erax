@@ -43,6 +43,7 @@ similar = "2.7.0"
 
 # Terminal emulation (optional)
 vte = { version = "0.15", optional = true }
+rustc-hash = "2.1.1"
 
 [features]
 default = ["gui"]

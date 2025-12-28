@@ -1,7 +1,7 @@
 //! Glyph Atlas - Simple and correct implementation
 
 use cosmic_text::fontdb::ID;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 #[derive(Clone, Copy, Debug)]
 pub struct AtlasSlot {
@@ -43,7 +43,7 @@ pub struct Atlas {
     cursor_x: u32,
     cursor_y: u32,
     row_height: u32,
-    cache: HashMap<GlyphKey, CachedGlyph>,
+    cache: FxHashMap<GlyphKey, CachedGlyph>,
     pending: Vec<PendingUpload>,
     generation: u64,
 }
@@ -82,7 +82,7 @@ impl Atlas {
             cursor_x: 0,
             cursor_y: 0,
             row_height: 0,
-            cache: HashMap::new(),
+            cache: FxHashMap::default(),
             pending: Vec::new(),
             generation: 0,
         }

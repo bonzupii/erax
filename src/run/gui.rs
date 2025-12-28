@@ -119,6 +119,12 @@ impl ApplicationHandler for GuiApp {
                             let _ = self.display.render(&mut self.editor);
                             renderer.preload_fonts_for_buffer(&self.display.back_buffer);
 
+                            // Pre-warm ALL chars in the document (not just viewport)
+                            if let Some(buffer) = self.editor.active_buffer() {
+                                let doc_text = buffer.to_string();
+                                renderer.preload_document(&doc_text);
+                            }
+
                             self.renderer = Some(renderer);
                             self.dirty = true;
                         }

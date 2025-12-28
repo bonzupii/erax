@@ -8,14 +8,15 @@
 use bytemuck::{Pod, Zeroable};
 use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, SwashContent};
 use pollster::block_on;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use winit::window::Window;
 
 use crate::core::geometry::GridMetrics;
 use crate::terminal::display::ScreenBuffer;
 
-use super::atlas::{Atlas, GlyphKey};
+use super::atlas::{Atlas, CachedGlyph, GlyphKey};
 use super::font_manager::FontManager;
 use super::quad_renderer::{BackgroundUniforms, QuadRenderer};
 
@@ -47,7 +48,8 @@ pub struct Renderer {
     quad_renderer: QuadRenderer,
 
     // Char -> glyph mapping (NEVER cleared - stable across atlas resets)
-    char_cache: HashMap<char, CharGlyph>,
+    // Stores Option<CharGlyph> to cache FAILURES (negative cache)
+    char_cache: FxHashMap<char, Option<CharGlyph>>,
     shape_buffer: Buffer,
 
     last_atlas_gen: u64,
@@ -62,6 +64,11 @@ pub struct Renderer {
     instances: Vec<GlyphInstance>,
 
     pub metrics: GridMetrics,
+
+    // Performance caches
+    x_positions: Vec<f32>,
+    y_positions: Vec<f32>,
+    bg_cache: Vec<u32>,
 }
 
 impl Renderer {
@@ -243,7 +250,14 @@ impl Renderer {
             Metrics::new(scaled_font_size, line_height),
         );
 
-        Ok(Self {
+        let x_positions: Vec<f32> = (0..=size.width.max(1))
+            .map(|i| (0.0 + (i as f32) * cell_width).round())
+            .collect();
+        let y_positions: Vec<f32> = (0..=size.height.max(1))
+            .map(|i| (0.0 + (i as f32) * cell_height).round())
+            .collect();
+
+        let mut renderer = Self {
             device,
             queue,
             surface,
@@ -252,7 +266,7 @@ impl Renderer {
             font_manager,
             atlas,
             quad_renderer,
-            char_cache: HashMap::new(),
+            char_cache: FxHashMap::default(),
             shape_buffer,
             last_atlas_gen: 0,
             glyph_pipeline: pipeline,
@@ -263,7 +277,95 @@ impl Renderer {
             glyph_capacity: 0,
             instances: Vec::new(),
             metrics,
-        })
+            x_positions,
+            y_positions,
+            bg_cache: Vec::new(),
+        };
+
+        // Pre-warm cache: comprehensive Unicode coverage for smooth rendering
+        let prewarm_ranges: &[std::ops::RangeInclusive<u32>] = &[
+            0x0020..=0x007E, // ASCII printable
+            0x00A0..=0x00FF, // Latin-1 Supplement
+            0x0100..=0x017F, // Latin Extended-A
+            0x0180..=0x024F, // Latin Extended-B
+            0x0370..=0x03FF, // Greek and Coptic
+            0x0400..=0x04FF, // Cyrillic
+            0x0590..=0x05FF, // Hebrew
+            0x2000..=0x206F, // General Punctuation
+            0x2070..=0x209F, // Superscripts/Subscripts
+            0x20A0..=0x20CF, // Currency Symbols
+            0x2100..=0x214F, // Letterlike Symbols
+            0x2150..=0x218F, // Number Forms
+            0x2190..=0x21FF, // Arrows
+            0x2200..=0x22FF, // Mathematical Operators
+            0x2300..=0x23FF, // Miscellaneous Technical
+            0x2500..=0x257F, // Box Drawing
+            0x2580..=0x259F, // Block Elements
+            0x25A0..=0x25FF, // Geometric Shapes
+            0x2600..=0x26FF, // Miscellaneous Symbols
+            0x3000..=0x303F, // CJK Punctuation
+        ];
+        for range in prewarm_ranges {
+            for code in range.clone() {
+                if let Some(ch) = char::from_u32(code) {
+                    if let Some(cg) = renderer.get_char_glyph(ch) {
+                        renderer.ensure_glyph_rasterized(cg);
+                    }
+                }
+            }
+        }
+
+        Ok(renderer)
+    }
+
+    fn ensure_glyph_rasterized(&mut self, char_glyph: CharGlyph) -> Option<CachedGlyph> {
+        if let Some(g) = self.atlas.get(char_glyph.key) {
+            return Some(g);
+        }
+
+        let img_opt = self
+            .font_manager
+            .swash_cache
+            .get_image(&mut self.font_manager.font_system, char_glyph.cache_key);
+
+        if let Some(img) = img_opt {
+            if img.placement.width > 0 && img.placement.height > 0 {
+                if let Some(slot) = self
+                    .atlas
+                    .allocate(img.placement.width, img.placement.height)
+                {
+                    let px = (img.placement.width * img.placement.height) as usize;
+                    let data: Vec<u8> = match img.content {
+                        SwashContent::Mask => img.data.clone(),
+                        SwashContent::Color => img.data.chunks(4).map(|c| c[3]).collect(),
+                        _ => {
+                            if img.data.len() == px * 3 {
+                                img.data
+                                    .chunks(3)
+                                    .map(|c| ((c[0] as u32 + c[1] as u32 + c[2] as u32) / 3) as u8)
+                                    .collect()
+                            } else {
+                                img.data.clone()
+                            }
+                        }
+                    };
+                    self.atlas.insert(
+                        char_glyph.key,
+                        slot,
+                        data,
+                        img.placement.left as f32,
+                        img.placement.top as f32,
+                    );
+                    self.atlas.get(char_glyph.key)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
 
     pub fn resize(&mut self, new_size: (u32, u32)) {
@@ -278,6 +380,14 @@ impl Renderer {
                 new_size.0 as f32,
                 new_size.1 as f32,
             );
+            // Recalculate cached positions
+            self.x_positions = (0..=new_size.0)
+                .map(|i| (self.metrics.offset_x + (i as f32) * self.metrics.cell_width).round())
+                .collect();
+            self.y_positions = (0..=new_size.1)
+                .map(|i| (self.metrics.offset_y + (i as f32) * self.metrics.cell_height).round())
+                .collect();
+
             self.glyph_bind_group = None;
         }
     }
@@ -294,12 +404,52 @@ impl Renderer {
     pub fn cell_height(&self) -> f32 {
         self.metrics.cell_height
     }
-    pub fn preload_fonts_for_buffer(&mut self, _: &ScreenBuffer) {}
+    pub fn preload_fonts_for_buffer(&mut self, screen_buffer: &ScreenBuffer) {
+        // Pre-warm all unique chars in the buffer to avoid runtime lag
+        use std::collections::HashSet;
+        let unique_chars: HashSet<char> = screen_buffer
+            .cells
+            .iter()
+            .map(|c| c.ch)
+            .filter(|&ch| ch != ' ' && ch != '\0' && !ch.is_control())
+            .collect();
+        for ch in unique_chars {
+            if let Some(cg) = self.get_char_glyph(ch) {
+                self.ensure_glyph_rasterized(cg);
+            }
+        }
+        self.atlas.flush(&self.queue);
+    }
+
+    /// Pre-warm all unique characters from document text.
+    /// Call this ONCE when file is loaded to avoid runtime rendering lag.
+    pub fn preload_document(&mut self, document_text: &str) {
+        use std::collections::HashSet;
+        let unique_chars: HashSet<char> = document_text
+            .chars()
+            .filter(|&ch| !ch.is_control() || ch == '\t')
+            .collect();
+
+        eprintln!(
+            "Pre-warming {} unique chars from document...",
+            unique_chars.len()
+        );
+        let start = std::time::Instant::now();
+
+        for ch in unique_chars {
+            if let Some(cg) = self.get_char_glyph(ch) {
+                self.ensure_glyph_rasterized(cg);
+            }
+        }
+        self.atlas.flush(&self.queue);
+
+        eprintln!("Pre-warming complete in {}ms", start.elapsed().as_millis());
+    }
 
     /// Get glyph info for a character (cached forever - independent of atlas)
     fn get_char_glyph(&mut self, ch: char) -> Option<CharGlyph> {
         if let Some(cg) = self.char_cache.get(&ch) {
-            return Some(*cg);
+            return *cg;
         }
 
         let mut attrs = Attrs::new();
@@ -330,14 +480,20 @@ impl Renderer {
                     },
                     cache_key: pg.cache_key,
                 };
-                self.char_cache.insert(ch, cg);
+                self.char_cache.insert(ch, Some(cg));
                 return Some(cg);
             }
         }
+
+        // Cache failure
+        self.char_cache.insert(ch, None);
         None
     }
 
     pub fn render(&mut self, screen_buffer: &ScreenBuffer) -> Result<(), wgpu::SurfaceError> {
+        let start_total = Instant::now();
+        let mut shape_misses = 0;
+        let mut atlas_misses = 0;
         let cols = screen_buffer.width as usize;
         let rows = screen_buffer.height as usize;
 
@@ -348,11 +504,12 @@ impl Renderer {
         let atlas_changed = self.atlas.generation() != self.last_atlas_gen;
 
         // Backgrounds
-        let bg: Vec<u32> = screen_buffer
-            .cells
-            .iter()
-            .map(|c| c.bg.to_packed_rgba())
-            .collect();
+        // Backgrounds
+
+        self.bg_cache.clear();
+        self.bg_cache.reserve(screen_buffer.cells.len());
+        self.bg_cache
+            .extend(screen_buffer.cells.iter().map(|c| c.bg.to_packed_rgba()));
 
         // Glyphs
         self.instances.clear();
@@ -360,13 +517,11 @@ impl Renderer {
         // Use integer math to prevent rounding drift
         let cw = self.metrics.cell_width;
         let ch = self.metrics.cell_height;
-        let ox = self.metrics.offset_x;
-        let oy = self.metrics.offset_y;
         let ascent = self.font_manager.ascent;
 
         for row in 0..rows {
-            // Integer row * integer cell_height = no drift
-            let y = oy + (row as f32) * ch;
+            // Use cached integer-aligned positions
+            let y = self.y_positions[row];
 
             for col in 0..cols {
                 let idx = row * cols + col;
@@ -376,62 +531,24 @@ impl Renderer {
                     continue;
                 }
 
-                let x = ox + (col as f32) * cw;
+                // Use cached integer-aligned positions
+                let x = self.x_positions[col];
+
                 let color = cell.fg.to_rgba_f32();
 
-                if let Some(char_glyph) = self.get_char_glyph(cell.ch) {
-                    // Check atlas first, then rasterize if needed
-                    let cached = if let Some(g) = self.atlas.get(char_glyph.key) {
-                        Some(g)
-                    } else if let Some(img) = self
-                        .font_manager
-                        .swash_cache
-                        .get_image(&mut self.font_manager.font_system, char_glyph.cache_key)
-                    {
-                        if img.placement.width > 0 && img.placement.height > 0 {
-                            if let Some(slot) = self
-                                .atlas
-                                .allocate(img.placement.width, img.placement.height)
-                            {
-                                let px = (img.placement.width * img.placement.height) as usize;
-                                let data: Vec<u8> = match img.content {
-                                    SwashContent::Mask => img.data.clone(),
-                                    SwashContent::Color => {
-                                        img.data.chunks(4).map(|c| c[3]).collect()
-                                    }
-                                    _ => {
-                                        if img.data.len() == px * 3 {
-                                            img.data
-                                                .chunks(3)
-                                                .map(|c| {
-                                                    ((c[0] as u32 + c[1] as u32 + c[2] as u32) / 3)
-                                                        as u8
-                                                })
-                                                .collect()
-                                        } else {
-                                            img.data.clone()
-                                        }
-                                    }
-                                };
-                                self.atlas.insert(
-                                    char_glyph.key,
-                                    slot,
-                                    data,
-                                    img.placement.left as f32,
-                                    img.placement.top as f32,
-                                );
-                                self.atlas.get(char_glyph.key)
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
+                let cg_opt = self.get_char_glyph(cell.ch);
+                if cg_opt.is_none() && !self.char_cache.contains_key(&cell.ch) {
+                    shape_misses += 1;
+                }
 
-                    if let Some(g) = cached {
+                if let Some(char_glyph) = cg_opt {
+                    let mut atlas_entry = self.atlas.get(char_glyph.key);
+                    if atlas_entry.is_none() {
+                        atlas_misses += 1;
+                        atlas_entry = self.ensure_glyph_rasterized(char_glyph);
+                    }
+
+                    if let Some(g) = atlas_entry {
                         // Position: cell origin + bearing offsets
                         let gx = x + g.bearing_x;
                         let gy = y + ascent - g.bearing_y;
@@ -455,12 +572,12 @@ impl Renderer {
         let uniforms = BackgroundUniforms {
             screen_size: [self.size.0 as f32, self.size.1 as f32],
             cell_size: [cw, ch],
-            grid_offset: [ox, oy],
+            grid_offset: [self.metrics.offset_x, self.metrics.offset_y],
             grid_dims: [cols as u32, rows as u32],
         };
         self.quad_renderer.update_uniforms(&self.queue, &uniforms);
         self.quad_renderer
-            .upload_colors(&self.device, &self.queue, &bg);
+            .upload_colors(&self.device, &self.queue, &self.bg_cache);
 
         if self.glyph_bind_group.is_none() || atlas_changed {
             self.queue
@@ -547,6 +664,15 @@ impl Renderer {
 
         self.queue.submit(std::iter::once(enc.finish()));
         out.present();
+
+        if start_total.elapsed().as_millis() > 16 {
+            eprintln!(
+                "Lag: {}ms. Shape Miss: {}, Atlas Miss: {}",
+                start_total.elapsed().as_millis(),
+                shape_misses,
+                atlas_misses
+            );
+        }
         Ok(())
     }
 }
