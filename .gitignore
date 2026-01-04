@@ -32,3 +32,4 @@ gdb.txt
 *.log
 debug_editor
 debug_rope
+flamegraph.svg
