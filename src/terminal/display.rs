@@ -291,6 +291,9 @@ impl Display {
 
         // 4. Render each window to the back buffer
         // 4. Render each window to the back buffer
+        // Collect updates to apply after rendering (to avoid borrow issues)
+        let mut width_updates: Vec<(crate::core::id::WindowId, usize)> = Vec::new();
+
         for (window_id, rect) in &window_rects {
             // Mark this window's rect as dirty for incremental rendering
             self.dirty_tracker.mark_rect(rect);
@@ -300,7 +303,7 @@ impl Display {
                     let is_active = *window_id == app.active_window;
 
                     // Render Content, Scrollbars, etc.
-                    crate::terminal::renderers::WindowRenderer::render(
+                    let visible_max_width = crate::terminal::renderers::WindowRenderer::render(
                         buffer,
                         window,
                         rect,
@@ -315,6 +318,11 @@ impl Display {
                         app.terminal_host.as_ref(),
                     );
 
+                    // Track width update for after render loop
+                    if visible_max_width > window.cached_content_width {
+                        width_updates.push((*window_id, visible_max_width));
+                    }
+
                     // Render Status Line
                     crate::terminal::renderers::StatusRenderer::render(
                         &mut self.back_buffer,
@@ -328,6 +336,13 @@ impl Display {
                         &self.key_sequence,
                     );
                 }
+            }
+        }
+
+        // Apply cached content width updates (only grows, never shrinks to keep scrollbar stable)
+        for (window_id, new_width) in width_updates {
+            if let Some(window) = app.windows.get_mut(&window_id) {
+                window.cached_content_width = window.cached_content_width.max(new_width);
             }
         }
 

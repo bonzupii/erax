@@ -13,7 +13,7 @@ pub enum InputAction {
     SearchBackward,
     /// Query replace (old -> new)
     QueryReplace,
-    /// Rename symbol (LSP)
+    /// Rename symbol
     RenameSymbol,
     /// Switch to a different buffer
     SwitchToBuffer,
@@ -25,6 +25,7 @@ pub enum InputAction {
     Calculator,
     SedPreview,
     ExecuteNamedCommand,
+    DescribeKey,
 }
 
 /// Result of command dispatch
@@ -44,6 +45,8 @@ pub enum DispatchResult {
     Info(String),
     /// Force full display redraw
     Redraw,
+    /// Wait for the next keypress (e.g., for describe-key)
+    AwaitKey(InputAction), // The action expecting the key (e.g., DescribeKey)
 }
 
 /// Maximum recursion depth to prevent stack overflow from recursive macros
@@ -120,6 +123,14 @@ fn dispatch_inner(
 
             if result == DispatchResult::Success && !command_str.starts_with("kill-") {
                 app.reset_kill_flag();
+            }
+
+            // Reset yank flag for non-yank commands (so yank-pop only chains after yank)
+            if result == DispatchResult::Success
+                && command_str != "yank"
+                && command_str != "yank-pop"
+            {
+                app.last_command_was_yank = false;
             }
 
             return result;

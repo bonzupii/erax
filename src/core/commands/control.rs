@@ -98,7 +98,7 @@ pub struct DescribeKey;
 
 impl Command for DescribeKey {
     fn execute(&self, _app: &mut EditorApp, _count: usize) -> DispatchResult {
-        DispatchResult::Info("describe-key: Not implemented".to_string())
+        DispatchResult::AwaitKey(InputAction::DescribeKey)
     }
 }
 

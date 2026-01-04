@@ -40,7 +40,7 @@ pub fn process_terminal_event(
             // Route based on current input mode
             match state_machine.mode() {
                 InputMode::Focus { .. } => {
-                    return handle_focus_input(app, display, &key);
+                    return handle_focus_input(app, display, keybind_manager, &key);
                 }
                 InputMode::Menu { .. } => {
                     return handle_menu_input(app, display, &key);
@@ -98,6 +98,16 @@ pub fn process_terminal_event(
                             _ => FocusTarget::Minibuffer,
                         };
                         app.focus_manager.push(FocusState::new(target, &prompt));
+                        display.dirty = true;
+                    }
+                    DispatchResult::AwaitKey(action) => {
+                        use crate::core::focus::{FocusState, FocusTarget};
+                        let target = match action {
+                            InputAction::DescribeKey => FocusTarget::DescribeKey,
+                            _ => FocusTarget::Editor, // Should not happen
+                        };
+                        app.focus_manager
+                            .push(FocusState::new(target, "Describe Key: "));
                         display.dirty = true;
                     }
                     DispatchResult::FileModified => {
@@ -162,7 +172,10 @@ pub fn process_terminal_event(
 
             // Find window under mouse
             let (cols, rows) = display.terminal_size;
-            let root_rect = layout::Rect::new(0, 0, cols as usize, rows as usize);
+            // Account for menu bar height (same as resize handler)
+            let menu_height = display.menu_bar_height();
+            let editor_height = (rows as usize).saturating_sub(menu_height);
+            let root_rect = layout::Rect::new(0, menu_height, cols as usize, editor_height);
             let windows = app.layout.collect_windows(root_rect);
 
             for (window_id, rect) in windows {
@@ -182,14 +195,90 @@ pub fn process_terminal_event(
                                 display.show_line_numbers,
                             );
 
-                            // Account for menu bar row if shown
-                            let menu_bar_offset = if display.show_menu_bar { 1 } else { 0 };
+                            // Check if click is on vertical scrollbar (rightmost column)
+                            let scrollbar_x = rect.x + rect.width.saturating_sub(1);
+                            let text_height = rect.height.saturating_sub(1); // Exclude status line
+
+                            if mouse_x == scrollbar_x
+                                && mouse_y >= rect.y
+                                && mouse_y < rect.y + text_height
+                            {
+                                // Vertical scrollbar click with arrows
+                                let rel_y = mouse_y.saturating_sub(rect.y);
+                                let line_count = buffer.line_count().max(1);
+
+                                if rel_y == 0 {
+                                    // Up arrow - scroll up by 3 lines
+                                    let target = window.scroll_offset.saturating_sub(3);
+                                    window.scroll_to(target, buffer);
+                                } else if rel_y >= text_height.saturating_sub(1) {
+                                    // Down arrow - scroll down by 3 lines
+                                    let target = window.scroll_offset.saturating_add(3);
+                                    window.scroll_to(target, buffer);
+                                } else {
+                                    // Track area - jump to proportional position
+                                    let track_height = text_height.saturating_sub(2); // Minus arrows
+                                    let track_pos = rel_y.saturating_sub(1); // Minus up arrow
+                                    let target_line = if track_height > 0 {
+                                        (track_pos * line_count / track_height)
+                                            .min(line_count.saturating_sub(text_height))
+                                    } else {
+                                        0
+                                    };
+                                    window.scroll_to(target_line, buffer);
+                                }
+                                display.dirty = true;
+                                continue;
+                            }
+
+                            // Check if click is on horizontal scrollbar (second-to-last row)
+                            let hscroll_y = rect.y + rect.height.saturating_sub(2);
+                            let hscroll_start_x = rect.x + gutter_width;
+                            let text_width = rect.width.saturating_sub(gutter_width + 1);
+                            let hscroll_width = text_width.saturating_sub(1);
+
+                            // Only handle if horizontal scroll is active
+                            let needs_hscroll =
+                                window.cached_content_width > text_width || window.scroll_x > 0;
+
+                            if needs_hscroll
+                                && mouse_y == hscroll_y
+                                && mouse_x >= hscroll_start_x
+                                && mouse_x < hscroll_start_x + hscroll_width
+                            {
+                                // Horizontal scrollbar click with arrows
+                                let rel_x = mouse_x.saturating_sub(hscroll_start_x);
+                                let content_width = window
+                                    .cached_content_width
+                                    .max(window.scroll_x + text_width);
+
+                                if rel_x == 0 {
+                                    // Left arrow - scroll left
+                                    window.scroll_x = window.scroll_x.saturating_sub(5);
+                                } else if rel_x >= hscroll_width.saturating_sub(1) {
+                                    // Right arrow - scroll right
+                                    let max_scroll = content_width.saturating_sub(text_width);
+                                    window.scroll_x = (window.scroll_x + 5).min(max_scroll);
+                                } else {
+                                    // Track area - jump to proportional position
+                                    let track_width = hscroll_width.saturating_sub(2); // Minus arrows
+                                    let track_pos = rel_x.saturating_sub(1); // Minus left arrow
+                                    let max_scroll = content_width.saturating_sub(text_width);
+                                    let target_x = if track_width > 0 {
+                                        (track_pos * content_width / track_width).min(max_scroll)
+                                    } else {
+                                        0
+                                    };
+                                    window.scroll_x = target_x;
+                                }
+                                display.dirty = true;
+                                continue;
+                            }
 
                             // Calculate relative coordinates within the text area
+                            // Note: rect.y already accounts for menu bar (root_rect starts at menu_height)
                             let rel_x = mouse_x.saturating_sub(rect.x).saturating_sub(gutter_width);
-                            let rel_y = mouse_y
-                                .saturating_sub(rect.y)
-                                .saturating_sub(menu_bar_offset);
+                            let rel_y = mouse_y.saturating_sub(rect.y);
 
                             // Ignore clicks on status line
                             if rel_y >= rect.height.saturating_sub(1) {
@@ -300,10 +389,35 @@ pub fn process_terminal_event(
 fn handle_focus_input(
     app: &mut EditorApp,
     display: &mut Display,
+    keybind_manager: &mut KeyBindingManager,
     key: &crate::core::input::InputEvent,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let focus_result = if let Some(focus) = app.focus_manager.current_state_mut() {
-        if focus.target.uses_minibuffer() {
+        if focus.target == crate::core::focus::FocusTarget::DescribeKey {
+            // Process key using keybind manager to see if it's bound.
+            // This properly handles prefixes and multi-key sequences.
+            let (cmd_opt, _, is_complete) = keybind_manager.process_key(key);
+
+            if is_complete {
+                // We reached a leaf or dead end
+                let seq = keybind_manager.current_sequence();
+                // Pop focus immediately since we are done describing
+                app.focus_manager.pop();
+
+                if let Some(cmd) = cmd_opt {
+                    app.message = Some(format!("{} runs command: {}", seq, cmd));
+                } else {
+                    app.message = Some(format!("{} is undefined", seq));
+                }
+            } else {
+                // Incomplete sequence (prefix)
+                // Stay in DescribeKey mode
+                focus.prompt = format!("Describe Key: {}", keybind_manager.current_sequence());
+            }
+            // Consumed needed input
+            display.dirty = true;
+            return Ok(false);
+        } else if focus.target.uses_minibuffer() {
             Some((focus.target, focus.handle_key(key)))
         } else {
             None

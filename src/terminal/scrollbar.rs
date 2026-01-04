@@ -13,16 +13,20 @@ pub struct ScrollbarTheme {
     pub thumb: char,
     pub arrow_up: char,
     pub arrow_down: char,
+    pub arrow_left: char,
+    pub arrow_right: char,
 }
 
 impl ScrollbarTheme {
-    /// Heavy style: ┃ track, █ thumb, ▲▼ arrows
+    /// Heavy style: ┃ track, █ thumb, ▲▼◀▶ arrows
     pub const HEAVY: Self = Self {
         track_v: '┃',
         track_h: '━',
         thumb: '█',
         arrow_up: '▲',
         arrow_down: '▼',
+        arrow_left: '◀',
+        arrow_right: '▶',
     };
 }
 
@@ -91,8 +95,11 @@ pub fn render_vertical(
     let line_count = line_count.max(1);
 
     // Use unified thumb calculation
+    // visible = text_height (how many lines fit in viewport)
+    // total = line_count (total lines in buffer)
+    // track_size = track_height (scrollbar track size, excluding arrows)
     let (thumb_start, thumb_size) =
-        thumb_range(track_height, line_count, scroll_offset, track_height);
+        thumb_range(text_height, line_count, scroll_offset, track_height);
 
     let theme = ScrollbarTheme::HEAVY;
 
@@ -114,7 +121,7 @@ pub fn render_vertical(
     }
 }
 
-/// Render a horizontal scrollbar at the bottom of a window (streamlined, no arrows)
+/// Render a horizontal scrollbar at the bottom of a window with arrows
 /// Returns (scrollbar_y, scrollbar_start_x, scrollbar_width) for click detection
 pub fn render_horizontal(
     buffer: &mut ScreenBuffer,
@@ -134,29 +141,38 @@ pub fn render_horizontal(
 
     let scrollbar_y = (rect.y + rect.height).saturating_sub(2) as u16;
     let scrollbar_start_x = (rect.x + gutter_width) as u16;
-    let scrollbar_width = text_width.saturating_sub(1); // Full width minus scrollbar column
+    let scrollbar_width = text_width.saturating_sub(1); // Full width minus vertical scrollbar column
 
-    if scrollbar_width < 3 {
+    if scrollbar_width < 5 {
+        // Need at least 5 chars: left arrow, track, thumb, track, right arrow
         return None;
     }
 
     let content_width = content_width.max(scroll_x + text_width);
+    let arrow_cols = 1;
+    let track_width = scrollbar_width.saturating_sub(arrow_cols * 2);
 
-    // Use unified thumb calculation
-    let (thumb_start, thumb_size) =
-        thumb_range(text_width, content_width, scroll_x, scrollbar_width);
+    // Use unified thumb calculation for the track area (excluding arrows)
+    let (thumb_start, thumb_size) = thumb_range(text_width, content_width, scroll_x, track_width);
 
     let theme = ScrollbarTheme::HEAVY;
 
-    // Track and thumb only (no arrows for streamlined look)
+    // Render with arrows at each end
     for x in 0..scrollbar_width {
         let screen_x = scrollbar_start_x + x as u16;
-        let (ch, fg) = if x >= thumb_start && x < thumb_start + thumb_size {
-            (theme.thumb, thumb_fg)
+        let (ch, fg, bg) = if x == 0 {
+            (theme.arrow_left, thumb_fg, track_bg)
+        } else if x == scrollbar_width - 1 {
+            (theme.arrow_right, thumb_fg, track_bg)
         } else {
-            (theme.track_h, track_fg)
+            let track_x = x - arrow_cols;
+            if track_x >= thumb_start && track_x < thumb_start + thumb_size {
+                (theme.thumb, thumb_fg, track_bg)
+            } else {
+                (theme.track_h, track_fg, track_bg)
+            }
         };
-        buffer.set(screen_x, scrollbar_y, Cell::new(ch, fg, track_bg));
+        buffer.set(screen_x, scrollbar_y, Cell::new(ch, fg, bg));
     }
 
     Some((scrollbar_y, scrollbar_start_x, scrollbar_width))

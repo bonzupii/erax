@@ -9,7 +9,6 @@
 //! - **file**: File operations (save-buffer, find-file, kill-buffer, etc.)
 //! - **search**: Search and navigation (search-forward, goto-line, etc.)
 //! - **kill_ring**: Kill ring operations (kill-line, yank, transpose-words, etc.)
-//! - **lsp**: Language Server Protocol commands (goto-definition, hover, completion, etc.)
 //! - **macro_cmd**: Macro recording and playback (begin-macro, execute-macro, etc.)
 //! - **buffer**: Buffer introspection (buffer-info, count-words, etc.)
 //! - **text**: Text transformation (justify-paragraph, upper-word, etc.)
@@ -230,6 +229,11 @@ pub fn register_all(app: &mut crate::core::app::EditorApp) {
         Box::new(ToggleDiagnosticsPane),
     );
     registry.insert("diagnostics-jump".to_string(), Box::new(DiagnosticsJump));
+    registry.insert("diagnostics-next".to_string(), Box::new(DiagnosticsNext));
+    registry.insert(
+        "diagnostics-previous".to_string(),
+        Box::new(DiagnosticsPrevious),
+    );
 
     // Text manipulation commands
     registry.insert("justify-paragraph".to_string(), Box::new(JustifyParagraph));

@@ -82,8 +82,7 @@ impl KillRing {
         self.peek()
     }
 
-    /// Rotate the kill ring (for yank-pop) (Test helper)
-    #[cfg(test)]
+    /// Rotate the kill ring (for yank-pop)
     pub fn rotate(&mut self) -> Option<&String> {
         if self.ring.is_empty() {
             return None;
@@ -98,11 +97,10 @@ impl KillRing {
         self.ring.get(self.current_index)
     }
 
-    /// Reset the "last action was kill" state (Test helper)
-    #[cfg(test)]
+    /// Reset the "last action was kill" state
     pub fn reset_kill_state(&mut self) {
         self.last_action_was_kill = false;
-        // Also reset rotation index to top?
+        // Also reset rotation index to top
         if !self.ring.is_empty() {
             self.current_index = self.ring.len() - 1;
         }

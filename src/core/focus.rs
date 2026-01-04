@@ -34,6 +34,8 @@ pub enum FocusTarget {
     FindReplace,
     /// Help/documentation overlay
     Help,
+    /// Waiting for key (describe-key)
+    DescribeKey,
 }
 
 impl FocusTarget {
@@ -72,6 +74,7 @@ impl fmt::Display for FocusTarget {
             FocusTarget::GoToLine => write!(f, "Go To Line"),
             FocusTarget::FindReplace => write!(f, "Find/Replace"),
             FocusTarget::Help => write!(f, "Help"),
+            FocusTarget::DescribeKey => write!(f, "Describe Key"),
         }
     }
 }

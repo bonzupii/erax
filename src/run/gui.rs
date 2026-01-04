@@ -239,7 +239,27 @@ impl GuiApp {
             return;
         }
 
-        if let Some(key) = crate::gui::input::winit_key_to_key(event.physical_key, self.modifiers) {
+        // Try to get the key from winit's text field first (respects keyboard layout)
+        // Fall back to physical key mapping for special keys
+        let key = if let Some(ref text) = event.text {
+            // Use the actual typed text (handles keyboard layouts correctly)
+            if let Some(ch) = text.chars().next() {
+                if self.modifiers.control_key() && !self.modifiers.alt_key() {
+                    Some(core::input::Key::Ctrl(ch.to_ascii_lowercase()))
+                } else if self.modifiers.alt_key() && !self.modifiers.control_key() {
+                    Some(core::input::Key::Alt(ch))
+                } else {
+                    Some(core::input::Key::Char(ch))
+                }
+            } else {
+                None
+            }
+        } else {
+            // Fall back to physical key mapping for special keys (arrows, F-keys, etc.)
+            crate::gui::input::winit_key_to_key(event.physical_key, self.modifiers)
+        };
+
+        if let Some(key) = key {
             // Convert winit key to InputEvent
             let input_event = crate::gui::input::create_input_event(key, self.modifiers);
 
@@ -250,7 +270,7 @@ impl GuiApp {
             match terminal::event_handler::process_terminal_event(
                 &mut self.editor,
                 &mut self.display,
-                &mut self.keybinds, // Changed from keybind_manager to keybinds
+                &mut self.keybinds,
                 editor_event,
             ) {
                 Ok(should_exit) => {

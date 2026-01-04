@@ -142,6 +142,10 @@ pub fn configure(config: &mut Config) {
     // Delete blank lines
     config.bind("^X^O", "delete-blank-lines"); // C-x C-o
 
+    // Sed/Diff preview
+    config.bind("ESC-s", "sed-preview"); // M-s sed preview
+    config.bind("Esc s", "sed-preview");
+
     // Count words
     config.bind("ESC-=", "count-words"); // M-=
     config.bind("Esc =", "count-words");
@@ -174,6 +178,17 @@ pub fn configure(config: &mut Config) {
     config.bind("^X (", "begin-macro");
     config.bind("^X )", "end-macro");
     config.bind("^X e", "execute-macro");
+
+    // Undo/Redo
+    config.bind("^X u", "undo"); // C-x u - Standard undo
+    config.bind("^_", "undo"); // C-_ - Alternative undo (common in Emacs)
+    config.bind("^X U", "redo"); // C-x U - Redo
+
+    // Diagnostics Navigation
+    config.bind("ESC-n", "diagnostics-next"); // M-n - Next diagnostic
+    config.bind("Esc n", "diagnostics-next");
+    config.bind("ESC-p", "diagnostics-previous"); // M-p - Previous diagnostic
+    config.bind("Esc p", "diagnostics-previous");
 
     // =========================================================================
     // EDITOR SETTINGS

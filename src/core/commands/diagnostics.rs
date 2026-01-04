@@ -278,3 +278,127 @@ fn parse_diagnostic_line(line: &str) -> (Option<PathBuf>, Option<usize>) {
 
     (None, None)
 }
+
+/// Jump to the next diagnostic in the current buffer
+#[derive(Clone, Debug)]
+pub struct DiagnosticsNext;
+
+impl Command for DiagnosticsNext {
+    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+        let (next_line, msg) = {
+            let window = match app.active_window_ref() {
+                Some(w) => w,
+                None => return DispatchResult::NotHandled,
+            };
+            let buffer = match app.buffers.get(&window.buffer_id) {
+                Some(b) => b,
+                None => return DispatchResult::NotHandled,
+            };
+
+            if buffer.diagnostics.is_empty() {
+                return DispatchResult::Info("No diagnostics in this buffer".to_string());
+            }
+
+            let cursor_line = window.cursor_y;
+
+            // Find next diagnostic after current cursor line
+            let mut next_diag = None;
+            for diag in &buffer.diagnostics {
+                let diag_line = diag.line.saturating_sub(1); // Convert 1-based to 0-based
+                if diag_line > cursor_line {
+                    next_diag = Some(diag);
+                    break;
+                }
+            }
+
+            // Wrap around to first diagnostic if no next found
+            let diag = next_diag.unwrap_or(&buffer.diagnostics[0]);
+            let line = diag.line.saturating_sub(1);
+            let msg = format!(
+                "{}: {}",
+                match diag.severity {
+                    DiagnosticSeverity::Error => "Error",
+                    DiagnosticSeverity::Warning => "Warning",
+                    DiagnosticSeverity::Note => "Note",
+                    DiagnosticSeverity::Info => "Info",
+                },
+                diag.message
+            );
+            (line, msg)
+        };
+
+        // Jump to the diagnostic line
+        if let Some(window) = app.windows.get_mut(&app.active_window) {
+            window.cursor_y = next_line;
+            window.cursor_x = 0;
+            if let Some(buffer) = app.buffers.get(&window.buffer_id) {
+                window.update_visual_cursor(buffer);
+                window.ensure_cursor_visible(buffer);
+            }
+        }
+
+        DispatchResult::Info(msg)
+    }
+}
+
+/// Jump to the previous diagnostic in the current buffer
+#[derive(Clone, Debug)]
+pub struct DiagnosticsPrevious;
+
+impl Command for DiagnosticsPrevious {
+    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+        let (prev_line, msg) = {
+            let window = match app.active_window_ref() {
+                Some(w) => w,
+                None => return DispatchResult::NotHandled,
+            };
+            let buffer = match app.buffers.get(&window.buffer_id) {
+                Some(b) => b,
+                None => return DispatchResult::NotHandled,
+            };
+
+            if buffer.diagnostics.is_empty() {
+                return DispatchResult::Info("No diagnostics in this buffer".to_string());
+            }
+
+            let cursor_line = window.cursor_y;
+
+            // Find previous diagnostic before current cursor line
+            let mut prev_diag = None;
+            for diag in buffer.diagnostics.iter().rev() {
+                let diag_line = diag.line.saturating_sub(1); // Convert 1-based to 0-based
+                if diag_line < cursor_line {
+                    prev_diag = Some(diag);
+                    break;
+                }
+            }
+
+            // Wrap around to last diagnostic if no previous found
+            let diag = prev_diag.unwrap_or(buffer.diagnostics.last().unwrap());
+            let line = diag.line.saturating_sub(1);
+            let msg = format!(
+                "{}: {}",
+                match diag.severity {
+                    DiagnosticSeverity::Error => "Error",
+                    DiagnosticSeverity::Warning => "Warning",
+                    DiagnosticSeverity::Note => "Note",
+                    DiagnosticSeverity::Info => "Info",
+                },
+                diag.message
+            );
+            (line, msg)
+        };
+
+        // Jump to the diagnostic line
+        if let Some(window) = app.windows.get_mut(&app.active_window) {
+            window.cursor_y = prev_line;
+            window.cursor_x = 0;
+            if let Some(buffer) = app.buffers.get(&window.buffer_id) {
+                window.update_visual_cursor(buffer);
+                window.ensure_cursor_visible(buffer);
+            }
+        }
+
+        DispatchResult::Info(msg)
+    }
+}

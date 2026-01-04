@@ -282,28 +282,10 @@ impl Renderer {
             bg_cache: Vec::new(),
         };
 
-        // Pre-warm cache: comprehensive Unicode coverage for smooth rendering
+        // Pre-warm cache: ASCII only for fast startup
+        // Other glyphs are rasterized on-demand (fast enough for modern GPUs)
         let prewarm_ranges: &[std::ops::RangeInclusive<u32>] = &[
-            0x0020..=0x007E, // ASCII printable
-            0x00A0..=0x00FF, // Latin-1 Supplement
-            0x0100..=0x017F, // Latin Extended-A
-            0x0180..=0x024F, // Latin Extended-B
-            0x0370..=0x03FF, // Greek and Coptic
-            0x0400..=0x04FF, // Cyrillic
-            0x0590..=0x05FF, // Hebrew
-            0x2000..=0x206F, // General Punctuation
-            0x2070..=0x209F, // Superscripts/Subscripts
-            0x20A0..=0x20CF, // Currency Symbols
-            0x2100..=0x214F, // Letterlike Symbols
-            0x2150..=0x218F, // Number Forms
-            0x2190..=0x21FF, // Arrows
-            0x2200..=0x22FF, // Mathematical Operators
-            0x2300..=0x23FF, // Miscellaneous Technical
-            0x2500..=0x257F, // Box Drawing
-            0x2580..=0x259F, // Block Elements
-            0x25A0..=0x25FF, // Geometric Shapes
-            0x2600..=0x26FF, // Miscellaneous Symbols
-            0x3000..=0x303F, // CJK Punctuation
+            0x0020..=0x007E, // ASCII printable only
         ];
         for range in prewarm_ranges {
             for code in range.clone() {

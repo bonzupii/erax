@@ -15,6 +15,7 @@ pub struct WindowRenderer;
 
 impl WindowRenderer {
     /// Draw a window to the back buffer
+    /// Returns the maximum content width of visible lines (for caching)
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         buffer: &mut Buffer,
@@ -29,7 +30,7 @@ impl WindowRenderer {
         show_line_numbers: bool,
         diff_state: Option<&DiffState>,
         terminal_host: Option<&TerminalHost>,
-    ) {
+    ) -> usize {
         // Ensure the syntax state cache is the right size
         if buffer.syntax_state_cache.len() < buffer.line_count() {
             buffer.syntax_state_cache.resize(
@@ -38,7 +39,31 @@ impl WindowRenderer {
             );
         }
 
-        let text_height = rect.height.saturating_sub(1);
+        // Pre-calculate gutter width to determine text area width
+        let pre_text_height = rect.height.saturating_sub(1);
+        let gutter_width_estimate: usize = if show_line_numbers {
+            let max_line = window.scroll_offset + pre_text_height;
+            let max_line_num = buffer.line_count().min(max_line).max(1);
+            format!("{}", max_line_num).len() + 1
+        } else {
+            0
+        };
+
+        // Calculate text width for horizontal scrollbar decision
+        let text_width_estimate = rect.width.saturating_sub(gutter_width_estimate + 1);
+
+        // Determine if horizontal scrollbar will be shown
+        // (based on cached_content_width or if we're scrolled horizontally)
+        let needs_hscroll =
+            window.cached_content_width > text_width_estimate || window.scroll_x > 0;
+
+        // Reserve extra row for horizontal scrollbar if needed
+        let text_height = if needs_hscroll {
+            rect.height.saturating_sub(2) // 1 for status, 1 for hscroll
+        } else {
+            rect.height.saturating_sub(1) // 1 for status only
+        };
+
         let kind = buffer.buffer_kind();
         let is_original_diff = kind == BufferKind::DiffOriginal;
         let is_modified_diff = kind == BufferKind::DiffModified;
@@ -66,7 +91,7 @@ impl WindowRenderer {
                     }
                 }
                 // Status line is handled by StatusRenderer (caller responsibility)
-                return;
+                return 0; // Terminal buffers don't need horizontal scrollbar caching
             }
         }
 
@@ -77,7 +102,7 @@ impl WindowRenderer {
             if p1 <= p2 { (p1, p2) } else { (p2, p1) }
         });
 
-        // Calculate gutter width if line numbers are enabled
+        // Calculate gutter width if line numbers are enabled (now accurate with text_height)
         let gutter_width: usize = if show_line_numbers {
             let max_line = window.scroll_offset + text_height;
             let max_line_num = buffer.line_count().min(max_line).max(1);
@@ -436,29 +461,36 @@ impl WindowRenderer {
         );
 
         // Render horizontal scrollbar
+        // Update cached content width with max of visible lines (grows but doesn't shrink rapidly)
         let visible_start = window.scroll_offset;
         let visible_end =
             (window.scroll_offset + rect.height.saturating_sub(1)).min(buffer.line_count());
-        let mut max_line_width: usize = 0;
+        let mut visible_max_width: usize = 0;
         for line_idx in visible_start..visible_end {
             if let Some(line) = buffer.line(line_idx) {
                 let width = crate::core::utf8::visual_width(&line, window.tab_width);
-                max_line_width = max_line_width.max(width);
+                visible_max_width = visible_max_width.max(width);
             }
         }
+        // Keep the maximum width ever seen (only grows, not shrinks, for stable scrollbar)
+        let content_width = window.cached_content_width.max(visible_max_width);
+        // Note: can't mutate window here, caller should update cached_content_width after render
 
         let text_width = rect.width.saturating_sub(gutter_width + 1);
         crate::terminal::scrollbar::render_horizontal(
             screen_buffer,
             rect,
             gutter_width,
-            max_line_width.max(window.scroll_x + text_width),
+            content_width.max(window.scroll_x + text_width),
             text_width,
             window.scroll_x,
             track_fg,
             thumb_fg,
             track_bg,
         );
+
+        // Return the visible max width for caching by caller
+        visible_max_width
     }
 
     fn diagnostic_severity_color(

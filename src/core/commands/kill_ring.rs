@@ -200,15 +200,26 @@ impl Command for Yank {
         let text = app.kill_ring.peek().map(|s| s.to_string());
 
         if let Some(text) = text {
+            let text_len = text.len();
             if let Some(window) = app.windows.get_mut(&active_window_id) {
                 if let Some(buffer) = app.buffers.get_mut(&window.buffer_id) {
+                    // Record position before insert for yank-pop
+                    let insert_pos = window.get_byte_offset(buffer).unwrap_or(0);
+
                     // Insert text at cursor position
                     for c in text.chars() {
                         window.insert_char(buffer, c);
                     }
+
+                    // Record for yank-pop
+                    app.last_yank_pos = Some(insert_pos);
+                    app.last_yank_len = text_len;
+                    app.last_command_was_yank = true;
+                    return DispatchResult::Success;
                 }
             }
         }
+        app.last_command_was_yank = false;
         DispatchResult::Success
     }
 }
@@ -304,12 +315,64 @@ impl Command for TransposeWords {
     }
 }
 
-/// Cycle through the kill ring
+/// Cycle through the kill ring (replace previous yank with next item)
 #[derive(Clone)]
 pub struct YankPop;
 
 impl Command for YankPop {
-    fn execute(&self, _app: &mut EditorApp, _count: usize) -> DispatchResult {
-        DispatchResult::Info("yank-pop: Not implemented".to_string())
+    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+        // yank-pop only works immediately after yank or yank-pop
+        if !app.last_command_was_yank {
+            return DispatchResult::Info("yank-pop: No preceding yank".to_string());
+        }
+
+        let Some(yank_pos) = app.last_yank_pos else {
+            return DispatchResult::Info("yank-pop: No yank position recorded".to_string());
+        };
+
+        let old_len = app.last_yank_len;
+
+        // Rotate the kill ring to get next item
+        let new_text = match app.kill_ring.rotate() {
+            Some(text) => text.clone(),
+            None => return DispatchResult::Info("yank-pop: Kill ring empty".to_string()),
+        };
+
+        let active_window_id = app.active_window;
+        let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
+
+        if let Some(buffer_id) = buffer_id {
+            if let Some(buffer) = app.buffers.get_mut(&buffer_id) {
+                // Delete the previously yanked text
+                buffer.delete(yank_pos, old_len);
+
+                // Insert the new text at the same position
+                buffer.insert(yank_pos, &new_text);
+
+                // Update cursor position - move to end of inserted text
+                if let Some(window) = app.windows.get_mut(&active_window_id) {
+                    // Calculate new cursor position from byte position
+                    let new_end_pos = yank_pos + new_text.len();
+                    let line = buffer.byte_to_line(new_end_pos);
+                    let line_start = buffer.line_to_byte(line).unwrap_or(0);
+                    let col = crate::core::utf8::grapheme_count(
+                        &buffer.get_range_as_string(line_start, new_end_pos - line_start),
+                    );
+                    window.cursor_y = line;
+                    window.cursor_x = col;
+                    window.update_visual_cursor(buffer);
+                }
+
+                // Update tracking for potential next yank-pop
+                app.last_yank_len = new_text.len();
+                // last_yank_pos stays the same
+                app.last_command_was_yank = true; // Allow chaining yank-pops
+
+                return DispatchResult::Success;
+            }
+        }
+
+        app.last_command_was_yank = false;
+        DispatchResult::NotHandled
     }
 }

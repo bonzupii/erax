@@ -33,6 +33,11 @@ pub struct Window {
     pub tab_width: usize,
     /// Selection manager for this window
     pub selection_manager: SelectionManager,
+    /// Cached maximum content width (for stable horizontal scrollbar)
+    /// This is the maximum visual width of any line seen, updated on scroll/edit
+    pub cached_content_width: usize,
+    /// Overwrite mode (Insert key toggle) - when true, typing replaces chars
+    pub overwrite_mode: bool,
 }
 
 impl Window {
@@ -51,6 +56,8 @@ impl Window {
             mark: None,
             tab_width,
             selection_manager: SelectionManager::new(),
+            cached_content_width: 0,
+            overwrite_mode: false,
         }
     }
 
@@ -363,6 +370,18 @@ impl Window {
 
     /// Insert a character at the cursor position
     pub fn insert_char(&mut self, buffer: &mut Buffer, c: char) {
+        // In overwrite mode, delete the character under cursor first (except for newlines)
+        if self.overwrite_mode && c != '\n' {
+            // Check if there's a character to delete (not at end of line)
+            if let Some(line_text) = buffer.line(self.cursor_y) {
+                let grapheme_count = crate::core::utf8::grapheme_count(&line_text);
+                if self.cursor_x < grapheme_count {
+                    // Delete the character under cursor (forward delete)
+                    self.delete_char(buffer, false);
+                }
+            }
+        }
+
         let absolute_pos = match self.get_byte_offset(buffer) {
             Some(pos) => pos,
             None => 0,

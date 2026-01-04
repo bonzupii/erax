@@ -191,8 +191,18 @@ impl Command for TransposeChars {
 pub struct ToggleOverwriteMode;
 
 impl Command for ToggleOverwriteMode {
-    fn execute(&self, _app: &mut EditorApp, _count: usize) -> DispatchResult {
-        DispatchResult::Info("toggle-overwrite-mode: Not implemented".to_string())
+    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+        if let Some(window) = app.windows.get_mut(&app.active_window) {
+            window.overwrite_mode = !window.overwrite_mode;
+            let mode = if window.overwrite_mode {
+                "Overwrite"
+            } else {
+                "Insert"
+            };
+            DispatchResult::Info(format!("{} mode", mode))
+        } else {
+            DispatchResult::NotHandled
+        }
     }
 }
 

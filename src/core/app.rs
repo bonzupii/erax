@@ -1,6 +1,5 @@
 //! This module defines the central `EditorApp` structure, which manages the entire state
-//! of the erax editor, including all open buffers, visible windows, global configurations,
-//! and interactions with external services like the Language Server Protocol (LSP).
+//! of the erax editor, including all open buffers, visible windows, and global configurations.
 
 use crate::core::buffer::Buffer;
 use crate::core::focus::FocusManager;
@@ -65,13 +64,19 @@ pub struct EditorApp {
     pub terminal_host: Option<TerminalHost>,
     /// Dispatch depth counter for macro recursion prevention
     pub dispatch_depth: usize,
+    /// Last yank byte position (for yank-pop)
+    pub last_yank_pos: Option<usize>,
+    /// Last yank length in bytes (for yank-pop)
+    pub last_yank_len: usize,
+    /// Was the last command a yank? (for yank-pop chaining)
+    pub last_command_was_yank: bool,
 }
 
 impl EditorApp {
     /// Creates a new `EditorApp` instance with a single empty buffer and an associated window.
     ///
     /// This is the entry point for initializing the editor's state. It sets up the default
-    /// buffer, window, kill ring, LSP manager, and internal analyzer.
+    /// buffer, window, kill ring, and internal analyzer.
     ///
     /// # Returns
     /// A new `EditorApp` instance.
@@ -115,6 +120,9 @@ impl EditorApp {
             diff_state: None,
             terminal_host: None,
             dispatch_depth: 0,
+            last_yank_pos: None,
+            last_yank_len: 0,
+            last_command_was_yank: false,
         }
     }
 
@@ -169,8 +177,6 @@ impl EditorApp {
     }
 
     /// Load a file into a new buffer
-    /// NOTE: This is intentionally LSP-free. LSP initialization happens later
-    /// in the event loop to avoid blocking file loading.
     pub fn load_file(
         &mut self,
         path: impl AsRef<Path>,

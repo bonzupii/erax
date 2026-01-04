@@ -1,7 +1,6 @@
 //! This module constitutes the core, headless, and backend-agnostic editing engine of erax.
 //! It manages fundamental editor components such as buffers, windows (logical views),
-//! command dispatch, Language Server Protocol (LSP) client communication,
-//! syntax parsing, and search functionality.
+//! command dispatch, syntax parsing, and search functionality.
 
 pub mod app;
 pub mod buffer;

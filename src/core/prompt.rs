@@ -174,7 +174,7 @@ pub fn handle_prompt_action(
             }
         }
         InputAction::RenameSymbol => {
-            app.message = Some("Rename functionality (LSP) removed.".to_string());
+            app.message = Some("Rename functionality not implemented.".to_string());
         }
         InputAction::ReadFile => {
             if !input.is_empty() {
@@ -310,6 +310,9 @@ pub fn handle_prompt_action(
                     _ => {}
                 }
             }
+        }
+        InputAction::DescribeKey => {
+            // Not used via prompt
         }
     }
     Ok(false)

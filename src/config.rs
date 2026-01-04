@@ -7,7 +7,6 @@ use std::collections::HashMap;
 pub struct Config {
     pub keybindings: HashMap<String, String>,
     pub settings: HashMap<String, ConfigValue>,
-    pub lsp_servers: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,7 +21,6 @@ impl Config {
         Self {
             keybindings: HashMap::new(),
             settings: HashMap::new(),
-            lsp_servers: HashMap::new(),
         }
     }
 
@@ -35,12 +33,6 @@ impl Config {
     /// Set a configuration value
     pub fn set<V: Into<ConfigValue>>(&mut self, key: &str, value: V) {
         self.settings.insert(key.to_string(), value.into());
-    }
-
-    /// Configure LSP server for a language
-    pub fn lsp(&mut self, language: &str, server: &str) {
-        self.lsp_servers
-            .insert(language.to_string(), server.to_string());
     }
 
     /// Get a setting value (Test helper)
@@ -110,7 +102,6 @@ mod tests {
         let config = Config::default();
         assert!(config.keybindings.is_empty());
         assert!(config.settings.is_empty());
-        assert!(config.lsp_servers.is_empty());
     }
 
     #[test]
@@ -132,16 +123,6 @@ mod tests {
 
         config.set("string_setting", "hello");
         assert_eq!(config.get_string("string_setting"), Some("hello"));
-    }
-
-    #[test]
-    fn test_lsp_config() {
-        let mut config = Config::default();
-        config.lsp("rust", "rust-analyzer");
-        assert_eq!(
-            config.lsp_servers.get("rust"),
-            Some(&"rust-analyzer".to_string())
-        );
     }
 
     #[test]

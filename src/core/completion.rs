@@ -1,7 +1,6 @@
 //! Word Completion
 //!
-//! Buffer-local word completion (no LSP required).
-//! Uses the unified Lexer to extract identifiers from buffer content.
+//! Buffer-local word completion using the unified Lexer to extract identifiers.
 
 use std::collections::HashSet;
 
@@ -11,7 +10,7 @@ use super::lexer::{LanguageConfig, Lexer, TokenKind};
 /// Word completer for buffer-local completion
 ///
 /// Collects identifiers from the buffer and provides completions
-/// based on a prefix match. No external LSP required.
+/// based on a prefix match.
 #[derive(Debug, Default)]
 pub struct WordCompleter {
     /// Cached words from the buffer

@@ -1,7 +1,7 @@
 //! Terminal Diagnostic Parsing
 //!
 //! Parses compiler output from GCC, Rust, and Make to extract errors,
-//! warnings, and file locations. This provides LSP-like features for
+//! warnings, and file locations. This provides IDE-like features for
 //! build output without requiring a language server.
 
 // DiagnosticParser is used by event_handler.rs for shell command output

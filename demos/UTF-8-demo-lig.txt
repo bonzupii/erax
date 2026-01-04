@@ -1,0 +1,97 @@
+# Unicode Rendering Test Suite for erax
+# This file tests font fallback, ligatures, complex scripts, and bidirectional text
+
+## Programming Ligatures (should render as single glyphs in code fonts)
+→ != >= <= == === !== -> => /* */ // ++ -- ** && || |> <| <> <<< >>> <!-- --> 
+
+## Box Drawing (must align perfectly with NO gaps)
+┌─────────┬─────────┐
+│ Test    │ Result  │
+├─────────┼─────────┤
+│ Passed  │ ✓       │
+└─────────┴─────────┘
+
+## Brahmi (ancient Indian script, 300 BCE)
+# Text: brāhmī (the name of the script in its own writing)
+𑀩𑁆𑀭𑀸𑀳𑁆𑀫𑀻
+# Should render: consonant clusters with combining marks above/below
+# Width: Each character is 1 cell, combiners attach to base
+
+## Khmer (Cambodian script)
+# Text: "Khmer script" in Khmer
+អក្សរខ្មែរ
+# Should render: Stacked consonants (subscript forms) with vowel marks
+# Complex shaping: ក្ស shows subscript SA under KA
+# Width: 1-2 cells per cluster depending on combining marks
+
+## Arabic (right-to-left)
+# Text: "Arabic language" 
+اللغة العربية
+# Should render: RIGHT-TO-LEFT, cursive joining forms
+# Characters change shape based on position (initial/medial/final/isolated)
+# Width: Each character ~1 cell, text flows RIGHT to LEFT
+
+## Tamil (South Indian script)
+# Text: "Tamil language"
+தமிழ் மொழி
+# Should render: Rounded glyphs with vowel marks attached
+# Complex: ழி் shows vowel mark above base
+# Width: 1-2 cells per cluster
+
+## Hebrew (right-to-left)
+# Text: "Hebrew language"
+עברית
+# Should render: RIGHT-TO-LEFT, square block letters
+# Some letters may have dots (nikkud) above/below
+# Width: ~1 cell per letter, flows RIGHT to LEFT
+
+## Thai (no spaces between words)
+# Text: "Thai language"
+ภาษาไทย
+# Should render: No word boundaries, tone marks above consonants
+# Complex: Vowels can appear above, below, before, or after consonants
+# Width: 1 cell per character, tone marks combine with base
+
+## CJK Full-Width (East Asian)
+# Text: Japanese "Hello" in Katakana
+こんにちは
+# Should render: Wide characters, each takes 2 cells
+# Width: EXACTLY 2 cells per character, must align with double-width grid
+
+## Emoji and Modifiers
+👨‍👩‍👧‍👦 👍🏿 🇯🇵
+# Should render: Family emoji (ZWJ sequence), thumbs up with skin tone, flag
+# Width: 2 cells per emoji, modifiers combine with base
+
+## Mixed Bidirectional Text (BiDi algorithm test)
+Hello עברית world اللغة test
+# Should render: LTR English, then RTL Hebrew, then LTR English, then RTL Arabic
+# Cursor navigation must follow LOGICAL order, not visual order
+
+## Combining Diacriticals (stacking test)
+e̷̢̗͙̲̫̠̎͊̆̈̀ͅ ̴̡͓̝͖̈́͌̎̿Z̴̰̘̈́̍̕a̷̰̓̈́l̶̰̈́ģ̶̣̈o̷̦̐̌ ̸̰̈́̈t̵̰̐e̷̡͙͊x̷̣̌t̷͙̐
+# Should render: Base characters with multiple combining marks
+# Width: 1 cell per base, marks stack vertically
+
+## Control Characters and Whitespace
+Tab:	<- Should advance to next tab stop (default 8 spaces)
+NBSP: <--> should not break
+ZWSP:​<-invisible width joiner
+
+## Performance Stress Test (100 chars of mixed scripts)
+ABCDEFGHIJאבגדهويきくけこ한글தமிழ்ខ្មែรไทยABCDEFGHIJאבגדهويきくけこ한글தமிழ்ខ្មែរไทยABCDEFGHIJאבגדهويきくけこ한글தமிழ்ខ្មែរไทย
+
+## Expected Behavior Summary:
+1. Ligatures: Multi-char sequences render as single glyphs in monospace fonts
+2. Box drawing: Perfect alignment, zero gaps between characters
+3. Brahmi: Ancient script with combining marks, rare font required
+4. Khmer: Complex subscript stacking, advanced shaping needed
+5. Arabic: RTL, cursive joining, contextual forms
+6. Tamil: Rounded script with vowel marks
+7. Hebrew: RTL, block letters
+8. Thai: No word spaces, tone marks above/below
+9. CJK: EXACTLY 2 cells wide, full-width characters
+10. Emoji: 2 cells wide, ZWJ sequences combine multiple emoji
+11. BiDi: Mixed LTR/RTL text, cursor follows logical not visual order
+12. Combining marks: Stack above/below base character
+13. Control chars: Tab stops, non-breaking spaces, zero-width joiners
