@@ -2,7 +2,6 @@
 //!
 //! Implements the GPM client protocol by connecting to the GPM daemon
 //! via Unix socket at /dev/gpmctl. Based on libgpm source code from
-//! https://github.com/telmich/gpm
 //!
 //! The protocol:
 //! 1. Connect to /dev/gpmctl (AF_UNIX, SOCK_STREAM)
