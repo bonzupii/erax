@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use crate::config::Config;
 use crate::core;
 use crate::terminal;
+use crate::terminal::events::EditorEvent;
 
 /// Run in terminal (TUI) mode.
 pub fn run_terminal_mode(
