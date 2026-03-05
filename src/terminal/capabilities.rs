@@ -87,12 +87,12 @@ fn has_ansi_support() -> bool {
         }
 
         // Check if running in ConEmu, Cmder, or Windows Terminal
-        // Check if running in ConEmu, Cmder, or Windows Terminal
-        match env::var("ConEmuANSI") {
+        (match env::var("ConEmuANSI") {
             Ok(val) => val == "ON",
             Err(_) => false,
-        }
-        || env::var("CMDEXTVERSION").is_ok() || env::var("WT_SESSION").is_ok()
+        })
+        || env::var("CMDEXTVERSION").is_ok()
+        || env::var("WT_SESSION").is_ok()
     }
 
     #[cfg(not(windows))]
