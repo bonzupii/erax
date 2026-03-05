@@ -243,7 +243,7 @@ pub fn configure(config: &mut Config) {
     // Accessibility: "high_contrast_dark", "high_contrast_light", "high_contrast_solarized",
     //   "monochrome_high_contrast", "deuteranopia_azure", "protanopia_lumos",
     //   "tritanopia_blossom", "achroma_noir"
-    config.set("theme", "dracula");
+    config.set("theme", "gruvbox");
 }
 
 #[cfg(test)]
