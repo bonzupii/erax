@@ -134,6 +134,7 @@ pub struct Display {
     /// Dirty region tracker for incremental rendering
     pub dirty_tracker: DirtyTracker,
     /// Software mouse cursor position (for TTYs)
+    #[allow(dead_code)]
     pub mouse_cursor: Option<(u16, u16)>,
     /// Display mode (TrueColor, Ansi, Ascii) for color fallback
     pub display_mode: DisplayMode,

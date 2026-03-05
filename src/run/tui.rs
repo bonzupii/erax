@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use crate::config::Config;
 use crate::core;
 use crate::terminal;
-use crate::terminal::events::EditorEvent;
 
 /// Run in terminal (TUI) mode.
 pub fn run_terminal_mode(
@@ -56,6 +55,7 @@ pub fn run_terminal_mode(
 
     let mut event_handler = terminal::events::EventHandler::new();
     loop {
+        #[allow(unused_mut)]
         let mut event_processed = false;
 
         // Poll GPM events on Linux console (Non-blocking, Check First)

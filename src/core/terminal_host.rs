@@ -436,7 +436,7 @@ impl TerminalHost {
         }
     }
 
-    /// Get entire grid as Vec<Vec<char>> for rendering
+    /// Get entire grid as `Vec<Vec<char>>` for rendering
     pub fn grid(&self) -> Vec<Vec<char>> {
         #[cfg(feature = "terminal")]
         {
