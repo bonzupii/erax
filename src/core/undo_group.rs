@@ -1,4 +1,4 @@
-//! Smart Undo Grouping
+//! Smart undo grouping of related edits.
 //!
 //! Intelligent undo grouping that understands code structure and token boundaries.
 //! Groups consecutive edits that belong to the same "logical operation" for better
@@ -6,6 +6,35 @@
 
 use super::buffer::Edit;
 use super::lexer::{LexerState, TokenKind};
+
+/// Number of Unicode scalar values in `bytes`. Edit texts are the exact
+/// bytes inserted or removed; for counting we use the lossy view (invalid
+/// sequences count as one replacement char each), matching display semantics.
+fn char_count(bytes: &[u8]) -> usize {
+    String::from_utf8_lossy(bytes).chars().count()
+}
+
+/// First character of `bytes`, or `None` when empty or invalid at the start.
+fn first_char(bytes: &[u8]) -> Option<char> {
+    std::str::from_utf8(bytes).ok()?.chars().next()
+}
+
+/// Last character of `bytes`: scan back from the end to the lead byte and
+/// decode exactly that sequence (never a neighboring character's bytes).
+/// Returns `None` when empty or invalid at the end.
+fn last_char(bytes: &[u8]) -> Option<char> {
+    if bytes.is_empty() {
+        return None;
+    }
+    // A UTF-8 sequence is at most 4 bytes; the lead byte is the last byte
+    // in the tail that is not a continuation byte (0b10xxxxxx).
+    let tail_start = bytes.len().saturating_sub(4);
+    let mut lead = bytes.len() - 1;
+    while lead > tail_start && bytes[lead] & 0b1100_0000 == 0b1000_0000 {
+        lead -= 1;
+    }
+    std::str::from_utf8(&bytes[lead..]).ok()?.chars().next()
+}
 
 /// A group of edits that should be undone/redone together
 ///
@@ -106,7 +135,12 @@ impl UndoGrouper {
             return false;
         }
 
-        // Check if edits are adjacent or overlapping
+        // Check if edits are adjacent or overlapping.
+        //
+        // NOTE (session 5): `pos` is a BYTE position, so adjacency compares
+        // against the text's BYTE length. The old code used `len_chars()`
+        // here — a latent multi-byte bug (adjacent multi-byte inserts never
+        // grouped, and mis-grouping was possible).
         let edits_are_adjacent = match (prev_edit, curr_edit) {
             (
                 Edit::Insert {
@@ -116,7 +150,7 @@ impl UndoGrouper {
                 Edit::Insert { pos: curr_pos, .. },
             ) => {
                 // Insertions are adjacent if current starts where previous ended
-                *curr_pos == *prev_pos + prev_text.len_chars()
+                *curr_pos == *prev_pos + prev_text.len()
             }
             (
                 Edit::Delete {
@@ -126,7 +160,7 @@ impl UndoGrouper {
                 Edit::Delete { pos: curr_pos, .. },
             ) => {
                 // Deletions are adjacent if they're at the same position or consecutive
-                *curr_pos == *prev_pos || *curr_pos == *prev_pos + prev_text.len_chars()
+                *curr_pos == *prev_pos || *curr_pos == *prev_pos + prev_text.len()
             }
             _ => false, // Different edit types shouldn't be grouped
         };
@@ -138,8 +172,8 @@ impl UndoGrouper {
 
         // Track if this is a small single-char edit for batch grouping
         let is_small_edit = match curr_edit {
-            Edit::Insert { text, .. } => text.len_chars() <= 1,
-            Edit::Delete { text, .. } => text.len_chars() <= 1,
+            Edit::Insert { text, .. } => char_count(text) <= 1,
+            Edit::Delete { text, .. } => char_count(text) <= 1,
         };
 
         // For adjacent small edits within a batch, group them together
@@ -176,7 +210,7 @@ impl UndoGrouper {
         };
 
         // If either text is empty, we can't analyze boundaries
-        if prev_text.len_chars() == 0 || curr_text.len_chars() == 0 {
+        if prev_text.is_empty() || curr_text.is_empty() {
             return true;
         }
 
@@ -184,12 +218,12 @@ impl UndoGrouper {
         // The boundary is between the last character of prev_text and first character of curr_text
 
         // Get the last character of previous edit
-        let last_char = match prev_text.chars().last() {
+        let last_char = match last_char(prev_text) {
             Some(c) => c,
             None => return true,
         };
         // Get the first character of current edit
-        let first_char = match curr_text.chars().next() {
+        let first_char = match first_char(curr_text) {
             Some(c) => c,
             None => return true,
         };
@@ -248,6 +282,12 @@ impl UndoGrouper {
         let mut group = UndoGroup::with_description(description);
         group.edits = edits;
         group
+    }
+}
+
+impl Default for UndoGrouper {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -1,3 +1,4 @@
+//! Kill ring: bounded clipboard history for killed text.
 /// Maximum size of a single kill ring entry (10 MB)
 const MAX_KILL_SIZE: usize = 10 * 1024 * 1024;
 
@@ -45,11 +46,10 @@ impl KillRing {
 
         if append && self.last_action_was_kill && !self.ring.is_empty() {
             // Append to the most recent entry (but check combined size)
-            if let Some(last) = self.ring.last_mut() {
-                if last.len() + text.len() <= MAX_KILL_SIZE {
+            if let Some(last) = self.ring.last_mut()
+                && last.len() + text.len() <= MAX_KILL_SIZE {
                     last.push_str(text);
                 }
-            }
         } else {
             // Push new entry
             if self.ring.len() >= self.max_size {
@@ -104,6 +104,12 @@ impl KillRing {
         if !self.ring.is_empty() {
             self.current_index = self.ring.len() - 1;
         }
+    }
+}
+
+impl Default for KillRing {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

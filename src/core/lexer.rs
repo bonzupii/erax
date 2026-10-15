@@ -1,4 +1,4 @@
-//! Unified Token Lexer
+//! Unified token lexer for syntax highlighting.
 //!
 //! A pull-parser lexer that serves both syntax highlighting and tooling
 //! (calculator, word completion, undo grouping, etc.)
@@ -539,14 +539,12 @@ impl<'a> Lexer<'a> {
             self.take_while(self.pos, |ch| ch.is_ascii_digit() || ch == '_');
 
             // Float with decimal point
-            if self.peek() == Some('.') {
-                if let Some(next) = self.peek_nth(1) {
-                    if next.is_ascii_digit() {
+            if self.peek() == Some('.')
+                && let Some(next) = self.peek_nth(1)
+                    && next.is_ascii_digit() {
                         self.advance(); // consume '.'
                         self.take_while(self.pos, |ch| ch.is_ascii_digit() || ch == '_');
                     }
-                }
-            }
 
             // Exponent
             if matches!(self.peek(), Some('e') | Some('E')) {
@@ -766,7 +764,7 @@ impl<'a> Iterator for Lexer<'a> {
             LexerState::Normal => {}
         }
 
-        let (_, ch) = self.chars.peek()?.clone();
+        let (_, ch) = *self.chars.peek()?;
 
         Some(match ch {
             // Whitespace

@@ -9,11 +9,9 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-#[cfg(feature = "terminal")]
 use vte::{Params, Parser, Perform};
 
 /// VTE handler that updates our grid
-#[cfg(feature = "terminal")]
 struct GridHandler {
     grid: Vec<Vec<char>>,
     cols: usize,
@@ -22,7 +20,6 @@ struct GridHandler {
     cursor_y: usize,
 }
 
-#[cfg(feature = "terminal")]
 impl GridHandler {
     fn new(cols: usize, rows: usize) -> Self {
         Self {
@@ -87,7 +84,6 @@ impl GridHandler {
     }
 }
 
-#[cfg(feature = "terminal")]
 impl Perform for GridHandler {
     fn print(&mut self, c: char) {
         self.put_char(c);
@@ -106,7 +102,7 @@ impl Perform for GridHandler {
                 let next_tab = ((self.cursor_x / 8) + 1) * 8;
                 self.cursor_x = next_tab.min(self.cols.saturating_sub(1));
             }
-            0x0A | 0x0B | 0x0C => {
+            0x0A..=0x0C => {
                 // LF, VT, FF
                 self.line_feed();
             }
@@ -132,10 +128,7 @@ impl Perform for GridHandler {
     ) {
         let params: Vec<u16> = params
             .iter()
-            .map(|p| match p.first().copied() {
-                Some(v) => v,
-                None => 0,
-            })
+            .map(|p| p.first().copied().unwrap_or_default())
             .collect();
 
         match action {
@@ -186,10 +179,7 @@ impl Perform for GridHandler {
             }
             'J' => {
                 // Erase in Display
-                let mode = match params.first().copied() {
-                    Some(v) => v,
-                    None => 0,
-                };
+                let mode = params.first().copied().unwrap_or_default();
                 match mode {
                     0 => {
                         // Clear from cursor to end
@@ -222,10 +212,7 @@ impl Perform for GridHandler {
             }
             'K' => {
                 // Erase in Line
-                let mode = match params.first().copied() {
-                    Some(v) => v,
-                    None => 0,
-                };
+                let mode = params.first().copied().unwrap_or_default();
                 if self.cursor_y < self.rows {
                     match mode {
                         0 => {
@@ -267,12 +254,11 @@ impl Perform for GridHandler {
                 // Line feed
                 self.line_feed();
             }
-            b'M' => {
+            b'M'
                 // Reverse line feed
-                if self.cursor_y > 0 {
+                if self.cursor_y > 0 => {
                     self.cursor_y -= 1;
                 }
-            }
             _ => {}
         }
     }
@@ -289,17 +275,11 @@ pub struct TerminalHost {
     /// Writer for PTY input  
     writer: Box<dyn Write + Send>,
 
-    #[cfg(feature = "terminal")]
     /// VTE parser
     parser: Parser,
 
-    #[cfg(feature = "terminal")]
     /// Grid handler
     handler: GridHandler,
-
-    #[cfg(not(feature = "terminal"))]
-    /// Fallback grid for when terminal feature is disabled
-    pub grid: Vec<Vec<char>>,
 
     /// Current number of columns
     pub cols: u16,
@@ -342,7 +322,6 @@ impl TerminalHost {
             }
         });
 
-        #[cfg(feature = "terminal")]
         {
             Ok(Self {
                 pty: pty_pair,
@@ -351,21 +330,6 @@ impl TerminalHost {
                 writer,
                 parser: Parser::new(),
                 handler: GridHandler::new(cols as usize, rows as usize),
-                cols,
-                rows,
-                rx,
-            })
-        }
-
-        #[cfg(not(feature = "terminal"))]
-        {
-            let grid = vec![vec![' '; cols as usize]; rows as usize];
-            Ok(Self {
-                pty: pty_pair,
-                child: Arc::new(Mutex::new(child)),
-                reader,
-                writer,
-                grid,
                 cols,
                 rows,
                 rx,
@@ -385,18 +349,7 @@ impl TerminalHost {
         self.cols = cols;
         self.rows = rows;
 
-        #[cfg(feature = "terminal")]
-        {
-            self.handler.resize(cols as usize, rows as usize);
-        }
-
-        #[cfg(not(feature = "terminal"))]
-        {
-            self.grid.resize(rows as usize, vec![' '; cols as usize]);
-            for row in self.grid.iter_mut() {
-                row.resize(cols as usize, ' ');
-            }
-        }
+        self.handler.resize(cols as usize, rows as usize);
     }
 
     /// Writes data to the PTY input.
@@ -417,7 +370,6 @@ impl TerminalHost {
                 found = true;
             }
 
-            #[cfg(feature = "terminal")]
             {
                 // Feed bytes to VTE parser
                 self.parser.advance(&mut self.handler, &data);
@@ -438,15 +390,7 @@ impl TerminalHost {
 
     /// Get entire grid as `Vec<Vec<char>>` for rendering
     pub fn grid(&self) -> Vec<Vec<char>> {
-        #[cfg(feature = "terminal")]
-        {
-            self.handler.grid.clone()
-        }
-
-        #[cfg(not(feature = "terminal"))]
-        {
-            self.grid.clone()
-        }
+        self.handler.grid.clone()
     }
 }
 

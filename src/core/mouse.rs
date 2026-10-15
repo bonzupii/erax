@@ -1,4 +1,4 @@
-//! Mouse Event Handling
+//! Mouse-event handling and translation.
 //! Handles mouse interactions including clicks, drags, double/triple clicks, and scrolling.
 //! Translates screen coordinates to buffer positions and manages selection state.
 
@@ -214,10 +214,7 @@ impl MouseHandler {
             }
 
             // Calculate byte offsets
-            let line_start_byte = match buffer.line_to_byte(row) {
-                Some(b) => b,
-                None => 0,
-            };
+            let line_start_byte = buffer.line_to_byte(row).unwrap_or_default();
 
             let start_byte_offset = graphemes[0..start].iter().map(|g| g.len()).sum::<usize>();
             let len_byte_offset = graphemes[start..end].iter().map(|g| g.len()).sum::<usize>();
@@ -282,7 +279,7 @@ impl MouseHandler {
                 window.scroll_x = window.scroll_x.saturating_sub(amount);
             }
             ScrollDirection::Right => {
-                window.scroll_x = window.scroll_x + amount;
+                window.scroll_x += amount;
             }
         }
 

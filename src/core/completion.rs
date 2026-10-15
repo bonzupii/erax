@@ -1,4 +1,4 @@
-//! Word Completion
+//! Word completion from buffer vocabularies.
 //!
 //! Buffer-local word completion using the unified Lexer to extract identifiers.
 
@@ -85,7 +85,7 @@ impl WordCompleter {
         buffer_id: crate::core::id::BufferId,
         cursor_byte: usize,
     ) -> Vec<String> {
-        let content = buffer.to_string();
+        let content = buffer.content_string();
 
         // Find word start by scanning backwards from cursor
         let prefix_start = match content[..cursor_byte]

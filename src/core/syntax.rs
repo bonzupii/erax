@@ -1,4 +1,4 @@
-//! Syntax Highlighting Module
+//! Syntax-highlighting module.
 //!
 //! This module provides the syntax highlighting interface for the editor.
 //! It uses the unified lexer from `lexer.rs` as the sole tokenization engine.
