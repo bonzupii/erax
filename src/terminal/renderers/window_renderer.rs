@@ -189,12 +189,12 @@ impl WindowRenderer {
                         && buffer_line_idx + 1 >= *old_start
                         && buffer_line_idx + 1 < *old_end
                     {
-                        line_bg = Self::mix_colors(line_bg, Color::Red, 0.2);
+                        line_bg = Self::mix_colors(line_bg, theme.diff_removed_bg, 0.2);
                     } else if is_modified_diff
                         && buffer_line_idx + 1 >= *new_start
                         && buffer_line_idx + 1 < *new_end
                     {
-                        line_bg = Self::mix_colors(line_bg, Color::Green, 0.2);
+                        line_bg = Self::mix_colors(line_bg, theme.diff_added_bg, 0.2);
                     }
                 }
             }
@@ -476,15 +476,7 @@ impl WindowRenderer {
                 screen_buffer.set(
                     screen_x,
                     screen_y,
-                    Cell::new(
-                        '~',
-                        Color::Rgb {
-                            r: 100,
-                            g: 100,
-                            b: 200,
-                        },
-                        line_bg,
-                    ),
+                    Cell::new('~', theme.gutter_fg, line_bg),
                 );
                 for x in (screen_x + 1)..(text_start_x + text_width) as u16 {
                     screen_buffer.set(

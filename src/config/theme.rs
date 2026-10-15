@@ -6,7 +6,7 @@
 use crate::terminal::theme::ThemeId;
 
 /// Color theme.
-pub const THEME: ThemeId = ThemeId::Gruvbox;
+pub const THEME: ThemeId = ThemeId::GithubDark;
 
 /// Terminal truecolor (24-bit) mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

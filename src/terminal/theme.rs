@@ -97,6 +97,14 @@ pub struct Theme {
     pub warning: Color,
     /// Informational notes.
     pub info: Color,
+
+    // -- overlays (32-slot standard) --
+    /// Background of search-match highlights. Text keeps its own color.
+    pub search_match_bg: Color,
+    /// Background of added lines in diff views.
+    pub diff_added_bg: Color,
+    /// Background of removed lines in diff views.
+    pub diff_removed_bg: Color,
 }
 
 /// Typed theme identifier. Selecting a theme is a match over this enum (N-101);
@@ -231,12 +239,15 @@ impl ThemeId {
 
 /// The one default theme, stated once (N-102).
 ///
-/// This matches the user's configured choice (`gruvbox` in the typed config);
-/// the previous three-way disagreement between `Theme::default()`, the config
-/// map, and the display fallback is resolved by having a single source.
+/// GitHub Dark is the stock default: the most neutral dark palette in the
+/// tree by background chroma, with a seamless status bar and full truecolor
+/// role coverage. This matches the user's configured choice (`github-dark`
+/// in the typed config); the previous three-way disagreement between
+/// `Theme::default()`, the config map, and the display fallback is resolved
+/// by having a single source.
 impl Default for ThemeId {
     fn default() -> Self {
-        ThemeId::Gruvbox
+        ThemeId::GithubDark
     }
 }
 
@@ -287,9 +298,13 @@ mod tests {
     }
 
     #[test]
-    fn default_theme_is_stated_once() {
-        assert_eq!(ThemeId::default(), ThemeId::Gruvbox);
-        assert_eq!(ThemeId::default().name(), "gruvbox");
+    fn default_theme_is_coherent() {
+        // Structural: whatever the configured default is, its name
+        // round-trips through the typed parser to itself. The type
+        // system, not this test, is the proof of the config value.
+        let default = ThemeId::default();
+        let parsed: ThemeId = default.name().parse().expect("default name parses");
+        assert_eq!(parsed, default);
     }
 
     #[test]

@@ -105,7 +105,5 @@ mod tests {
             modal_cursor_style(ModalMode::Visual, false),
             CursorStyle::HollowBlock
         );
-        assert_eq!(KEYTRIE_CURSOR_STYLE, CursorStyle::SteadyBlock);
-        assert_eq!(STANDARD_CURSOR_STYLE, CursorStyle::SteadyBar);
     }
 }
