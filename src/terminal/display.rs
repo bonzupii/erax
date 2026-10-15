@@ -1483,3 +1483,50 @@ mod tests {
         drop(display);
     }
 }
+
+#[cfg(test)]
+mod cursor_clamp_tests {
+    use super::*;
+    use crate::core::buffer::Buffer;
+    use crate::core::id::{BufferId, WindowId};
+    use crate::core::app::EditorApp;
+
+    fn app_with_scrolled_view() -> (EditorApp, Display) {
+        let mut app = EditorApp::new();
+        let text = (0..100).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        app.buffers.insert(BufferId(0), Buffer::from_string(&text));
+        // Cursor on line 0, viewport scrolled to line 50: the cursor is
+        // above the visible area (the state scroll commands produce).
+        let window = app.windows.get_mut(&WindowId(0)).expect("window");
+        window.cursor_y = 0;
+        window.scroll_offset = 50;
+        let display = Display::new(80, 24, None, None);
+        (app, display)
+    }
+
+    fn cursor_cells(display: &Display) -> Vec<(usize, usize)> {
+        let w = display.back_buffer.width as usize;
+        display
+            .back_buffer
+            .cells
+            .iter()
+            .enumerate()
+            .filter(|(_, cell)| cell.role == CellRole::Cursor)
+            .map(|(i, _)| (i % w, i / w))
+            .collect()
+    }
+
+    /// An out-of-viewport cursor must not paint a cursor cell: the paint
+    /// clamps the position to the viewport edge, drawing a cursor where
+    /// the user's cursor is not.
+    #[test]
+    #[ignore]
+    fn out_of_viewport_cursor_paints_no_cursor_cell() {
+        let (mut app, mut display) = app_with_scrolled_view();
+        display.render(&mut app).expect("render");
+        assert!(
+            cursor_cells(&display).is_empty(),
+            "cursor is above the viewport but a cursor cell was painted"
+        );
+    }
+}
