@@ -661,4 +661,3 @@ mod tests {
         assert_eq!(modal.len(), KEYBINDINGS.len());
     }
 }
-
