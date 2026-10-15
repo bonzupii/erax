@@ -77,7 +77,8 @@ impl GridMetrics {
     pub fn grid_dimensions(&self) -> (u32, u32) {
         Self::compute_grid_dimensions_static(
             self.width_px,
-            self.height_px,            self.cell_width,
+            self.height_px,
+            self.cell_width,
             self.cell_height,
         )
     }
