@@ -162,11 +162,14 @@ pub fn run_terminal_mode(
         }
 
         if let Some(ref mut host) = app.terminal_host
-            && host.is_alive() {
-                // Non-blocking read from terminal host
-                let _ = host.read();
-                display.dirty = true;
-            }
+            && host.is_alive()
+            && host.read().is_some()
+        {
+            // The child wrote: its grid changed, so re-render. An empty
+            // poll leaves the frame alone instead of forcing 100Hz
+            // re-renders while the terminal idles.
+            display.dirty = true;
+        }
 
         if display.dirty {
             display
