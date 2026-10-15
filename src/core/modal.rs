@@ -18,8 +18,8 @@
 //! (`kill_ring` vs `clipboard` vs vim registers) holds.
 
 use crate::config::keys::{
-    FindDir, FindEdge, InputModel, ModalAction, ModalMode, ModalOperator, INPUT_MODEL,
-    MODAL_BINDINGS,
+    FindDir, FindEdge, InputModel, ModalAction, ModalGAction, ModalMode, ModalOperator,
+    ModalTextObject, INPUT_MODEL, MODAL_BINDINGS, MODAL_PREFIX_G, MODAL_TEXT_OBJECTS,
 };
 use crate::core::app::EditorApp;
 use crate::core::buffer::Buffer;
@@ -832,54 +832,65 @@ impl ModalEngine {
     /// `g` followed by the second key (`gg`).
     /// `g` followed by the second key: `gg`, `ge`, `gE` — as a pure motion,
     /// or as the pending operator's motion (`dgg`, `dge`).
+    /// Complete the `g` prefix from the [`MODAL_PREFIX_G`](crate::config::keys::MODAL_PREFIX_G)
+    /// config table. The table selects which key completes the sequence; the
+    /// engine keeps the contextual part (operator-pending, counts).
     fn complete_prefix_g(&mut self, app: &mut EditorApp, key: &KeyPress) -> ModalOutcome {
         self.pending = Pending::None;
-        let plain = !key.ctrl && !key.alt;
         let from_operator = self.mode == ModalMode::OperatorPending;
         let count = self.take_count();
-        match (key.key, plain) {
-            (Key::Char('g'), true) => {
-                if from_operator {
-                    match self.pending_operator.take() {
-                        Some(op) => {
-                            // `dgg`/`ygg`/`cgg`: linewise through the cursor
-                            // line (vim's `gg` is a linewise motion).
-                            let y = app
-                                .active_window_ref()
-                                .map(|w| w.cursor_y)
-                                .unwrap_or(0);
-                            self.finish_operator(
-                                app,
-                                op,
-                                Motion::LineRange { lo: 0, hi: y },
-                                count,
-                            )
-                        }
-                        None => {
-                            self.mode = ModalMode::Normal;
-                            self.reset_pending();
-                        }
-                    }
-                } else {
-                    self.reset_pending();
-                    if count > 1 {
-                        // `5gg` goes to line 5.
-                        let input = count.to_string();
-                        let _ = handle_prompt_action(app, InputAction::GotoLine, input);
-                        return ModalOutcome::Consumed;
-                    }
-                    return self.run(app, Command::BeginningOfFile, 1);
-                }
+        let action = MODAL_PREFIX_G
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, a)| *a);
+        match action {
+            Some(ModalGAction::GotoFirstLine) => self.gg_after_prefix(app, count, from_operator),
+            Some(ModalGAction::WordEndBackward { big }) => {
+                self.ge_after_prefix(app, big, count, from_operator)
             }
-            // `ge` / `gE`: backward to the previous word/WORD end (inclusive).
-            (Key::Char('e'), true) => return self.ge_after_prefix(app, false, count, from_operator),
-            (Key::Char('E'), true) => return self.ge_after_prefix(app, true, count, from_operator),
-            _ => {
+            None => {
                 if from_operator {
                     self.mode = ModalMode::Normal;
                 }
                 self.reset_pending();
+                ModalOutcome::Consumed
             }
+        }
+    }
+
+    /// Complete `gg` after the `g` prefix: first line, or the pending
+    /// operator's linewise motion (`dgg`), or a line number with a count.
+    fn gg_after_prefix(
+        &mut self,
+        app: &mut EditorApp,
+        count: usize,
+        from_operator: bool,
+    ) -> ModalOutcome {
+        if from_operator {
+            match self.pending_operator.take() {
+                Some(op) => {
+                    // `dgg`/`ygg`/`cgg`: linewise through the cursor
+                    // line (vim's `gg` is a linewise motion).
+                    let y = app
+                        .active_window_ref()
+                        .map(|w| w.cursor_y)
+                        .unwrap_or(0);
+                    self.finish_operator(app, op, Motion::LineRange { lo: 0, hi: y }, count)
+                }
+                None => {
+                    self.mode = ModalMode::Normal;
+                    self.reset_pending();
+                }
+            }
+        } else {
+            self.reset_pending();
+            if count > 1 {
+                // `5gg` goes to line 5.
+                let input = count.to_string();
+                let _ = handle_prompt_action(app, InputAction::GotoLine, input);
+                return ModalOutcome::Consumed;
+            }
+            return self.run(app, Command::BeginningOfFile, 1);
         }
         ModalOutcome::Consumed
     }
@@ -917,10 +928,12 @@ impl ModalEngine {
         ModalOutcome::Consumed
     }
 
-    /// `i`/`a` followed by the object key (`w`, `W`, `(`, `[`, `{`, `<`,
-    /// `"`, `'`): resolve the text object and apply it for the context —
-    /// the pending operator's range, the visual selection, or (Normal)
-    /// a cursor move to the object's start.
+    /// `i`/`a` followed by the object key: resolve the text object from the
+    /// [`MODAL_TEXT_OBJECTS`](crate::config::keys::MODAL_TEXT_OBJECTS)
+    /// config table and apply it for the context — the pending operator's
+    /// range, the visual selection, or (Normal) a cursor move to the
+    /// object's start. Whether the object is inner or around comes from the
+    /// pending `i`/`a` key, not the table.
     fn complete_text_object(
         &mut self,
         app: &mut EditorApp,
@@ -929,19 +942,15 @@ impl ModalEngine {
         ctx: TextObjectCtx,
     ) -> ModalOutcome {
         self.pending = Pending::None;
-        let plain = !key.ctrl && !key.alt;
-        let kind = match (key.key, plain) {
-            (Key::Char('w'), true) => TextObjectKind::Word { big: false, inner },
-            (Key::Char('W'), true) => TextObjectKind::Word { big: true, inner },
-            (Key::Char('(') | Key::Char(')') | Key::Char('b'), true) => {
-                TextObjectKind::Pair { open: '(', inner }
-            }
-            (Key::Char('[') | Key::Char(']'), true) => TextObjectKind::Pair { open: '[', inner },
-            (Key::Char('{') | Key::Char('}'), true) => TextObjectKind::Pair { open: '{', inner },
-            (Key::Char('<') | Key::Char('>'), true) => TextObjectKind::Pair { open: '<', inner },
-            (Key::Char('"'), true) => TextObjectKind::Quote { q: '"', inner },
-            (Key::Char('\''), true) => TextObjectKind::Quote { q: '\'', inner },
-            _ => {
+        let selected = MODAL_TEXT_OBJECTS
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, o)| *o);
+        let kind = match selected {
+            Some(ModalTextObject::Word { big }) => TextObjectKind::Word { big, inner },
+            Some(ModalTextObject::Pair { open }) => TextObjectKind::Pair { open, inner },
+            Some(ModalTextObject::Quote { q }) => TextObjectKind::Quote { q, inner },
+            None => {
                 // Not an object key: cancel the sequence (and the operator).
                 if ctx == TextObjectCtx::Operator {
                     self.mode = ModalMode::Normal;

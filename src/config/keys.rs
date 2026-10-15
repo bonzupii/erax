@@ -414,6 +414,7 @@ pub const MODAL_BINDINGS: &[ModalBinding] = &[
     ModalBinding { mode: ModalMode::Normal, key: plain(Key::Char('.')), action: ModalAction::RepeatLast },
     // -- search / command line --
     ModalBinding { mode: ModalMode::Normal, key: plain(Key::Char('/')), action: ModalAction::Command(Command::SearchForward) },
+    ModalBinding { mode: ModalMode::Normal, key: plain(Key::Char('?')), action: ModalAction::Command(Command::SearchReverse) },
     ModalBinding { mode: ModalMode::Normal, key: plain(Key::Char(':')), action: ModalAction::EnterMode(ModalMode::CommandLine) },
     // -- visual --
     ModalBinding { mode: ModalMode::Normal, key: plain(Key::Char('v')), action: ModalAction::EnterMode(ModalMode::Visual) },
@@ -450,6 +451,7 @@ pub const MODAL_BINDINGS: &[ModalBinding] = &[
     ModalBinding { mode: ModalMode::Visual, key: plain(Key::Char('G')), action: ModalAction::Command(Command::EndOfFile) },
     ModalBinding { mode: ModalMode::Visual, key: plain(Key::Char('f')), action: ModalAction::FindChar(FindDir::Forward, FindEdge::On) },
     ModalBinding { mode: ModalMode::Visual, key: plain(Key::Char('F')), action: ModalAction::FindChar(FindDir::Backward, FindEdge::On) },
+    ModalBinding { mode: ModalMode::Visual, key: plain(Key::Char('?')), action: ModalAction::Command(Command::SearchReverse) },
     ModalBinding { mode: ModalMode::Visual, key: plain(Key::Char('t')), action: ModalAction::FindChar(FindDir::Forward, FindEdge::Before) },
     ModalBinding { mode: ModalMode::Visual, key: plain(Key::Char('T')), action: ModalAction::FindChar(FindDir::Backward, FindEdge::Before) },
     // -- visual mode edits --
@@ -459,6 +461,109 @@ pub const MODAL_BINDINGS: &[ModalBinding] = &[
     ModalBinding { mode: ModalMode::Visual, key: plain(Key::Char('c')), action: ModalAction::Command(Command::KillRegion) },
     ModalBinding { mode: ModalMode::Visual, key: plain(Key::Char('v')), action: ModalAction::EnterMode(ModalMode::Normal) },
     ModalBinding { mode: ModalMode::Visual, key: plain(Key::Esc), action: ModalAction::EnterMode(ModalMode::Normal) },
+];
+
+// ---------------------------------------------------------------------------
+// Modal continuation tables (N-268): multi-key sequences complete through
+// config data, not engine match arms. The engine keeps the contextual logic
+// (counts, operator-pending, operator application); these tables say which
+// key completes the pending sequence and what it selects.
+// ---------------------------------------------------------------------------
+
+/// What the key after a `g` prefix selects. `GotoFirstLine` keeps the
+/// special `gg`/`dgg`/`5gg` handling (operator linewise, count as line
+/// number); word-end motions compose like any other motion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModalGAction {
+    /// `gg`: first line (`dgg` is linewise, `5gg` goes to line 5).
+    GotoFirstLine,
+    /// `ge` / `gE`: backward to the previous word/WORD end (inclusive).
+    WordEndBackward { big: bool },
+}
+
+/// The `g`-prefix continuations: `gg`, `ge`, `gE`.
+pub const MODAL_PREFIX_G: &[(KeyPress, ModalGAction)] = &[
+    (
+        KeyPress::plain(Key::Char('g')),
+        ModalGAction::GotoFirstLine,
+    ),
+    (
+        KeyPress::plain(Key::Char('e')),
+        ModalGAction::WordEndBackward { big: false },
+    ),
+    (
+        KeyPress::plain(Key::Char('E')),
+        ModalGAction::WordEndBackward { big: true },
+    ),
+];
+
+/// What a text-object continuation key selects. Whether the object is inner
+/// (`iw`) or around (`aw`) comes from the pending `i`/`a` key, not the table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModalTextObject {
+    /// `w` / `W`.
+    Word { big: bool },
+    /// `(`, `)`, `b` → `(`, and the `[`/`{`/`<` families. `open` is the
+    /// canonical opening bracket.
+    Pair { open: char },
+    /// `"` / `'`.
+    Quote { q: char },
+}
+
+/// The text-object continuations after `i`/`a` (`iw`, `a(`, `i"`, …).
+pub const MODAL_TEXT_OBJECTS: &[(KeyPress, ModalTextObject)] = &[
+    (
+        KeyPress::plain(Key::Char('w')),
+        ModalTextObject::Word { big: false },
+    ),
+    (
+        KeyPress::plain(Key::Char('W')),
+        ModalTextObject::Word { big: true },
+    ),
+    (
+        KeyPress::plain(Key::Char('(')),
+        ModalTextObject::Pair { open: '(' },
+    ),
+    (
+        KeyPress::plain(Key::Char(')')),
+        ModalTextObject::Pair { open: '(' },
+    ),
+    (
+        KeyPress::plain(Key::Char('b')),
+        ModalTextObject::Pair { open: '(' },
+    ),
+    (
+        KeyPress::plain(Key::Char('[')),
+        ModalTextObject::Pair { open: '[' },
+    ),
+    (
+        KeyPress::plain(Key::Char(']')),
+        ModalTextObject::Pair { open: '[' },
+    ),
+    (
+        KeyPress::plain(Key::Char('{')),
+        ModalTextObject::Pair { open: '{' },
+    ),
+    (
+        KeyPress::plain(Key::Char('}')),
+        ModalTextObject::Pair { open: '{' },
+    ),
+    (
+        KeyPress::plain(Key::Char('<')),
+        ModalTextObject::Pair { open: '<' },
+    ),
+    (
+        KeyPress::plain(Key::Char('>')),
+        ModalTextObject::Pair { open: '<' },
+    ),
+    (
+        KeyPress::plain(Key::Char('"')),
+        ModalTextObject::Quote { q: '"' },
+    ),
+    (
+        KeyPress::plain(Key::Char('\'')),
+        ModalTextObject::Quote { q: '\'' },
+    ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -482,6 +587,8 @@ pub const STANDARD_BINDINGS: &[KeyBinding] = &[
     KeyBinding { keys: &[ctrl('o')], command: Command::FindFile, policy: PrefixPolicy::ExecuteLeaf },
     KeyBinding { keys: &[ctrl('n')], command: Command::NewBuffer, policy: PrefixPolicy::ExecuteLeaf },
     KeyBinding { keys: &[ctrl('w')], command: Command::DeleteBuffer, policy: PrefixPolicy::ExecuteLeaf },
+    // Ctrl+Q quits the editor (VS Code idiom); Ctrl+W above closes the buffer.
+    KeyBinding { keys: &[ctrl('q')], command: Command::ExitErax, policy: PrefixPolicy::ExecuteLeaf },
     // -- undo/redo: both Ctrl+Y and Ctrl+Shift+Z redo --
     KeyBinding { keys: &[ctrl('z')], command: Command::Undo, policy: PrefixPolicy::ExecuteLeaf },
     KeyBinding { keys: &[ctrl('y')], command: Command::Redo, policy: PrefixPolicy::ExecuteLeaf },
@@ -489,6 +596,9 @@ pub const STANDARD_BINDINGS: &[KeyBinding] = &[
     // -- search --
     KeyBinding { keys: &[ctrl('f')], command: Command::SearchForward, policy: PrefixPolicy::ExecuteLeaf },
     KeyBinding { keys: &[ctrl('h')], command: Command::QueryReplace, policy: PrefixPolicy::ExecuteLeaf },
+    // -- command palette: the Standard model's named-command facility,
+    // the CUA-idiom counterpart to Emacs M-x and Vim `:` --
+    KeyBinding { keys: &[KeyPress::mods(Key::Char('p'), true, false, true)], command: Command::ExecuteNamedCommand, policy: PrefixPolicy::ExecuteLeaf },
     // -- select all --
     KeyBinding { keys: &[ctrl('a')], command: Command::MarkWholeBuffer, policy: PrefixPolicy::ExecuteLeaf },
     // -- buffer cycling --
@@ -549,5 +659,39 @@ mod tests {
         // ctrl/alt chords pass through the engine to it.
         let modal = bindings_for_model(InputModel::Modal);
         assert_eq!(modal.len(), KEYBINDINGS.len());
+    }
+}
+
+#[cfg(test)]
+mod continuation_tests {
+    use super::*;
+    use crate::core::input::Key;
+
+    fn has(table: &[(KeyPress, impl PartialEq)], key: KeyPress) -> bool {
+        table.iter().any(|(k, _)| *k == key)
+    }
+
+    #[test]
+    fn prefix_g_covers_vim_sequences() {
+        for c in ['g', 'e', 'E'] {
+            assert!(
+                has(MODAL_PREFIX_G, KeyPress::plain(Key::Char(c))),
+                "g{c} must be a configured continuation"
+            );
+        }
+        assert_eq!(MODAL_PREFIX_G.len(), 3);
+    }
+
+    #[test]
+    fn text_objects_cover_vim_object_keys() {
+        for c in [
+            'w', 'W', '(', ')', 'b', '[', ']', '{', '}', '<', '>', '"', '\'',
+        ] {
+            assert!(
+                has(MODAL_TEXT_OBJECTS, KeyPress::plain(Key::Char(c))),
+                "object key {c} must be a configured continuation"
+            );
+        }
+        assert_eq!(MODAL_TEXT_OBJECTS.len(), 13);
     }
 }
