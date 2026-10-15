@@ -398,7 +398,6 @@ pub struct Renderer {
 
     // Performance caches
     x_positions: Vec<f32>,
-    y_positions: Vec<f32>,
     bg_cache: Vec<u32>,
 }
 
@@ -709,9 +708,6 @@ impl Renderer {
         let x_positions: Vec<f32> = (0..=p.width.max(1))
             .map(|i| 0.0 + (i as f32) * cell_width)
             .collect();
-        let y_positions: Vec<f32> = (0..=p.height.max(1))
-            .map(|i| (0.0 + (i as f32) * cell_height).round())
-            .collect();
 
         let mut renderer = Self {
             device,
@@ -740,7 +736,6 @@ impl Renderer {
             cursor_vb_cap: 0,
             metrics,
             x_positions,
-            y_positions,
             bg_cache: Vec::new(),
         };
 
@@ -867,9 +862,6 @@ impl Renderer {
             self.x_positions = (0..=new_size.0)
                 .map(|i| self.metrics.offset_x + (i as f32) * self.metrics.cell_width)
                 .collect();
-            self.y_positions = (0..=new_size.1)
-                .map(|i| (self.metrics.offset_y + (i as f32) * self.metrics.cell_height).round())
-                .collect();
 
             self.glyph_bind_group = None;
             // Caret maps are rebuilt by the next render().
@@ -983,7 +975,7 @@ impl Renderer {
         let origin_x = self.text_origin_x();
 
         for row in 0..rows {
-            let y = self.y_positions[row];
+            let y = self.metrics.row_y(row);
             let cells = &screen_buffer.cells[row * cols..(row + 1) * cols];
 
             // 1. Extract the row's text, color spans, and column→byte map.
@@ -1203,7 +1195,7 @@ impl Renderer {
                         row,
                         super::cursor::CursorGeometry {
                             origin_x: self.text_origin_x(),
-                            row_y: self.y_positions[row as usize],
+                            row_y: self.metrics.row_y(row as usize),
                             cell_w: cw,
                             cell_h: ch,
                             cols: cols as u16,

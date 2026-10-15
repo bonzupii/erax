@@ -77,10 +77,18 @@ impl GridMetrics {
     pub fn grid_dimensions(&self) -> (u32, u32) {
         Self::compute_grid_dimensions_static(
             self.width_px,
-            self.height_px,
-            self.cell_width,
+            self.height_px,            self.cell_width,
             self.cell_height,
         )
+    }
+
+    /// Pixel y of the top edge of grid row `row`.
+    ///
+    /// Derived from the metrics, never from a pixel-sized cache table:
+    /// a grid row count that outgrows the viewport (oversized resize,
+    /// sub-pixel cell heights) cannot index past anything.
+    pub fn row_y(&self, row: usize) -> f32 {
+        (self.offset_y + row as f32 * self.cell_height).round()
     }
 
     /// Compute grid dimensions (static version for use before construction)
@@ -131,5 +139,25 @@ mod tests {
         let metrics = GridMetrics::new(10.0, 20.0, 100.0, 100.0);
         // Outside grid bounds
         assert!(metrics.px_to_grid(0.0, 0.0).is_none());
+    }
+
+    #[test]
+    fn row_y_is_total_for_any_row() {
+        // The renderer used to index a pixel-sized y table by grid row:
+        // any grid taller than the viewport (oversized resize, sub-pixel
+        // cells) panicked. The derived computation has no table to
+        // overrun: it stays finite and monotonic far past it.
+        let metrics = GridMetrics::new(10.0, 20.0, 800.0, 600.0);
+        let mut prev = metrics.row_y(0);
+        assert!(prev.is_finite());
+        for row in [1usize, 29, 30, 31, 1000, 100_000] {
+            let y = metrics.row_y(row);
+            assert!(y.is_finite(), "row {row}");
+            assert!(y >= prev, "row {row} went backwards: {y} < {prev}");
+            prev = y;
+        }
+        // Same formula the table used, so rendered output is unchanged.
+        let m2 = GridMetrics::new(8.0, 16.0, 800.0, 600.0);
+        assert_eq!(m2.row_y(3), (m2.offset_y + 3.0 * 16.0).round());
     }
 }

@@ -30,7 +30,7 @@ pub struct PxRect {
 pub struct CursorGeometry {
     /// Physical x of the grid's left edge (`text_origin_x`).
     pub origin_x: f32,
-    /// Physical y of the cursor row's top (`y_positions[row]`).
+    /// Physical y of the cursor row's top (from `GridMetrics::row_y`).
     pub row_y: f32,
     pub cell_w: f32,
     pub cell_h: f32,
