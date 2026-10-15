@@ -66,9 +66,10 @@ pub fn execute_macro(app: &mut EditorApp, count: usize) -> DispatchResult {
                 // A step that only asks for a repaint folds into the
                 // final Success: the replay's caller repaints anyway.
                 DispatchResult::Success | DispatchResult::Redraw => {}
-                // Anything else (Exit, NeedsInput, AwaitKey, Info)
-                // stops the replay so the signal reaches the event
-                // layer instead of being swallowed mid-macro.
+                // Anything else (Exit, NeedsInput, AwaitKey, Info,
+                // NotHandled, FileModified) stops the replay so the
+                // signal reaches the event layer instead of being
+                // swallowed mid-macro.
                 other => {
                     result = other;
                     break 'replay;
@@ -147,5 +148,28 @@ mod tests {
         assert!(app.is_recording_macro);
         dispatch(&mut app, Command::EndMacro, 1);
         assert!(!app.is_recording_macro);
+    }
+}
+
+#[cfg(test)]
+mod propagation_tests {
+    use super::*;
+
+    #[test]
+    fn macro_stops_and_propagates_exit() {
+        let mut app = EditorApp::new();
+        // Exit, then an insert: the exit must stop the replay, so the
+        // result propagates and the insert never runs.
+        app.last_macro = vec![
+            (MacroStep::Command(Command::ExitErax), 1),
+            (MacroStep::Insert('x'), 1),
+        ];
+        let result = execute_macro(&mut app, 1);
+        assert_eq!(result, DispatchResult::Exit);
+        let text = app.active_buffer().expect("buffer").content_string();
+        assert!(!text.contains('x'), "replay continued past Exit");
+        // The macro definition survives the aborted replay.
+        assert_eq!(app.last_macro.len(), 2);
+        assert!(!app.executing_macro);
     }
 }
