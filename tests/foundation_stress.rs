@@ -1,4 +1,4 @@
-//! Foundation Stress Tests
+//! Foundation stress tests for the core data structures.
 //!
 //! Phase 2: Verify core data structures are rock-solid before building features on top.
 //! These tests ensure buffer integrity, undo/redo, and UTF-8 handling are bulletproof.
@@ -24,7 +24,7 @@ fn buffer_10k_edits_undo_all() {
     // Create a buffer with initial content
     let initial_content = "Hello, World!\nThis is a test file.\nWith multiple lines.\n";
     let mut buffer = Buffer::from_string(initial_content);
-    let original_hash = hash_content(&buffer.to_string());
+    let original_hash = hash_content(&buffer.content_string());
 
     // Perform 10,000 single-char edits at end (adjacent = groups together)
     // With batch grouping (100 per group) this creates ~100 undo groups
@@ -35,7 +35,7 @@ fn buffer_10k_edits_undo_all() {
 
     // Buffer should be modified
     assert!(
-        buffer.to_string() != initial_content,
+        buffer.content_string() != initial_content,
         "Buffer should be modified after edits"
     );
 
@@ -52,13 +52,13 @@ fn buffer_10k_edits_undo_all() {
     }
 
     // Verify content matches original
-    let final_hash = hash_content(&buffer.to_string());
+    let final_hash = hash_content(&buffer.content_string());
     assert_eq!(
         original_hash,
         final_hash,
         "Data corruption detected! Original and final content differ after undo.\nOriginal: {:?}\nFinal: {:?}",
         initial_content,
-        buffer.to_string()
+        buffer.content_string()
     );
 }
 
@@ -85,7 +85,7 @@ fn buffer_deep_undo_redo_cycle() {
     while buffer.undo() {}
 
     // Should be back to original
-    assert_eq!(buffer.to_string(), "Start\n");
+    assert_eq!(buffer.content_string(), "Start\n");
 }
 
 #[test]
@@ -106,10 +106,10 @@ fn buffer_rapid_insert_delete_cycle() {
 
         // Buffer should be empty
         assert!(
-            buffer.to_string().is_empty(),
+            buffer.content_string().is_empty(),
             "Buffer should be empty after round {}, got: {:?}",
             round,
-            buffer.to_string()
+            buffer.content_string()
         );
     }
 }
@@ -128,7 +128,7 @@ fn utf8_multibyte_delete() {
     // Delete 世 (3 bytes in UTF-8)
     buffer.delete(world_start, "世".len());
 
-    assert_eq!(buffer.to_string(), "Hello 界 🦀");
+    assert_eq!(buffer.content_string(), "Hello 界 🦀");
 }
 
 #[test]
@@ -142,7 +142,7 @@ fn utf8_emoji_handling() {
     // Delete middle crab
     buffer.delete(crab_len, crab_len);
 
-    assert_eq!(buffer.to_string(), "🦀🦀");
+    assert_eq!(buffer.content_string(), "🦀🦀");
 }
 
 #[test]
@@ -153,7 +153,7 @@ fn utf8_insert_at_multibyte_boundary() {
     let insert_pos = "日".len();
     buffer.insert(insert_pos, "X");
 
-    assert_eq!(buffer.to_string(), "日X本語");
+    assert_eq!(buffer.content_string(), "日X本語");
 }
 
 #[test]
@@ -169,7 +169,7 @@ fn utf8_mixed_content_stress() {
     buffer.undo();
     buffer.undo();
 
-    assert_eq!(buffer.to_string(), mixed);
+    assert_eq!(buffer.content_string(), mixed);
 }
 
 // =============================================================================
@@ -190,7 +190,9 @@ fn line_indexing_stress() {
 
     // Random access every line
     for i in 0..1000 {
-        let line = buffer.line(i).expect(&format!("Line {} should exist", i));
+        let line = buffer
+            .line(i)
+            .unwrap_or_else(|| panic!("Line {i} should exist"));
         assert!(
             line.starts_with("Line "),
             "Line {} corrupted: {:?}",
@@ -241,7 +243,7 @@ fn boundary_delete_operations() {
     buffer.delete(2, 100); // Delete from 'c' to way past end
 
     // Should still have "ab"
-    assert_eq!(buffer.to_string(), "ab");
+    assert_eq!(buffer.content_string(), "ab");
 }
 
 // =============================================================================
@@ -317,7 +319,7 @@ fn test_rapid_typing_simulation() {
     // Undo all and verify buffer empty
     while buffer.undo() {}
     assert_eq!(
-        buffer.to_string(),
+        buffer.content_string(),
         "",
         "Buffer should be empty after undoing all rapid typing"
     );
@@ -367,7 +369,7 @@ fn test_multi_window_stress() {
     // Add 9 more windows, each on a different buffer (total 10)
     for i in 1..10 {
         app.split_window_vertically();
-        let buffer = Buffer::from_string(&format!("Content of buffer {}", i));
+        let buffer = Buffer::from_string(format!("Content of buffer {}", i));
         let bid = app.add_buffer(buffer);
         if let Some(win) = app.active_window_mut() {
             win.buffer_id = bid;
@@ -399,7 +401,7 @@ fn test_multi_window_stress() {
 
         // Minor check on buffer content
         if window.buffer_id.0 > 0 {
-            assert!(buffer.to_string().starts_with("Content of buffer"));
+            assert!(buffer.content_string().starts_with("Content of buffer"));
         }
 
         last_window = active_win_id;
