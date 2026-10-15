@@ -164,6 +164,7 @@ Counts compose (`3dw`, `d3w`); operators `d`/`y`/`c` take motions; `"` selects r
 | `"` | select register (`"x`) |
 | `.` | repeat last change (`.`) |
 | `/` | `search-forward` |
+| `?` | `search-reverse` |
 | `:` | enter CommandLine mode |
 | `v` | enter Visual mode |
 | `V` | enter Visual-Line mode (`V`) |
@@ -197,6 +198,7 @@ Counts compose (`3dw`, `d3w`); operators `d`/`y`/`c` take motions; `"` selects r
 | `F` | find char backward (`F`) |
 | `t` | till char forward (`t`) |
 | `T` | till char backward (`T`) |
+| `?` | `search-reverse` |
 | `d` | `kill-region` |
 | `x` | `kill-region` |
 | `y` | `copy-region` |
@@ -224,11 +226,13 @@ Modeless: typing inserts, CUA clipboard, selection-first editing.
 | `C-o` | `find-file` |
 | `C-n` | `new-buffer` |
 | `C-w` | `delete-buffer` |
+| `C-q` | `exit-erax` |
 | `C-z` | `undo` |
 | `C-y` | `redo` |
 | `C-S-z` | `redo` |
 | `C-f` | `search-forward` |
 | `C-h` | `query-replace` |
+| `C-S-p` | `execute-named-command` (command palette) |
 | `C-a` | `mark-whole-buffer` |
 | `C-TAB` | `next-buffer` |
 | `C-S-TAB` | `previous-buffer` |
