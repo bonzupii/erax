@@ -1,3 +1,4 @@
+//! Grapheme-cluster iteration and Unicode width helpers.
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Iterator over grapheme clusters in a string slice.
@@ -57,15 +58,21 @@ pub fn byte_to_grapheme_col(text: &str, byte_offset: usize) -> usize {
 /// Get the display width of a single character (for monospace terminal display)
 /// Returns 0 for control characters, 1 for ASCII, 2 for wide CJK characters, etc.
 pub fn char_width(c: char) -> usize {
-    match unicode_width::UnicodeWidthChar::width(c) {
-        Some(w) => w,
-        None => 0,
-    }
+    unicode_width::UnicodeWidthChar::width(c).unwrap_or_default()
 }
 
-/// Get the display width of a grapheme cluster (sum of all character widths)
+/// Get the display width of a grapheme cluster: the base character's width.
+///
+/// A cluster occupies its base character's cells; combining marks (Mn/Mc/Me)
+/// ride on the base and add no cells. Summing per-char widths overcounts:
+/// `unicode_width` reports 1 for spacing marks (Mc) such as the Tamil vowel
+/// signs U+0BBF/U+0BCA, so "மி" (MA + vowel sign) would measure 2 for a
+/// single cell. A leading combining mark (no base) still occupies one cell.
 pub fn grapheme_width(g: &str) -> usize {
-    g.chars().map(char_width).sum()
+    match g.chars().next() {
+        None => 0,
+        Some(base) => char_width(base).max(1),
+    }
 }
 
 /// Get the visual (display) width of text up to a grapheme index, with tab handling
@@ -211,5 +218,30 @@ mod tests {
         assert_eq!(grapheme_index_from_visual_x(text_wide, 1, 4), 1); // '👋'
         assert_eq!(grapheme_index_from_visual_x(text_wide, 2, 4), 1); // '👋' (second half)
         assert_eq!(grapheme_index_from_visual_x(text_wide, 3, 4), 2); // 'B'
+    }
+
+    #[test]
+    fn test_grapheme_width_tamil_clusters() {
+        // "தமிழ் மொழி": 6 grapheme clusters, each one cell. The vowel signs
+        // U+0BBF/U+0BCA are spacing marks (Mc); `unicode_width` reports 1
+        // for them, so a naive sum over chars would measure 2.
+        use unicode_segmentation::UnicodeSegmentation;
+        let clusters: Vec<&str> = "தமிழ் மொழி".graphemes(true).collect();
+        assert_eq!(clusters.len(), 6);
+        for c in &clusters {
+            assert_eq!(grapheme_width(c), 1, "cluster {c:?}");
+        }
+        assert_eq!(visual_width("தமிழ் மொழி", 4), 6);
+    }
+
+    #[test]
+    fn test_grapheme_width_combining_and_wide() {
+        // Precomposed + combining: one cell.
+        assert_eq!(grapheme_width("é"), 1);
+        assert_eq!(grapheme_width("e\u{301}"), 1);
+        // Wide CJK: two cells.
+        assert_eq!(grapheme_width("コ"), 2);
+        // Empty: zero.
+        assert_eq!(grapheme_width(""), 0);
     }
 }
