@@ -464,7 +464,7 @@ pub const MODAL_BINDINGS: &[ModalBinding] = &[
 ];
 
 // ---------------------------------------------------------------------------
-// Modal continuation tables (N-268): multi-key sequences complete through
+// Modal continuation tables: multi-key sequences complete through
 // config data, not engine match arms. The engine keeps the contextual logic
 // (counts, operator-pending, operator application); these tables say which
 // key completes the pending sequence and what it selects.

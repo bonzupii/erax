@@ -451,10 +451,16 @@ impl ModalEngine {
             .map(|b| b.action)
     }
 
-    /// Run a dispatch and map `Exit` to the modal outcome.
+    /// Run a dispatch and map `Exit` to the modal outcome. Informational
+    /// results surface as the app message — a `:`-invoked command must show
+    /// its output just like M-x does.
     fn run(&mut self, app: &mut EditorApp, cmd: Command, count: usize) -> ModalOutcome {
         match dispatch(app, cmd, count) {
             DispatchResult::Exit => ModalOutcome::ExitRequested,
+            DispatchResult::Info(msg) => {
+                app.message = Some(msg);
+                ModalOutcome::Consumed
+            }
             _ => ModalOutcome::Consumed,
         }
     }
@@ -1569,9 +1575,22 @@ impl ModalEngine {
                 let _ = handle_prompt_action(app, InputAction::OpenFile, arg.to_string());
                 ModalOutcome::Consumed
             }
-            _ => {
-                app.message = Some(format!("Not an editor command: {}", cmd));
-                ModalOutcome::Consumed
+            // Every other name resolves through the typed command table, so
+            // the vim model reaches every command through its native idiom
+            // (the `:` line), the same capability Emacs gets from M-x.
+            _ => match Command::from_name(cmd) {
+                // ToggleMenu is intercepted by the event loop before
+                // dispatch; the modal engine owns no display state, so it
+                // cannot run it from here.
+                Some(Command::ToggleMenu) => {
+                    app.message = Some("toggle-menu needs the event loop; use F10".to_string());
+                    ModalOutcome::Consumed
+                }
+                Some(command) => self.run(app, command, 1),
+                None => {
+                    app.message = Some(format!("Not an editor command: {}", cmd));
+                    ModalOutcome::Consumed
+                }
             }
         }
     }
@@ -3551,6 +3570,35 @@ mod tests {
             .as_deref()
             .unwrap_or("")
             .contains("Not an editor command"));
+    }
+
+    #[test]
+    fn cmdline_resolves_named_commands() {
+        let mut app = app_with("hello world\n");
+        // A typed command with no vim default binding runs through `:`.
+        let keys: Vec<KeyPress> = ":count-words"
+            .chars()
+            .map(kp)
+            .chain(std::iter::once(enter()))
+            .collect();
+        seq(&mut app, &keys);
+        assert!(app
+            .message
+            .as_deref()
+            .unwrap_or("")
+            .contains("Words: 2"));
+        // Display-intercepted commands report instead of silently dying.
+        let keys: Vec<KeyPress> = ":toggle-menu"
+            .chars()
+            .map(kp)
+            .chain(std::iter::once(enter()))
+            .collect();
+        seq(&mut app, &keys);
+        assert!(app
+            .message
+            .as_deref()
+            .unwrap_or("")
+            .contains("event loop"));
     }
 
     #[test]
