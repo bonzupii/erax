@@ -472,13 +472,18 @@ impl ModalEngine {
                 ModalOutcome::Consumed
             }
             DispatchResult::AwaitKey(action) => {
-                // describe-key through the modal engine: the same one-more-
-                // keypress focus the TUI event loop pushes. Dropping it
-                // left describe-key silently dead in vim mode.
+                // describe-key (and quote-character) through the modal
+                // engine: the same one-more-keypress focus the TUI event
+                // loop pushes. Dropping it left describe-key silently dead
+                // in vim mode.
                 use crate::core::focus::{FocusState, focus_target_for_await_key};
+                let prompt = match &action {
+                    InputAction::QuoteCharacter => "Quote next key: ",
+                    _ => "Describe Key: ",
+                };
                 let target = focus_target_for_await_key(action);
-                app.focus_manager
-                    .push(FocusState::new(target, "Describe Key: "));
+                app.focus_manager.push(FocusState::new(target, prompt));
+                app.message = Some(prompt.trim_end().to_string());
                 ModalOutcome::Consumed
             }
             DispatchResult::FileModified(buffer_id) => {
@@ -3955,7 +3960,7 @@ mod parity_end_to_end {
     enum Expect {
         Exit,
         Prompt,
-        AwaitKey,
+        AwaitKey(crate::core::focus::FocusTarget),
         Message(String),
         Consumed,
     }
@@ -3965,7 +3970,9 @@ mod parity_end_to_end {
         match dispatch(&mut app, cmd, 1) {
             DispatchResult::Exit => Expect::Exit,
             DispatchResult::NeedsInput { .. } => Expect::Prompt,
-            DispatchResult::AwaitKey(_) => Expect::AwaitKey,
+            DispatchResult::AwaitKey(action) => Expect::AwaitKey(
+                crate::core::focus::focus_target_for_await_key(action),
+            ),
             DispatchResult::Info(m) => Expect::Message(m),
             _ => Expect::Consumed,
         }
@@ -3998,10 +4005,10 @@ mod parity_end_to_end {
                 app.focus_manager.current_state().is_some(),
                 "{path}: {name} must push a prompt on the focus manager"
             ),
-            Expect::AwaitKey => assert_eq!(
+            Expect::AwaitKey(target) => assert_eq!(
                 app.focus_manager.current_target(),
-                crate::core::focus::FocusTarget::DescribeKey,
-                "{path}: {name} must push the describe-key focus"
+                target,
+                "{path}: {name} must push the focus its action maps to"
             ),
             Expect::Message(m) => assert_eq!(
                 app.message.as_deref(),

@@ -32,6 +32,7 @@ pub fn focus_target_for_await_key(action: crate::core::dispatcher::InputAction) 
     use crate::core::dispatcher::InputAction;
     match action {
         InputAction::DescribeKey => FocusTarget::DescribeKey,
+        InputAction::QuoteCharacter => FocusTarget::QuoteCharacter,
         _ => FocusTarget::Editor,
     }
 }
@@ -64,6 +65,8 @@ pub enum FocusTarget {
     Help,
     /// Waiting for key (describe-key)
     DescribeKey,
+    /// Waiting for one keypress to insert literally (quote-character)
+    QuoteCharacter,
     /// Yes/no answer to "file changed on disk, reload?". One keypress
     /// answers; the state carries the buffer the question is about.
     ConfirmReload,
@@ -92,6 +95,19 @@ impl FocusTarget {
     pub fn shows_popup(&self) -> bool {
         matches!(self, FocusTarget::CompletionMenu | FocusTarget::Help)
     }
+
+    /// Returns true if the event loop routes keypresses to the focus
+    /// handler for this target: the minibuffer prompts and the
+    /// one-keypress states (describe-key, quote-character). Other
+    /// targets are served elsewhere, so routing them here would swallow
+    /// their keys.
+    pub fn routes_keypress_to_focus(&self) -> bool {
+        self.uses_minibuffer()
+            || matches!(
+                self,
+                FocusTarget::DescribeKey | FocusTarget::QuoteCharacter
+            )
+    }
 }
 
 impl fmt::Display for FocusTarget {
@@ -107,6 +123,7 @@ impl fmt::Display for FocusTarget {
             FocusTarget::FindReplace => write!(f, "Find/Replace"),
             FocusTarget::Help => write!(f, "Help"),
             FocusTarget::DescribeKey => write!(f, "Describe Key"),
+            FocusTarget::QuoteCharacter => write!(f, "Quote Character"),
             FocusTarget::ConfirmReload => write!(f, "Confirm Reload"),
         }
     }

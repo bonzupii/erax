@@ -37,6 +37,8 @@ pub enum InputAction {
     SedPreview,
     ExecuteNamedCommand,
     DescribeKey,
+    /// Insert the next keypress literally, bypassing keybindings
+    QuoteCharacter,
 }
 
 /// Result of command dispatch

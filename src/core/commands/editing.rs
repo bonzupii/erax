@@ -207,9 +207,10 @@ pub fn redraw_display(_app: &mut EditorApp, _count: usize) -> DispatchResult {
     }
 
 pub fn quote_character(_app: &mut EditorApp, _count: usize) -> DispatchResult {
-        // This command needs special handling in the event loop
-        // to capture the next keystroke literally
-        DispatchResult::Info("quote-character: Press next key to insert literally".to_string())
+        // The event loop (and the modal engine) route AwaitKey through the
+        // focus manager: the next keypress is consumed by the QuoteCharacter
+        // focus target, which inserts it literally.
+        DispatchResult::AwaitKey(crate::core::dispatcher::InputAction::QuoteCharacter)
     }
 
 pub fn newline_and_indent(app: &mut EditorApp, _count: usize) -> DispatchResult {

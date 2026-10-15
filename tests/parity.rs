@@ -10,7 +10,7 @@
 //!   (`Ok(true)` from the event handler, `ExitRequested` from the
 //!   modal engine),
 //! - `NeedsInput` → a prompt is pushed on the focus manager,
-//! - `AwaitKey` → the describe-key focus is pushed,
+//! - `AwaitKey` → the focus its action maps to is pushed,
 //! - `Info(msg)` → the message lands in `app.message`,
 //! - anything else → the key is consumed without panic or exit.
 //!
@@ -51,7 +51,7 @@ use erax::terminal::keybinds::KeyBindingManager;
 enum Expect {
     Exit,
     Prompt,
-    AwaitKey,
+    AwaitKey(FocusTarget),
     Message(String),
     Consumed,
 }
@@ -61,7 +61,9 @@ fn expect(cmd: Command) -> Expect {
     match dispatch(&mut app, cmd, 1) {
         DispatchResult::Exit => Expect::Exit,
         DispatchResult::NeedsInput { .. } => Expect::Prompt,
-        DispatchResult::AwaitKey(_) => Expect::AwaitKey,
+        DispatchResult::AwaitKey(action) => {
+            Expect::AwaitKey(erax::core::focus::focus_target_for_await_key(action))
+        }
         DispatchResult::Info(m) => Expect::Message(m),
         _ => Expect::Consumed,
     }
@@ -137,10 +139,10 @@ fn assert_observation(rig: &Rig, cmd: Command, exit: bool, path: &str) {
             rig.app.focus_manager.current_state().is_some(),
             "{path}: {name} must push a prompt on the focus manager"
         ),
-        Expect::AwaitKey => assert_eq!(
+        Expect::AwaitKey(target) => assert_eq!(
             rig.app.focus_manager.current_target(),
-            FocusTarget::DescribeKey,
-            "{path}: {name} must push the describe-key focus"
+            target,
+            "{path}: {name} must push the focus its action maps to"
         ),
         Expect::Message(m) => assert_eq!(
             rig.app.message.as_deref(),

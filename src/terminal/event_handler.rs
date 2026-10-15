@@ -51,9 +51,15 @@ fn handle_dispatch_result(
         }
         DispatchResult::AwaitKey(action) => {
             use crate::core::focus::{FocusState, focus_target_for_await_key};
+            let prompt = match &action {
+                crate::core::dispatcher::InputAction::QuoteCharacter => "Quote next key: ",
+                _ => "Describe Key: ",
+            };
             let target = focus_target_for_await_key(action);
-            app.focus_manager
-                .push(FocusState::new(target, "Describe Key: "));
+            app.focus_manager.push(FocusState::new(target, prompt));
+            // One-keypress states draw no minibuffer; the message area
+            // carries the prompt instead.
+            app.message = Some(prompt.trim_end().to_string());
             display.dirty = true;
             Ok(false)
         }
@@ -452,7 +458,46 @@ fn handle_focus_input(
     key: &crate::core::input::KeyPress,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let focus_result = if let Some(focus) = app.focus_manager.current_state_mut() {
-        if focus.target == crate::core::focus::FocusTarget::DescribeKey {
+        if focus.target == crate::core::focus::FocusTarget::QuoteCharacter {
+            // Quoted insert: the next keypress bypasses all keybindings and
+            // lands in the buffer literally. Control chords become their
+            // control codes; Enter and Tab become newline and tab.
+            use crate::core::input::Key;
+            if key.key == Key::Esc {
+                // Cancel the quoted insert without touching the buffer.
+                app.focus_manager.pop();
+                display.dirty = true;
+                return Ok(false);
+            }
+            let literal = match key.key {
+                Key::Char(c) if key.ctrl => {
+                    let lower = c.to_ascii_lowercase() as u8;
+                    if lower.is_ascii_lowercase() {
+                        Some((lower - b'a' + 1) as char)
+                    } else {
+                        None
+                    }
+                }
+                Key::Char(c) => Some(c),
+                Key::Enter => Some('\n'),
+                Key::Tab => Some('\t'),
+                _ => None,
+            };
+            app.focus_manager.pop();
+            match literal {
+                Some(c) => {
+                    let r = crate::core::dispatcher::dispatch_insert(app, c, 1);
+                    if handle_dispatch_result(app, display, r)? {
+                        return Ok(true);
+                    }
+                }
+                None => {
+                    app.message = Some("Cannot quote that key".to_string());
+                }
+            }
+            display.dirty = true;
+            return Ok(false);
+        } else if focus.target == crate::core::focus::FocusTarget::DescribeKey {
             // Process key using keybind manager to see if it's bound.
             // This properly handles prefixes and multi-key sequences.
             match keybind_manager.process_key(*key) {

@@ -89,7 +89,7 @@ impl InputStateMachine {
 
         // 1. Check focus state first (highest priority)
         if let Some(focus) = focus_manager.current_state()
-            && focus.target.uses_minibuffer() {
+            && focus.target.routes_keypress_to_focus() {
                 self.mode = InputMode::Focus {
                     target: focus.target.into(),
                 };

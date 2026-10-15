@@ -97,10 +97,9 @@ pub fn buffer_info(app: &mut EditorApp, _count: usize) -> DispatchResult {
             let is_empty = buffer.is_empty();
             let line_count = buffer.line_count();
             let total_bytes = buffer.len();
-            eprintln!(
-                "Buffer: {} lines, {} bytes, empty: {}",
-                line_count, total_bytes, is_empty
-            );
+            return DispatchResult::Info(format!(
+                "Buffer: {line_count} lines, {total_bytes} bytes, empty: {is_empty}"
+            ));
         }
         DispatchResult::Success
     }
@@ -220,6 +219,26 @@ mod tests {
                 assert!(
                     message.contains("Byte 0") && message.contains("Line 0"),
                     "unexpected position report: {message:?}"
+                );
+            }
+            other => panic!("expected Info, got {other:?}"),
+        }
+    }
+
+    /// `buffer-info` reports through the editor, not stderr: the old body
+    /// `eprintln!`d the answer where no user could see it.
+    #[test]
+    fn buffer_info_surfaces_info_in_editor() {
+        let mut app = EditorApp::new();
+        if let Some(buffer) = app.active_buffer_mut() {
+            buffer.insert(0, "one\ntwo\n");
+        }
+        let result = dispatch(&mut app, Command::BufferInfo, 1);
+        match result {
+            DispatchResult::Info(message) => {
+                assert!(
+                    message.contains("3 lines") && message.contains("8 bytes"),
+                    "unexpected buffer report: {message:?}"
                 );
             }
             other => panic!("expected Info, got {other:?}"),

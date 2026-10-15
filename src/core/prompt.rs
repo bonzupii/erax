@@ -250,7 +250,73 @@ pub fn handle_prompt_action(
             }
         }
         InputAction::FilterBuffer => {
-            app.message = Some(format!("Filter: {}", input));
+            if !input.is_empty() {
+                // Pipe the buffer through the shell command: stdin in,
+                // stdout replaces the buffer. A failed filter leaves the
+                // buffer untouched.
+                let original = match app.active_buffer() {
+                    Some(buffer) => buffer.content_string(),
+                    None => {
+                        app.message = Some("No active buffer".to_string());
+                        return Ok(false);
+                    }
+                };
+                let child = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(&input)
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn();
+                match child {
+                    Ok(mut child) => {
+                        use std::io::Write;
+                        let stdin = child.stdin.take();
+                        // Stdin goes on its own thread: with a buffer
+                        // larger than the pipe, a sequential
+                        // write-then-wait deadlocks (the child blocks on
+                        // a full stdout pipe while we block on a full
+                        // stdin pipe).
+                        let writer = std::thread::spawn(move || {
+                            if let Some(mut stdin) = stdin {
+                                stdin.write_all(original.as_bytes()).is_ok()
+                            } else {
+                                false
+                            }
+                        });
+                        match child.wait_with_output() {
+                            Ok(output)
+                                if writer.join().unwrap_or(false)
+                                    && output.status.success() => {
+                                let filtered =
+                                    String::from_utf8_lossy(&output.stdout).into_owned();
+                                if let Some(buffer) = app.active_buffer_mut() {
+                                    let len = buffer.len();
+                                    buffer.delete(0, len);
+                                    buffer.insert(0, &filtered);
+                                    buffer.modified = true;
+                                    app.message =
+                                        Some(format!("Filtered through: {input}"));
+                                }
+                            }
+                            Ok(output) => {
+                                let stderr = String::from_utf8_lossy(&output.stderr);
+                                app.message = Some(format!(
+                                    "Filter failed (exit {}): {}",
+                                    output.status,
+                                    stderr.trim()
+                                ));
+                            }
+                            Err(e) => {
+                                app.message = Some(format!("Error: {e}"));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        app.message = Some(format!("Error: {e}"));
+                    }
+                }
+            }
         }
         InputAction::Calculator => {
             if !input.is_empty() {
@@ -310,6 +376,9 @@ pub fn handle_prompt_action(
         }
         InputAction::DescribeKey => {
             // Not used via prompt
+        }
+        InputAction::QuoteCharacter => {
+            // Not used via prompt; the event loop consumes the keypress
         }
     }
     Ok(false)
