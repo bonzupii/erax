@@ -563,7 +563,7 @@ pub fn wrap_word(app: &mut EditorApp, _count: usize) -> DispatchResult {
             return DispatchResult::Success;
         }
 
-        let (found_break, break_pos, word_len) = {
+        let (break_pos, word_len) = {
             if let Some(window) = app.windows.get_mut(&active_window_id) {
                 if let Some(buffer) = app.buffers.get_mut(&window.buffer_id) {
                     if !window.move_backward(buffer) {
@@ -572,14 +572,12 @@ pub fn wrap_word(app: &mut EditorApp, _count: usize) -> DispatchResult {
 
                     let mut current_pos = window.get_byte_offset(buffer).unwrap_or_default();
                     let mut cnt = 0;
-                    let mut found = false;
                     let mut hit_start = false;
 
                     loop {
                         let c = buffer.char_at(current_pos);
                         if let Some(ch) = c
                             && (ch == ' ' || ch == '\t') {
-                                found = true;
                                 break;
                             }
 
@@ -597,7 +595,6 @@ pub fn wrap_word(app: &mut EditorApp, _count: usize) -> DispatchResult {
                             let c0 = buffer.char_at(current_pos);
                             if let Some(ch0) = c0
                                 && (ch0 == ' ' || ch0 == '\t') {
-                                    found = true;
                                     break;
                                 }
                             hit_start = true;
@@ -606,7 +603,6 @@ pub fn wrap_word(app: &mut EditorApp, _count: usize) -> DispatchResult {
                     }
 
                     (
-                        found || hit_start,
                         if hit_start { None } else { Some(current_pos) },
                         cnt,
                     )
@@ -618,10 +614,10 @@ pub fn wrap_word(app: &mut EditorApp, _count: usize) -> DispatchResult {
             }
         };
 
-        if !found_break {
-            return DispatchResult::Success;
-        }
-
+        // found_break is always true here: the search loop sets `found`
+        // on a space/tab and `hit_start` on reaching the line start, and
+        // move_backward only fails at (0,0), where the cursor_x == 0 arm
+        // sets hit_start. No defensive branch for the impossible case.
         if let Some(window) = app.windows.get_mut(&active_window_id)
             && let Some(buffer) = app.buffers.get_mut(&window.buffer_id) {
                 if break_pos.is_none() {
