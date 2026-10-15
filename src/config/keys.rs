@@ -13,6 +13,14 @@
 //! The input model is a compile-time switch (N-268): [`INPUT_MODEL`] selects
 //! the key-trie model or the modal model. Both are real, implemented input
 //! paths behind the one switch.
+//!
+//! Binding doctrine: every key, key sequence, and command-line word that
+//! invokes a command is data in this module. Engines interpret the tables
+//! and never hardcode a key-to-command or word-to-command mapping. A
+//! command with no key idiom in a model stays reachable through that
+//! model's named facility (M-x, the `:` line, the command palette); the
+//! end-to-end parity test drives those facilities, so reachability never
+//! rests on a table entry alone.
 
 use crate::core::command::Command;
 use crate::core::input::{Key, KeyPress, PrefixPolicy};
@@ -150,6 +158,7 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
     // -- buffers --
     KeyBinding { keys: &[ctrl('x'), plain(Key::Char('B'))], command: Command::SelectBuffer, policy: PrefixPolicy::ExecuteLeaf },
     KeyBinding { keys: &[ctrl('x'), plain(Key::Char('K'))], command: Command::DeleteBuffer, policy: PrefixPolicy::ExecuteLeaf },
+    KeyBinding { keys: &[ctrl('x'), ctrl('b')], command: Command::ListBuffers, policy: PrefixPolicy::ExecuteLeaf },
     KeyBinding { keys: &[ctrl('x'), plain(Key::Char('d'))], command: Command::ToggleDiagnostics, policy: PrefixPolicy::ExecuteLeaf },
     KeyBinding { keys: &[ctrl('x'), plain(Key::Char('='))], command: Command::ShowPosition, policy: PrefixPolicy::ExecuteLeaf },
     KeyBinding { keys: &[ctrl('x'), plain(Key::Char('?'))], command: Command::DescribeKey, policy: PrefixPolicy::ExecuteLeaf },
@@ -172,6 +181,8 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
     KeyBinding { keys: &[ctrl('x'), ctrl('o')], command: Command::DeleteBlankLines, policy: PrefixPolicy::ExecuteLeaf },
     KeyBinding { keys: &[alt('s')], command: Command::SedPreview, policy: PrefixPolicy::ExecuteLeaf },
     KeyBinding { keys: &[alt('=')], command: Command::CountWords, policy: PrefixPolicy::ExecuteLeaf },
+    KeyBinding { keys: &[alt('$')], command: Command::SpellSuggest, policy: PrefixPolicy::ExecuteLeaf },
+    KeyBinding { keys: &[alt('|')], command: Command::FilterBuffer, policy: PrefixPolicy::ExecuteLeaf },
     // -- mark & region --
     KeyBinding { keys: &[ctrl('@')], command: Command::SetMark, policy: PrefixPolicy::ExecuteLeaf },
     KeyBinding { keys: &[alt('.')], command: Command::SetMark, policy: PrefixPolicy::ExecuteLeaf },
@@ -479,9 +490,11 @@ pub enum ModalGAction {
     GotoFirstLine,
     /// `ge` / `gE`: backward to the previous word/WORD end (inclusive).
     WordEndBackward { big: bool },
+    /// `g CTRL-G`: report the cursor position (byte, line, character).
+    ShowPosition,
 }
 
-/// The `g`-prefix continuations: `gg`, `ge`, `gE`.
+/// The `g`-prefix continuations: `gg`, `ge`, `gE`, `g CTRL-G`.
 pub const MODAL_PREFIX_G: &[(KeyPress, ModalGAction)] = &[
     (
         KeyPress::plain(Key::Char('g')),
@@ -494,6 +507,10 @@ pub const MODAL_PREFIX_G: &[(KeyPress, ModalGAction)] = &[
     (
         KeyPress::plain(Key::Char('E')),
         ModalGAction::WordEndBackward { big: true },
+    ),
+    (
+        KeyPress::ctrl(Key::Char('g')),
+        ModalGAction::ShowPosition,
     ),
 ];
 
@@ -633,6 +650,90 @@ pub const STANDARD_BINDINGS: &[KeyBinding] = &[
     KeyBinding { keys: &[plain(Key::Insert)], command: Command::ToggleOverwriteMode, policy: PrefixPolicy::ExecuteLeaf },
     // -- menu --
     KeyBinding { keys: &[plain(Key::F(10))], command: Command::ToggleMenu, policy: PrefixPolicy::ExecuteLeaf },
+    // -- terminal: the VS Code Ctrl+` idiom --
+    KeyBinding { keys: &[ctrl('`')], command: Command::SpawnTerminal, policy: PrefixPolicy::ExecuteLeaf },
+    // -- spelling --
+    KeyBinding { keys: &[plain(Key::F(7))], command: Command::SpellSuggest, policy: PrefixPolicy::ExecuteLeaf },
+];
+
+// ---------------------------------------------------------------------------
+// Vim ex commands: the `:` vocabulary as data. The modal engine splits the
+// command line into command and argument, looks the command up here, and
+// interprets the action. Names missing from both tables fall through to the
+// typed command table, so `:buffer-info` works without an ex entry.
+// ---------------------------------------------------------------------------
+
+/// What a vim `:` ex command does. Plain commands and command compositions
+/// are data; the engine interprets the variants. The `:q` refusal logic
+/// (modified buffers) stays in the engine: it is a state decision, not a
+/// mapping.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExAction {
+    /// Run one command (`:w` saves the buffer).
+    Run(Command),
+    /// Run commands in order, returning the last outcome (`:wq`).
+    RunSequence(&'static [Command]),
+    /// `:q`: quit, refusing when any buffer is modified.
+    ConditionalQuit,
+}
+
+/// The vim ex-command vocabulary: command name to action.
+pub const EX_COMMANDS: &[(&str, ExAction)] = &[
+    ("w", ExAction::Run(Command::SaveBuffer)),
+    ("q", ExAction::ConditionalQuit),
+    ("q!", ExAction::Run(Command::ExitWithoutSave)),
+    ("wq", ExAction::RunSequence(&[Command::SaveBuffer, Command::ExitErax])),
+    ("x", ExAction::RunSequence(&[Command::SaveBuffer, Command::ExitErax])),
+    ("terminal", ExAction::Run(Command::SpawnTerminal)),
+    ("ls", ExAction::Run(Command::ListBuffers)),
+    ("buffers", ExAction::Run(Command::ListBuffers)),
+    ("file", ExAction::Run(Command::BufferInfo)),
+    ("hardcopy", ExAction::Run(Command::PrintBuffer)),
+];
+
+/// What an ex command with a path argument does (`:w <file>`, `:e <file>`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExArgAction {
+    /// `:w <file>`: save the buffer under a new path.
+    SaveAs,
+    /// `:e <file>`: open a file.
+    Open,
+}
+
+/// Ex commands that take a path argument. The engine only consults this
+/// table when the command line carries a non-empty argument.
+pub const EX_ARG_COMMANDS: &[(&str, ExArgAction)] = &[
+    ("w", ExArgAction::SaveAs),
+    ("e", ExArgAction::Open),
+];
+
+// ---------------------------------------------------------------------------
+// Context key tables: single-key maps for special buffer kinds. The event
+// loop consults these before the model tables when the active buffer is a
+// diagnostics or diff view. Terminal buffers forward keys to the pty
+// instead; that forwarding policy is engine behavior, not a mapping.
+// ---------------------------------------------------------------------------
+
+/// Keys active in a diagnostics buffer (`j`/`k` move, Enter jumps to the
+/// diagnostic, `q` closes the window).
+pub const DIAGNOSTICS_KEYS: &[(KeyPress, Command)] = &[
+    (KeyPress::plain(Key::Char('j')), Command::NextLine),
+    (KeyPress::plain(Key::Down), Command::NextLine),
+    (KeyPress::plain(Key::Char('k')), Command::PreviousLine),
+    (KeyPress::plain(Key::Up), Command::PreviousLine),
+    (KeyPress::plain(Key::Enter), Command::DiagnosticsJump),
+    (KeyPress::plain(Key::Char('q')), Command::DeleteWindow),
+    (KeyPress::plain(Key::Esc), Command::DeleteWindow),
+];
+
+/// Keys active in a diff view (`j`/`k`/`n` move between hunks, `y` accepts
+/// the hunk, `q` quits the diff).
+pub const DIFF_KEYS: &[(KeyPress, Command)] = &[
+    (KeyPress::plain(Key::Char('j')), Command::DiffNextHunk),
+    (KeyPress::plain(Key::Char('n')), Command::DiffNextHunk),
+    (KeyPress::plain(Key::Char('k')), Command::DiffPreviousHunk),
+    (KeyPress::plain(Key::Char('y')), Command::DiffAcceptHunk),
+    (KeyPress::plain(Key::Char('q')), Command::DiffQuit),
 ];
 
 #[cfg(test)]
