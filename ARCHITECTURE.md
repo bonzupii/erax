@@ -23,7 +23,14 @@ To manage complex relationships between buffers and windows without resorting to
 
 Buffers represent the raw text data. They are decoupled from any view state.
 
-- **Storage**: Backed by `ropey::Rope` for efficient insertion/deletion.
+- **Storage**: Currently backed by `ropey::Rope`. An in-house B-tree data
+  structure (piece-style leaves, pager-first file access) is designed and
+  pending implementation; it will replace `ropey` behind the same `Buffer`
+  API.
+- **Encodings** (`src/core/encoding.rs`): BOM detection, UTF-16/32, ISO-8859 /
+  Windows code pages; decode-with-replacement for corrupted input and
+  byte-exact round-trips for unmodified files. The tree itself stays
+  encoding-dumb (bytes are bytes).
 - **Streaming Load**: Uses `Rope::from_reader` with `BufReader` to stream large files directly into the rope structure, minimizing peak memory usage.
 - **Undo/Redo**: Grouped edit operations with smart heuristic grouping (e.g., grouping character insertions but breaking on whitespace).
 - **Diagnostics**: Container for compiler/lint errors associated with the buffer.
@@ -47,11 +54,31 @@ The layout is managed as a binary tree of `LayoutNode`s.
 
 ### 5. Command Dispatcher (`src/core/dispatcher.rs`)
 
-All user actions are encapsulated as `Command` traits.
+All user actions are typed `Command` enum variants (kebab-case names via
+`Command::name()`), dispatched by a `match` — no stringly registry, no
+`HashMap<String, Box<dyn Command>>`.
 
-- **Registry**: `EditorApp` maintains a `HashMap<String, Box<dyn Command>>`.
+- **Compile-time input models** (`src/config/keys.rs`): `InputModel::{KeyTrie, Modal, Standard}`
+  selects one of three typed keymaps (`KEYBINDINGS`, `MODAL_BINDINGS`, `STANDARD_BINDINGS`).
+  Invalid configuration is a compile error. `KEYBINDINGS.md` is generated from these consts.
 - **Atomic Execution**: Commands receive a mutable reference to the `EditorApp` and a `count` parameter (the "universal argument").
 - **Frontend Independence**: Commands manipulate state; the frontend is responsible for triggering a redraw based on the `DispatchResult`.
+
+### 6. Screen Model and Mode-Aware UI (`src/terminal/display.rs`)
+
+All mode UI state originates in the backend and reaches renderers only through
+the TUI screen model plus N-273 semantic metadata. The GUI is a dumb
+passthrough: it renders the screen model and forwards raw input; it owns no
+editor state, logic, or input handling. The WebUI (planned) is a child of the
+GUI, inheriting the same presentation core.
+
+Per model the screen model exposes: current input state, prompt-bar
+content/kind (`BarOwner` arbitration: prompt > command line > message > mode
+line), pending key-sequence display, cursor style (typed `CursorStyle` const
+mapping emitted as DECSCUSR to the terminal and as metadata for GUI shaders),
+and selection kind. Emacs echo-area behavior is unchanged; Standard shows
+`Ln X, Col Y (Z selected)`; Modal shows persistent `-- NORMAL --` etc.
+segments with pending count+operator and an owning `:` command line.
 
 ## Data Flow
 
