@@ -20,7 +20,9 @@
 //! command with no key idiom in a model stays reachable through that
 //! model's named facility (M-x, the `:` line, the command palette); the
 //! end-to-end parity test drives those facilities, so reachability never
-//! rests on a table entry alone.
+//! rests on a table entry alone. The facility-only commands are also
+//! recorded as data in [`FACILITY_BINDINGS`], so this module is the
+//! complete inventory of bindings.
 
 use crate::core::command::Command;
 use crate::core::input::{Key, KeyPress, PrefixPolicy};
@@ -734,6 +736,49 @@ pub const DIFF_KEYS: &[(KeyPress, Command)] = &[
     (KeyPress::plain(Key::Char('k')), Command::DiffPreviousHunk),
     (KeyPress::plain(Key::Char('y')), Command::DiffAcceptHunk),
     (KeyPress::plain(Key::Char('q')), Command::DiffQuit),
+];
+
+// ---------------------------------------------------------------------------
+// Named-facility bindings: commands with no key idiom in a model, reachable
+// only by name through that model's named facility. Recorded as data so a
+// facility-only command is a deliberate inventory entry, never an implicit
+// gap. Giving one of these commands a key binding means deleting it here.
+// ---------------------------------------------------------------------------
+
+/// Commands reachable only by name in a model, through the named facility.
+/// The facility resolves names through the typed command table, so the
+/// entry is the record that the command is intentionally keyless there.
+pub const FACILITY_BINDINGS: &[(InputModel, &str, &[Command])] = &[
+    (
+        InputModel::KeyTrie,
+        "M-x",
+        &[
+            Command::GotoByte,
+            Command::MarkLine,
+            Command::WrapWord,
+            Command::WhatCursorPosition,
+        ],
+    ),
+    (
+        InputModel::Modal,
+        ":",
+        &[
+            Command::GotoByte,
+            Command::MarkLine,
+            Command::WrapWord,
+            Command::WhatCursorPosition,
+        ],
+    ),
+    (
+        InputModel::Standard,
+        "palette",
+        &[
+            Command::GotoByte,
+            Command::MarkLine,
+            Command::WrapWord,
+            Command::WhatCursorPosition,
+        ],
+    ),
 ];
 
 #[cfg(test)]

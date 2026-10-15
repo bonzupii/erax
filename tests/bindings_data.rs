@@ -374,3 +374,110 @@ fn allowlist_covers_every_config_table_consumer() {
         "src/core/prompt.rs must resolve names through the typed command table"
     );
 }
+
+/// Variants of the `Command` enum exempt from the config inventory, each
+/// with the reason recorded. Keep this empty by default: a command is a
+/// promise of behavior, and the promise belongs in config.
+const INVENTORY_EXCEPTIONS: &[(&str, &str)] = &[
+    (
+        "TerminalSendInput",
+        "placeholder: dispatches to a message saying forwarding is \
+         unimplemented, with no real behavior and no caller outside the \
+         dispatcher; remove it or implement it, but do not list it as a \
+         binding until it does something",
+    ),
+];
+
+/// Every `Command` variant is named in `src/config/keys.rs` — bound in a
+/// model table, recorded as a named-facility binding, or listed by name
+/// in `INVENTORY_EXCEPTIONS`. This is structural: it asserts presence of
+/// the variant's mention, never any binding value. A new command that is
+/// not recorded in the config module fails here.
+#[test]
+fn config_module_is_the_complete_binding_inventory() {
+    let root = manifest_dir();
+    let command_src =
+        std::fs::read_to_string(root.join("src/core/command.rs")).expect("readable");
+    let keys_src =
+        std::fs::read_to_string(root.join("src/config/keys.rs")).expect("readable");
+    let variants = command_variants(&command_src);
+    assert!(
+        variants.len() > 100,
+        "expected the full command enum, parsed {}",
+        variants.len()
+    );
+    let mut failures = Vec::new();
+    for variant in &variants {
+        if INVENTORY_EXCEPTIONS.iter().any(|(name, _)| name == variant) {
+            continue;
+        }
+        let needle = format!("Command::{variant}");
+        if !references_command(&keys_src, &needle) {
+            failures.push(variant.clone());
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "commands absent from src/config/keys.rs: {} — bind them in a \
+         model table, record them in FACILITY_BINDINGS, or add them to \
+         INVENTORY_EXCEPTIONS with a reason",
+        failures.join(", ")
+    );
+}
+
+/// Variant names of `pub enum Command`, in declaration order.
+fn command_variants(src: &str) -> Vec<String> {
+    let start = src
+        .find("pub enum Command {")
+        .expect("the command enum is defined");
+    let body = &src[start..];
+    let mut depth = 0usize;
+    let mut end = body.len();
+    for (i, c) in body.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = i;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut variants = Vec::new();
+    for line in body[..end].lines() {
+        let trimmed = line.trim();
+        let name: String = trimmed
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if !name.is_empty()
+            && name.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+            && trimmed[name.len()..]
+                .chars()
+                .next()
+                .is_none_or(|c| c == ',' || c == '(' || c == '{' || c == '=')
+        {
+            variants.push(name);
+        }
+    }
+    variants
+}
+
+/// True when `needle` (`Command::Name`) occurs in `src` followed by a
+/// non-identifier byte, so `Command::Exit` does not match `Command::ExitErax`.
+fn references_command(src: &str, needle: &str) -> bool {
+    let bytes = src.as_bytes();
+    let nbytes = needle.as_bytes();
+    bytes
+        .windows(nbytes.len())
+        .enumerate()
+        .any(|(i, w)| {
+            w == nbytes
+                && src.as_bytes()[i + nbytes.len()..]
+                    .first()
+                    .is_none_or(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))
+        })
+}
