@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>erax — WebUI</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: #1e1e1e;
+  }
+  #erax-canvas {
+    display: block; width: 100vw; height: 100vh;
+    outline: none; cursor: text;
+  }
+  #status {
+    position: fixed; top: 8px; right: 12px;
+    color: #888; font: 12px monospace;
+    background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 4px;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+<canvas id="erax-canvas" tabindex="0"></canvas>
+<div id="status">connecting…</div>
+<script type="module">
+  import init, { erax_start } from './erax-web-shell.js';
+
+  const status = document.getElementById('status');
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('token');
+  if (!token) {
+    status.textContent = 'missing ?token=… (the server prints it at startup)';
+    throw new Error('no token');
+  }
+
+  const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${wsProto}//${window.location.host}/ws`;
+  const fontStackUrl = '/font-stack';
+
+  status.textContent = 'loading wasm…';
+  try {
+    await init();
+    status.textContent = 'starting…';
+    await erax_start('erax-canvas', wsUrl, token, fontStackUrl);
+    // The wasm side owns #status from here: it reports every startup
+    // stage, the WebGPU/WebGL2 backend choice, and the handshake.
+    // Focus the canvas so it receives keyboard events.
+    document.getElementById('erax-canvas').focus();
+  } catch (e) {
+    status.textContent = 'error: ' + e;
+    console.error(e);
+  }
+</script>
+</body>
+</html>
