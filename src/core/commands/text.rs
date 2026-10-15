@@ -153,7 +153,9 @@ pub fn delete_blank_lines(app: &mut EditorApp, _count: usize) -> DispatchResult 
         let active_window_id = app.active_window;
         let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
 
-        if let Some(buffer_id) = buffer_id
+        // Phase 1: compute and apply the deletion, remembering where
+        // point should land. Borrows end before the cursor repair.
+        let point_line: Option<usize> = if let Some(buffer_id) = buffer_id
             && let (Some(window), Some(buffer)) = (
                 app.windows.get(&app.active_window),
                 app.buffers.get_mut(&buffer_id),
@@ -195,8 +197,28 @@ pub fn delete_blank_lines(app: &mut EditorApp, _count: usize) -> DispatchResult 
                     if is_current_blank {
                         buffer.insert(start_byte, "\n");
                     }
+                    // Point stays on the surviving blank line, or where
+                    // it was when only lines below it were removed.
+                    Some(if is_current_blank { start_line } else { current_line })
+                } else {
+                    None
                 }
-            }
+            } else {
+                None
+            };
+
+        // Phase 2: the deletion can pull lines up from under the cursor;
+        // move point with it, then clamp into the buffer and viewport.
+        if let (Some(target), Some(buffer_id)) = (point_line, buffer_id)
+            && let (Some(window), Some(buffer)) = (
+                app.windows.get_mut(&app.active_window),
+                app.buffers.get(&buffer_id),
+            )
+        {
+            window.cursor_y = target;
+            window.ensure_cursor_valid(buffer);
+            window.ensure_cursor_visible(buffer);
+        }
         DispatchResult::Success
     }
 
