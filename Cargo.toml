@@ -15,43 +15,80 @@ unsafe_code = "deny"   # DO NOT CHANGE
 dead_code = "deny"     # DO NOT CHANGE
 missing_docs = "allow" # TODO: Enable once APIs stabilize
 
+# Shared dependencies: compile on both native and wasm32 (the presentation
+# core and the wire protocol are shared 1:1 between the native shell and the
+# web wasm shell).
 [dependencies]
 # Async
 pollster = "0.4"
-
-# System
-crossterm = "0.29"
-portable-pty = "0.9"
 
 # Unicode
 unicode-segmentation = "1.12"
 unicode-width = "0.2"
 
-# GUI
-winit = { version = "0.30", optional = true }
-wgpu = { version = "27", optional = true }
-bytemuck = { version = "1.21", features = ["derive"], optional = true }
-cosmic-text = { version = "0.15", optional = true }
+# Presentation core (platform-agnostic; no winit, no fontdb scan)
+wgpu = "30"
+bytemuck = { version = "1.21", features = ["derive"] }
+cosmic-text = "0.19"
+fontdb = "0.23"
+sys-locale = "0.3"
+
+# Wire protocol (typed, versioned frames)
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+
+# Native-only dependencies (the editor: TUI, server, native GUI shell).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# System
+crossterm = "0.29"
+libc = "0.2"  # mmap/munmap for the DS mmap prototype (session 6)
+portable-pty = "0.9"
+
+# WHATWG encodings (reference implementation for src/core/encoding.rs;
+# UTF-32LE/BE are implemented in-house there since WHATWG lacks them).
+# License: MIT OR Apache-2.0 (using the MIT leg per project licensing policy).
+encoding_rs = "0.8"
+
+# Native GUI shell (thinned winit; the core is in [dependencies])
+winit = "0.30"
 
 # Core
-ropey = "1.6"
 tempfile = "3.15"
 
 # Sed
 regex = "1.12"
-similar = "2.7.0"
+similar = "3.2"
 
-# Terminal emulation (optional)
-vte = { version = "0.15", optional = true }
+# Printing (N-267: cross-platform via printers crate)
+printers = "2.3"
+
+# Terminal emulation (always compiled, N-005: no feature gates)
+vte = "0.15"
 rustc-hash = "2.1.1"
 
-[features]
-default = ["gui"]
-gui = ["dep:winit", "dep:wgpu", "dep:bytemuck", "dep:cosmic-text"]
-terminal = ["dep:vte"]
+# WebUI server (native WebSocket server)
+tungstenite = "0.30.0"
+
+# Web (wasm32) shell: the presentation core compiled to wasm + DOM glue.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2.129"
+web-sys = { version = "0.3.106", features = ["Window", "Document", "HtmlCanvasElement", "WebSocket", "MessageEvent", "KeyboardEvent", "MouseEvent", "WheelEvent", "InputEvent", "CompositionEvent", "Element", "HtmlElement", "Node", "Event", "EventTarget", "BinaryType", "Url", "Response", "Navigator"] }
+wasm-bindgen-futures = "0.4.79"
+js-sys = "0.3.106"
+
+[dependencies.clap]
+version = "4"
+features = ["derive"]
+
+[dev-dependencies]
+criterion = { version = "0.8", features = ["html_reports"] }
+
+[[bench]]
+name = "hot_paths"
+harness = false
 
 [profile.release]
-opt-level = "z"
+opt-level = 2
 lto = true
 codegen-units = 1
 strip = true
