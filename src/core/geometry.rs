@@ -171,6 +171,8 @@ use std::collections::HashMap;
 
 use crate::core::id::WindowId;
 use crate::core::layout::{LayoutNode, Rect};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::core::window::Window;
 
 /// Options for [`compute_frame`]: the cell grid plus frame-wide display
 /// choices. All three frontends build this from their own size source
@@ -292,8 +294,10 @@ impl FrameLayout {
     /// can no longer leave them stale. The contract is unchanged from
     /// the old resize-only writer (full frame width, frame height minus
     /// the status row), so consumers like paragraph reflow keep their
-    /// exact behavior.
-    pub fn apply_window_dims(&self, windows: &mut HashMap<WindowId, crate::core::window::Window>) {
+    /// exact behavior. Unavailable on wasm32: the web client is a dumb
+    /// renderer with no window map to refresh.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn apply_window_dims(&self, windows: &mut HashMap<WindowId, Window>) {
         for pane in &self.panes {
             if let Some(window) = windows.get_mut(&pane.window) {
                 window.set_dimensions(pane.frame.width, pane.frame.height.saturating_sub(1));
