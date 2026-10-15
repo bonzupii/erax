@@ -26,6 +26,7 @@ use crate::core::app::EditorApp;
 use crate::terminal::display::*;
 use crate::terminal::events::EditorEvent;
 
+use super::entropy::generate_token;
 use super::protocol::*;
 
 /// Errors from server startup and session handling.
@@ -39,8 +40,6 @@ pub enum ServerError {
     Handshake(String),
     /// Protocol error (bad frame, version mismatch, auth failure).
     Protocol(String),
-    /// Session entropy unavailable (refuse to start rather than panic).
-    Entropy(String),
 }
 
 impl std::fmt::Display for ServerError {
@@ -54,28 +53,8 @@ impl std::fmt::Display for ServerError {
             ServerError::Bind(e) => write!(f, "cannot bind web server socket: {e}"),
             ServerError::Handshake(e) => write!(f, "websocket handshake failed: {e}"),
             ServerError::Protocol(e) => write!(f, "web protocol error: {e}"),
-            ServerError::Entropy(e) => write!(f, "cannot obtain session entropy: {e}"),
         }
     }
-}
-
-/// Generate a per-session random token: 32 hex chars from the OS CSPRNG.
-/// No token is ever logged, stored, or reused across sessions.
-///
-/// Failure is a typed error, never a panic: without entropy the server
-/// refuses to start (fail closed — an unauthenticated-mode fallback would
-/// be worse than refusing).
-fn generate_token() -> Result<String, ServerError> {
-    let mut bytes = [0u8; 16];
-    // Unix: /dev/urandom. (The server is Unix-first; the web module is
-    // available everywhere but binding/entropy here assume Unix. On a
-    // platform without /dev/urandom this returns Err and the server
-    // refuses to start instead of panicking.)
-    let mut f = std::fs::File::open("/dev/urandom")
-        .map_err(|e| ServerError::Entropy(format!("/dev/urandom unavailable: {e}")))?;
-    f.read_exact(&mut bytes)
-        .map_err(|e| ServerError::Entropy(format!("entropy read failed: {e}")))?;
-    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// True if `addr` is a loopback address (127.0.0.0/8 or ::1).
@@ -126,7 +105,9 @@ pub fn bind_server(bind: &str, allow_non_loopback: bool) -> Result<BoundServer, 
     if !is_loopback(&addr) && !allow_non_loopback {
         return Err(ServerError::NonLoopbackWithoutFlag(bind.to_string()));
     }
-    let token = generate_token()?;
+    // Infallible: the token generator has no failure mode, so binding
+    // cannot fail for lack of entropy.
+    let token = generate_token();
     let listener = TcpListener::bind(addr).map_err(ServerError::Bind)?;
     let local = listener.local_addr().map_err(ServerError::Bind)?;
     Ok(BoundServer {

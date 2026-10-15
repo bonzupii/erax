@@ -12,11 +12,14 @@
 //!   Dirty regions + semantic metadata go out; raw input comes in.
 //! - `server`: the opt-in WebSocket server (127.0.0.1 default, per-session
 //!   random token REQUIRED, no unauthenticated mode).
+//! - `entropy`: the platform-neutral session token generator (no
+//!   `/dev/urandom`, no platform syscalls; in-tree SHA-256 and ChaCha20).
 //!
 //! The GUI is a dumb passthrough: all input models and mode-aware UI live
 //! in the backend screen model. The web shell inherits them iff the split
 //! is honest — the protocol carries raw input events and the backend's
 //! screen model, nothing else.
 
+pub mod entropy;
 pub mod protocol;
 pub mod server;
