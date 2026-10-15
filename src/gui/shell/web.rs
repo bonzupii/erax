@@ -27,7 +27,7 @@ use web_sys::{
 
 use crate::core::input::{Key, KeyPress, MouseButton, MouseEvent, MouseEventKind};
 use crate::terminal::display::{Cell, CellRole, ScreenBuffer};
-use crate::web::protocol::{ClientFrame, CursorState, InputEvent, ServerFrame, PROTOCOL_VERSION};
+use crate::web::protocol::{ClientFrame, CursorState, InputEvent, ServerCue, ServerFrame, PROTOCOL_VERSION};
 use crate::config::cursor_style::CursorStyle;
 use crate::gui::shell::startup::{StartupStage, startup_failure};
 
@@ -51,6 +51,11 @@ struct WebSession {
     dpr: f64,
     /// Last Screen `seq` seen; a gap means a dropped frame (warn, don't die).
     last_seq: u64,
+    /// Lazily-created WebAudio context for accessibility earcons.
+    /// Browsers gate audio behind a user gesture, so this stays `None`
+    /// until the first cue frame arrives; a suspended context drops
+    /// that cue and resumes on the next one.
+    audio: Option<web_sys::AudioContext>,
 }
 
 /// Probe WebGPU adapter availability WITHOUT touching the canvas.
@@ -313,6 +318,7 @@ pub async fn erax_start(
         },
         dpr,
         last_seq: 0,
+        audio: None,
     }));
 
     // Wire DOM events → protocol input.
@@ -564,6 +570,97 @@ fn wire_socket(document: &Document, session: Rc<RefCell<WebSession>>) -> Result<
     Ok(())
 }
 
+/// Map a cue event to its earcon: (frequency Hz, duration ms).
+///
+/// Every cue kind is distinct by construction (no two share a
+/// frequency), and modes are distinct from each other so a vim mode
+/// change is identifiable by ear. Errors are low and long; they must
+/// be unmistakable.
+fn earcon_for_cue(cue: &ServerCue) -> (f32, u32) {
+    match cue {
+        ServerCue::ModeEntered { mode } => match mode.as_str() {
+            "insert" => (440.0, 90),
+            "normal" => (660.0, 70),
+            "visual" => (550.0, 100),
+            "operator_pending" => (330.0, 130),
+            "command_line" => (880.0, 70),
+            _ => (494.0, 80),
+        },
+        ServerCue::Error => (196.0, 220),
+        ServerCue::SaveCompleted => (784.0, 70),
+        ServerCue::ReloadQuestion => (392.0, 150),
+    }
+}
+
+/// Play one earcon through WebAudio: a sine oscillator with a short
+/// attack/decay envelope (no clicks).
+///
+/// The audio context is created lazily on the first cue. Browsers
+/// suspend audio contexts until a user gesture, so a suspended
+/// context resumes in the background and the cue that found it is
+/// dropped; the next cue plays. A context that cannot be created at
+/// all disables earcons silently: cues are an accessibility aid, not
+/// a failure domain.
+fn play_earcon(session: &Rc<RefCell<WebSession>>, freq_hz: f32, duration_ms: u32) {
+    let mut s = session.borrow_mut();
+    if s.audio.is_none() {
+        s.audio = web_sys::AudioContext::new().ok();
+    }
+    let ctx = match s.audio.as_ref() {
+        Some(ctx) => ctx,
+        None => return,
+    };
+    if ctx.state() == web_sys::AudioContextState::Suspended {
+        let _ = ctx.resume();
+        return;
+    }
+    let osc = match ctx.create_oscillator() {
+        Ok(osc) => osc,
+        Err(_) => return,
+    };
+    let gain = match ctx.create_gain() {
+        Ok(gain) => gain,
+        Err(_) => return,
+    };
+    osc.set_type(web_sys::OscillatorType::Sine);
+    osc.frequency().set_value(freq_hz);
+    let start = ctx.current_time();
+    let dur = f64::from(duration_ms) / 1000.0;
+    // 10 ms attack, exponential decay to silence by the duration:
+    // the envelope is what keeps a 70 ms blip from clicking.
+    let envelope = gain.gain();
+    let _ = envelope.set_value_at_time(0.0001, start);
+    let _ = envelope.exponential_ramp_to_value_at_time(0.25, start + 0.01);
+    let _ = envelope.exponential_ramp_to_value_at_time(0.0001, start + dur);
+    if osc.connect_with_audio_node(&gain).is_err() {
+        return;
+    }
+    if gain.connect_with_audio_node(&ctx.destination()).is_err() {
+        return;
+    }
+    let _ = osc.start_with_when(start);
+    let _ = osc.stop_with_when(start + dur + 0.05);
+}
+
+/// Write an announcement to the page's `aria-live` region. The text
+/// comes from the server's snapshot diffs, verbatim: the client
+/// never derives announcements from the rendered grid. Identical
+/// repeats are dropped: re-announcing the same string is spam, and
+/// most screen readers skip it anyway.
+fn announce(session: &Rc<RefCell<WebSession>>, text: &str) {
+    let s = session.borrow();
+    let document = match s.canvas.owner_document() {
+        Some(document) => document,
+        None => return,
+    };
+    if let Some(region) = document.get_element_by_id("erax-live") {
+        let current = region.text_content().unwrap_or_default();
+        if current != text {
+            region.set_text_content(Some(text));
+        }
+    }
+}
+
 fn handle_server_frame(session: &Rc<RefCell<WebSession>>, frame: ServerFrame) {
     // The page status line is driven from here once the socket is up:
     // `erax_start` leaves it at "waiting for the server handshake…".
@@ -665,6 +762,13 @@ fn handle_server_frame(session: &Rc<RefCell<WebSession>>, frame: ServerFrame) {
             set_page_status(&format!(
                 "startup: running: server closed the session: {reason}"
             ));
+        }
+        ServerFrame::Cue { cue } => {
+            let (freq_hz, duration_ms) = earcon_for_cue(&cue);
+            play_earcon(session, freq_hz, duration_ms);
+        }
+        ServerFrame::Announce { text } => {
+            announce(session, &text);
         }
     }
 }

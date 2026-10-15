@@ -270,6 +270,11 @@ pub struct Display {
     /// Cursor style the terminal emit path last wrote, for DECSCUSR dedup.
     /// Written by `terminal::render`; `None` before the first frame.
     pub last_emitted_cursor_style: Option<CursorStyle>,
+    /// Accessibility visual flash: when set, the next rendered frame
+    /// inverts every pane's status bar row, then the flag clears. The
+    /// TUI cue sink sets this from cue events; the renderer consumes
+    /// it as data through [`StatusCtx::flash`].
+    pub flash: bool,
 }
 
 impl Display {
@@ -315,6 +320,7 @@ impl Display {
             cursor_style: CursorStyle::Default,
             cursor_style_touched: false,
             last_emitted_cursor_style: None,
+            flash: false,
         }
     }
 
@@ -523,6 +529,7 @@ impl Display {
                         prompt_state: self.prompt_state.as_ref(),
                         bar: &self.bar,
                         status_row: pane.status_row,
+                        flash: self.flash,
                     };
                     let bar_cursor = crate::terminal::renderers::StatusRenderer::render(
                         &mut self.back_buffer,
@@ -578,6 +585,10 @@ impl Display {
 
         // NOTE: dirty_tracker is cleared in swap_buffers(), not here, so that
         // render_display_to_terminal can still check dirty state
+
+        // The flash is consumed by the frame just painted: one frame,
+        // never more, whatever set it.
+        self.flash = false;
 
         Ok(())
     }
@@ -1295,6 +1306,7 @@ mod tests {
             prompt_state: None,
             bar: &bar,
             status_row: 23,
+            flash: false,
         };
         let cursor = StatusRenderer::render(&mut display.back_buffer, &ctx);
         assert_eq!(cursor, None);

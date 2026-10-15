@@ -21,6 +21,11 @@ pub struct StatusCtx<'a> {
     /// segment, pending keys, command line. Composed from backend state by
     /// the screen model; the renderer does no mode logic.
     pub bar: &'a BarState,
+    /// Accessibility visual flash: when set, the bar row is painted with
+    /// foreground and background swapped for this frame. The TUI cue sink
+    /// sets the flag on the display from cue events; the renderer only
+    /// consumes it.
+    pub flash: bool,
 }
 
 /// Renders the status line for a window
@@ -46,18 +51,24 @@ impl StatusRenderer {
             prompt_state,
             bar,
             status_row,
+            flash,
         } = ctx;
         let status_y = *status_row as u16;
-        let bg_color = if *is_active {
+        let bg = if *is_active {
             theme.status_bg
         } else {
             theme.status_inactive_bg
         };
-        let fg_color = if *is_active {
+        let fg = if *is_active {
             theme.status_fg
         } else {
             theme.status_inactive_fg
         };
+        // Visual flash (accessibility cue): the whole bar row inverts
+        // for one frame. The swap is here, at the single point where
+        // the bar's colors are chosen, so no other arm needs to know
+        // about it.
+        let (fg_color, bg_color) = if *flash { (bg, fg) } else { (fg, bg) };
 
         let filename = match buffer.filename.as_ref().map(|p| p.display().to_string()) {
             Some(s) => s,
@@ -191,6 +202,7 @@ mod tests {
             prompt_state: prompt,
             bar,
             status_row: rect.y + rect.height.saturating_sub(1),
+            flash: false,
         };
         let cursor = StatusRenderer::render(&mut display.back_buffer, &ctx);
         let y = (rect.y + rect.height - 1) as u16;

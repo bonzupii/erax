@@ -1,6 +1,7 @@
 //! Terminal frontend: raw mode, events, and rendering.
 pub mod capabilities;
 pub mod color;
+pub mod cue_sink;
 pub mod display;
 pub mod event_handler;
 pub mod events;

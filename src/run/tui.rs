@@ -177,6 +177,17 @@ pub fn run_terminal_mode(
             display.dirty = true;
         }
 
+        // Accessibility cues: drain the core's cue bus into the TUI's
+        // senses (bell, visual flash). The sink marks the display
+        // dirty itself when a cue needs a frame, so this runs even
+        // when nothing else dirtied the display.
+        crate::terminal::cue_sink::drain_cues_to_tui(
+            &mut app,
+            &mut display,
+            crate::config::accessibility::CUE_ERROR_BELL,
+            crate::config::accessibility::CUE_VISUAL_FLASH,
+        );
+
         if display.dirty {
             display
                 .render(&mut app)

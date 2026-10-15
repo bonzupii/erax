@@ -589,6 +589,11 @@ fn handle_websocket(
     let mut seq = 0u64;
     send_screen(&mut ws, &mut display, &mut seq)?;
 
+    // Baseline for the screen-reader announcement diffs: connecting is
+    // not a semantic change, so the first summary seeds and is never
+    // announced.
+    let mut last_summary = crate::core::semantics::capture_summary(&app);
+
     let mut await_deadline: Option<Instant> = None;
     let await_timeout =
         Duration::from_millis(crate::config::keys::KEY_SEQUENCE_TIMEOUT_MS);
@@ -678,12 +683,58 @@ fn handle_websocket(
             display.render_menu_bar(&menu_bar, show);
             send_screen(&mut ws, &mut display, &mut seq)?;
         }
+
+        // Accessibility: cue events and snapshot-diff announcements ride
+        // the existing frame channel. Cues map to earcons client-side
+        // and are gated by the cue bus (a disabled bus delivers
+        // nothing). Announcements are computed unconditionally: the
+        // aria-live region they feed is inert without assistive
+        // technology, so there is no one to disturb, and gating them
+        // behind the earcon opt-in would deny screen-reader users
+        // their only channel.
+        for cue in app.cue_bus.drain() {
+            send_frame(&mut ws, &ServerFrame::Cue { cue: server_cue(cue) })?;
+        }
+        if let Some(summary) = crate::core::semantics::capture_summary(&app) {
+            let announce = last_summary.as_ref().and_then(|old| {
+                crate::core::semantics::announce_diff(
+                    old,
+                    &summary,
+                    crate::config::accessibility::ANNOUNCE_CURSOR_LINE,
+                )
+            });
+            last_summary = Some(summary);
+            if let Some(text) = announce {
+                send_frame(&mut ws, &ServerFrame::Announce { text })?;
+            }
+        }
     }
 
     send_frame(&mut ws, &ServerFrame::Bye {
         reason: "editor exited".to_string(),
     })?;
     Ok(())
+}
+
+/// Map a core cue event to its wire projection.
+fn server_cue(cue: crate::core::cue::Cue) -> ServerCue {
+    use crate::config::keys::ModalMode;
+    use crate::core::cue::Cue;
+    match cue {
+        Cue::ModeEntered(mode) => ServerCue::ModeEntered {
+            mode: match mode {
+                ModalMode::Normal => "normal",
+                ModalMode::Insert => "insert",
+                ModalMode::Visual => "visual",
+                ModalMode::OperatorPending => "operator_pending",
+                ModalMode::CommandLine => "command_line",
+            }
+            .to_string(),
+        },
+        Cue::Error => ServerCue::Error,
+        Cue::SaveCompleted => ServerCue::SaveCompleted,
+        Cue::ReloadQuestionAsked => ServerCue::ReloadQuestion,
+    }
 }
 
 /// Rendered screen → protocol frame.

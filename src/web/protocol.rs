@@ -26,7 +26,12 @@ use serde::{Deserialize, Serialize};
 /// shape for the current input model/mode — block/bar/underline/hollow).
 /// The client must draw the cursor with this shape; it must not infer
 /// shape from anything else.
-pub const PROTOCOL_VERSION: u32 = 2;
+///
+/// v3 (2026-10-15): `ServerFrame` gained `Cue` (accessibility cue
+/// events: mode changes, errors, save completions, reload questions)
+/// and `Announce` (screen-reader announcement text derived from
+/// document-snapshot diffs). Both are event frames alongside `Screen`.
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// A rectangle of cells, in cell coordinates (inclusive origin, exclusive end).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +87,35 @@ pub enum ServerFrame {
     },
     /// The server is shutting down.
     Bye { reason: String },
+    /// An accessibility cue event (protocol v3): the core emitted a
+    /// cue (mode change, error, save completed, reload question) and
+    /// the client should render it in its own senses (WebAudio earcon).
+    /// Event frames are ordered with `Screen` frames on the socket.
+    Cue { cue: ServerCue },
+    /// A screen-reader announcement (protocol v3): text derived
+    /// server-side from document-snapshot diffs (mode changes,
+    /// diagnostic counts, messages, cursor line changes). The client
+    /// writes it to its `aria-live` region verbatim; it never derives
+    /// announcements from pixels.
+    Announce { text: String },
+}
+
+/// The wire projection of [`crate::core::cue::Cue`]: the cue kind the
+/// client maps to a tone. Mode changes carry the new mode so the
+/// client can voice each mode distinctly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "t", rename_all = "snake_case")]
+pub enum ServerCue {
+    /// The vim modal engine entered this mode
+    /// (`normal` | `insert` | `visual` | `operator_pending` |
+    /// `command_line`).
+    ModeEntered { mode: String },
+    /// A user-visible error occurred.
+    Error,
+    /// A buffer save completed successfully.
+    SaveCompleted,
+    /// The external-modification reload question was asked.
+    ReloadQuestion,
 }
 
 /// Raw input events sent by the client (the backend's input types).
@@ -132,7 +166,7 @@ mod tests {
 
     #[test]
     fn protocol_version_is_current() {
-        assert_eq!(PROTOCOL_VERSION, 2);
+        assert_eq!(PROTOCOL_VERSION, 3);
     }
 
     #[test]
@@ -156,6 +190,34 @@ mod tests {
         let wire = encode(&frame);
         let back: ServerFrame = decode(&wire).expect("decode failed");
         assert_eq!(frame, back);
+    }
+
+    #[test]
+    fn cue_and_announce_frames_round_trip() {
+        let frames = vec![
+            ServerFrame::Cue {
+                cue: ServerCue::ModeEntered {
+                    mode: "insert".to_string(),
+                },
+            },
+            ServerFrame::Cue {
+                cue: ServerCue::Error,
+            },
+            ServerFrame::Cue {
+                cue: ServerCue::SaveCompleted,
+            },
+            ServerFrame::Cue {
+                cue: ServerCue::ReloadQuestion,
+            },
+            ServerFrame::Announce {
+                text: "Insert mode; line 3".to_string(),
+            },
+        ];
+        for frame in frames {
+            let wire = encode(&frame);
+            let back: ServerFrame = decode(&wire).expect("decode failed");
+            assert_eq!(frame, back);
+        }
     }
 
     #[test]

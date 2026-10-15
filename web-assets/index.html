@@ -19,10 +19,20 @@
     background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 4px;
     pointer-events: none; z-index: 10;
   }
+  /* Screen-reader live region: the wasm client writes the server's
+     snapshot-diff announcements here. Visually hidden, never removed
+     from the accessibility tree (display:none would hide it from
+     assistive technology too). */
+  #erax-live {
+    position: absolute; width: 1px; height: 1px;
+    margin: -1px; padding: 0; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
 </style>
 </head>
 <body>
 <canvas id="erax-canvas" tabindex="0"></canvas>
+<div id="erax-live" aria-live="polite" role="status"></div>
 <div id="status">connecting…</div>
 <script type="module">
   import init, { erax_start } from './erax-web-shell.js';
