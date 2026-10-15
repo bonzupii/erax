@@ -125,34 +125,11 @@ pub fn read_file(_app: &mut EditorApp, _count: usize) -> DispatchResult {
     }
 
 pub fn delete_buffer(app: &mut EditorApp, _count: usize) -> DispatchResult {
-        let active_window_id = app.active_window;
-        if let Some(window) = app.windows.get(&active_window_id) {
-            let buffer_id = window.buffer_id;
-            if app.buffers.remove(&buffer_id).is_some() {
-                // Also remove any windows viewing this buffer
-                let windows_to_remove: Vec<_> = app
-                    .windows
-                    .iter()
-                    .filter(|(_, w)| w.buffer_id == buffer_id)
-                    .map(|(id, _)| *id)
-                    .collect();
-
-                for win_id in windows_to_remove {
-                    app.windows.remove(&win_id);
-                }
-
-                // Switch to another buffer if available
-                if let Some((&new_buffer_id, _)) = app.buffers.iter().next() {
-                    for window in app.windows.values_mut() {
-                        if window.buffer_id == buffer_id {
-                            window.buffer_id = new_buffer_id;
-                        }
-                    }
-                }
-            }
-        }
-        DispatchResult::Success
+    match app.delete_buffer() {
+        Ok(()) => DispatchResult::Success,
+        Err(msg) => DispatchResult::Info(msg.to_string()),
     }
+}
 
 pub fn select_buffer(_app: &mut EditorApp, _count: usize) -> DispatchResult {
         DispatchResult::NeedsInput {

@@ -320,9 +320,68 @@ impl EditorApp {
         buffer_id
     }
 
+    /// Delete the buffer shown in the active window.
+    ///
+    /// Every window viewing the buffer is closed through the layout (the
+    /// same path as [`Self::delete_window`]), so the layout tree, the
+    /// window map, and the active window stay consistent. Two degenerate
+    /// cases are refused or repaired instead of corrupting state:
+    /// - the last buffer cannot be deleted (the app always has a buffer);
+    /// - if every window views the deleted buffer, the active window is
+    ///   kept and repointed at another buffer with a reset view, exactly
+    ///   like switching buffers.
+    pub fn delete_buffer(&mut self) -> Result<(), &'static str> {
+        if self.buffers.len() <= 1 {
+            return Err("Cannot delete the last buffer");
+        }
+        let buffer_id = match self.windows.get(&self.active_window) {
+            Some(w) => w.buffer_id,
+            None => return Err("No active window"),
+        };
+        self.buffers.remove(&buffer_id);
+
+        let viewing: Vec<WindowId> = self
+            .windows
+            .iter()
+            .filter(|(_, w)| w.buffer_id == buffer_id)
+            .map(|(id, _)| *id)
+            .collect();
+        // The last window is never closed: if every window viewed the
+        // deleted buffer, keep the active one and repoint it.
+        let keep_active = viewing.len() == self.windows.len();
+        for win_id in viewing {
+            if keep_active && win_id == self.active_window {
+                continue;
+            }
+            let next_focus = self.layout.remove_window(win_id);
+            self.windows.remove(&win_id);
+            if self.active_window == win_id {
+                self.active_window = next_focus
+                    .filter(|id| self.windows.contains_key(id))
+                    .or_else(|| self.windows.keys().next().copied())
+                    .expect("a window always remains");
+            }
+        }
+        if keep_active
+            && let Some(window) = self.windows.get_mut(&self.active_window)
+        {
+            // Another buffer exists (the last-buffer case returned above).
+            let other = self
+                .buffers
+                .keys()
+                .next()
+                .expect("a buffer always remains")
+                .clone();
+            window.buffer_id = other;
+            window.cursor_x = 0;
+            window.cursor_y = 0;
+            window.scroll_offset = 0;
+        }
+        Ok(())
+    }
+
     /// Delete the current window
-    pub fn delete_window(&mut self) {
-        // Cannot delete the last window
+    pub fn delete_window(&mut self) {        // Cannot delete the last window
         if self.windows.len() <= 1 {
             return;
         }
