@@ -1,11 +1,10 @@
-//! Diagnostics Pane Commands
+//! Diagnostics-pane commands.
 //!
 //! This module implements the diagnostics pane (^X d), which shows all
 //! errors and warnings across all open buffers.
 
 use crate::core::app::EditorApp;
 use crate::core::buffer::Buffer;
-use crate::core::command::Command;
 use crate::core::diagnostics::DiagnosticSeverity;
 use crate::core::dispatcher::DispatchResult;
 use crate::core::id::BufferId;
@@ -13,23 +12,17 @@ use std::path::PathBuf;
 
 const DIAGNOSTICS_BUFFER_NAME: &str = "*Diagnostics*";
 
-/// Toggle the diagnostics pane
-#[derive(Clone, Debug)]
-pub struct ToggleDiagnosticsPane;
-
-impl Command for ToggleDiagnosticsPane {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn toggle_diagnostics(app: &mut EditorApp, _count: usize) -> DispatchResult {
         use crate::core::buffer::BufferKind;
         // 1. Check if diagnostics window exists
         let diag_window_id = {
             let mut found = None;
             for (win_id, window) in &app.windows {
-                if let Some(buffer) = app.buffers.get(&window.buffer_id) {
-                    if buffer.buffer_kind() == BufferKind::Diagnostics {
+                if let Some(buffer) = app.buffers.get(&window.buffer_id)
+                    && buffer.buffer_kind() == BufferKind::Diagnostics {
                         found = Some(*win_id);
                         break;
                     }
-                }
             }
             found
         };
@@ -69,14 +62,8 @@ impl Command for ToggleDiagnosticsPane {
 
         DispatchResult::Success
     }
-}
 
-/// Jump to the diagnostic at cursor
-#[derive(Clone, Debug)]
-pub struct DiagnosticsJump;
-
-impl Command for DiagnosticsJump {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn diagnostics_jump(app: &mut EditorApp, _count: usize) -> DispatchResult {
         use crate::core::buffer::BufferKind;
         let (file, line) = {
             let window = match app.active_window_ref() {
@@ -110,12 +97,11 @@ impl Command for DiagnosticsJump {
             let diag_window_id = {
                 let mut found = None;
                 for (win_id, window) in &app.windows {
-                    if let Some(buffer) = app.buffers.get(&window.buffer_id) {
-                        if buffer.buffer_kind() == BufferKind::Diagnostics {
+                    if let Some(buffer) = app.buffers.get(&window.buffer_id)
+                        && buffer.buffer_kind() == BufferKind::Diagnostics {
                             found = Some(*win_id);
                             break;
                         }
-                    }
                 }
                 found
             };
@@ -159,7 +145,6 @@ impl Command for DiagnosticsJump {
 
         DispatchResult::Success
     }
-}
 
 /// Helper: Get or create diagnostics buffer
 fn get_or_create_diagnostics_buffer(app: &mut EditorApp) -> BufferId {
@@ -227,10 +212,7 @@ fn populate_diagnostics(app: &mut EditorApp, diag_buffer_id: BufferId) {
                 "{}:{}:{}",
                 filename,
                 diag.line,
-                match diag.column {
-                    Some(c) => c,
-                    None => 1,
-                }
+                diag.column.unwrap_or(1)
             );
             content.push_str(&format!(
                 "{} {:<16}   {}: {}\n",
@@ -256,35 +238,52 @@ fn populate_diagnostics(app: &mut EditorApp, diag_buffer_id: BufferId) {
 }
 
 /// Helper: Parse a line from the diagnostics buffer back into a file and line number
+///
+/// Format: `'! main.rs:6:12   Error: cannot find value'`. The trailing
+/// `:line:col` / `:line` segments are stripped from the RIGHT so paths
+/// containing colons (Windows drive letters like `C:\...`) survive intact.
 fn parse_diagnostic_line(line: &str) -> (Option<PathBuf>, Option<usize>) {
-    // Format: '! main.rs:6:12   Error: cannot find value'
     if line.len() < 3 {
         return (None, None);
     }
 
     let rest = &line[2..]; // skip icon and space
-    let parts: Vec<&str> = rest.split_whitespace().collect();
-    if parts.is_empty() {
-        return (None, None);
+    let loc_part = match rest.split_whitespace().next() {
+        Some(part) => part,
+        None => return (None, None),
+    };
+
+    // Peel up to two trailing numeric segments (`:line:col` or `:line`).
+    let mut path_end = loc_part.len();
+    let mut numbers: Vec<usize> = Vec::new();
+    while numbers.len() < 2 {
+        let Some(idx) = loc_part[..path_end].rfind(':') else {
+            break;
+        };
+        let tail = &loc_part[idx + 1..path_end];
+        if tail.is_empty() || !tail.bytes().all(|b| b.is_ascii_digit()) {
+            break;
+        }
+        // `tail` is ASCII digits, so the parse cannot fail.
+        numbers.push(tail.parse().unwrap_or(0));
+        path_end = idx;
     }
 
-    let loc_part = parts[0];
-    let loc_parts: Vec<&str> = loc_part.split(':').collect();
-    if loc_parts.len() >= 2 {
-        let path = PathBuf::from(loc_parts[0]);
-        let line_num = loc_parts[1].parse::<usize>().ok();
-        return (Some(path), line_num);
-    }
+    // numbers[0] is the last segment (column, or line when no column).
+    let line_num = match numbers.as_slice() {
+        [_, line] => Some(*line),
+        [line] => Some(*line),
+        _ => None,
+    };
 
-    (None, None)
+    let (path, line_num) = match line_num {
+        Some(_) => (Some(PathBuf::from(&loc_part[..path_end])), line_num),
+        None => (None, None),
+    };
+    (path, line_num)
 }
 
-/// Jump to the next diagnostic in the current buffer
-#[derive(Clone, Debug)]
-pub struct DiagnosticsNext;
-
-impl Command for DiagnosticsNext {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn diagnostics_next(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let (next_line, msg) = {
             let window = match app.active_window_ref() {
                 Some(w) => w,
@@ -339,14 +338,8 @@ impl Command for DiagnosticsNext {
 
         DispatchResult::Info(msg)
     }
-}
 
-/// Jump to the previous diagnostic in the current buffer
-#[derive(Clone, Debug)]
-pub struct DiagnosticsPrevious;
-
-impl Command for DiagnosticsPrevious {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn diagnostics_previous(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let (prev_line, msg) = {
             let window = match app.active_window_ref() {
                 Some(w) => w,
@@ -401,4 +394,3 @@ impl Command for DiagnosticsPrevious {
 
         DispatchResult::Info(msg)
     }
-}

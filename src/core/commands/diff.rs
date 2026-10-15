@@ -1,15 +1,24 @@
+//! Diff-navigation commands.
 use crate::core::app::EditorApp;
-use crate::core::command::Command;
 use crate::core::dispatcher::DispatchResult;
 use crate::sed::SedConfig;
-use crate::sed::diff::{DiffState, DiffView};
+use crate::sed::diff::DiffView;
 use std::io::Cursor;
 
-#[derive(Clone)]
-pub struct SedPreviewCommand;
+/// Navigation state for the interactive diff view.
+///
+/// Stores owned hunk spans (not borrowed `Hunk`s) so the state outlives the
+/// `DiffView` used to compute them.
+pub struct DiffNavState {
+    /// (old_start, old_end, new_start, new_end, new_lines), 1-based spans with
+    /// end exclusive; new_lines is the replacement text for accept-hunk.
+    pub hunks: Vec<(usize, usize, usize, usize, Vec<String>)>,
+    pub current_hunk: usize,
+    pub original_buffer_id: crate::core::id::BufferId,
+    pub original_window_id: crate::core::id::WindowId,
+}
 
-impl Command for SedPreviewCommand {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn sed_preview(app: &mut EditorApp, _count: usize) -> DispatchResult {
         if app.active_buffer().is_none() {
             return DispatchResult::NotHandled;
         }
@@ -20,7 +29,6 @@ impl Command for SedPreviewCommand {
             action: crate::core::dispatcher::InputAction::SedPreview,
         }
     }
-}
 
 pub fn start_sed_diff(
     app: &mut EditorApp,
@@ -32,7 +40,7 @@ pub fn start_sed_diff(
             .windows
             .get(&app.active_window)
             .ok_or("No active window")?;
-        (buffer.to_string(), window.buffer_id)
+        (buffer.content_string(), window.buffer_id)
     };
     let original_window_id = app.active_window;
 
@@ -50,6 +58,20 @@ pub fn start_sed_diff(
         app.message = Some("No changes".to_string());
         return Ok(());
     }
+
+    // Extract owned spans for navigation state.
+    let spans: Vec<(usize, usize, usize, usize, Vec<String>)> = hunks
+        .iter()
+        .map(|h| {
+            let new_lines: Vec<String> = h
+                .lines
+                .iter()
+                .filter(|l| matches!(l.kind, crate::sed::diff::DiffKind::Added))
+                .map(|l| l.text.to_string())
+                .collect();
+            (h.old_span.0, h.old_span.1, h.new_span.0, h.new_span.1, new_lines)
+        })
+        .collect();
 
     // Create buffers
     let mut original_diff_buffer = crate::core::buffer::Buffer::from_string(original_content);
@@ -78,8 +100,8 @@ pub fn start_sed_diff(
         window.buffer_id = obid;
     }
 
-    app.diff_state = Some(DiffState {
-        hunks,
+    app.diff_state = Some(DiffNavState {
+        hunks: spans,
         current_hunk: 0,
         original_buffer_id,
         original_window_id,
@@ -100,14 +122,14 @@ fn jump_to_hunk(app: &mut EditorApp, index: usize) {
         return;
     }
 
-    let hunk = &state.hunks[index];
-    let line = hunk.start_line;
+    let (old_start, _, _, _, _) = state.hunks[index];
+    let line = old_start.saturating_sub(1); // 1-based to 0-based
 
     // Update both windows
     let window_ids: Vec<crate::core::id::WindowId> = app.windows.keys().cloned().collect();
     for wid in window_ids {
-        if let Some(window) = app.windows.get_mut(&wid) {
-            if let Some(buffer) = app.buffers.get(&window.buffer_id) {
+        if let Some(window) = app.windows.get_mut(&wid)
+            && let Some(buffer) = app.buffers.get(&window.buffer_id) {
                 use crate::core::buffer::BufferKind;
                 let kind = buffer.buffer_kind();
                 if kind == BufferKind::DiffOriginal || kind == BufferKind::DiffModified {
@@ -118,15 +140,10 @@ fn jump_to_hunk(app: &mut EditorApp, index: usize) {
                     window.ensure_cursor_visible(buffer);
                 }
             }
-        }
     }
 }
 
-#[derive(Clone)]
-pub struct DiffNextHunk;
-
-impl Command for DiffNextHunk {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn diff_next_hunk(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let mut state = match app.diff_state.take() {
             Some(s) => s,
             None => return DispatchResult::NotHandled,
@@ -141,13 +158,8 @@ impl Command for DiffNextHunk {
         jump_to_hunk(app, current_idx);
         DispatchResult::Success
     }
-}
 
-#[derive(Clone)]
-pub struct DiffPrevHunk;
-
-impl Command for DiffPrevHunk {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn diff_previous_hunk(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let mut state = match app.diff_state.take() {
             Some(s) => s,
             None => return DispatchResult::NotHandled,
@@ -162,34 +174,30 @@ impl Command for DiffPrevHunk {
         jump_to_hunk(app, current_idx);
         DispatchResult::Success
     }
-}
 
-#[derive(Clone)]
-pub struct DiffAcceptHunk;
-
-impl Command for DiffAcceptHunk {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn diff_accept_hunk(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let mut state = match app.diff_state.take() {
             Some(s) => s,
             None => return DispatchResult::NotHandled,
         };
 
-        let hunk = state.hunks[state.current_hunk].clone();
+        let (old_start, old_end, _, _, new_lines) = &state.hunks[state.current_hunk];
         let original_buffer_id = state.original_buffer_id;
 
         if let Some(buffer) = app.buffers.get_mut(&original_buffer_id) {
             // Apply hunk to original buffer
-            if let Some(start_byte) = buffer.line_to_byte(hunk.start_line) {
-                let end_line_plus_one = hunk.end_line + 1;
-                let end_byte = match buffer.line_to_byte(end_line_plus_one) {
+            if let Some(start_byte) = buffer.line_to_byte(old_start.saturating_sub(1)) {
+                let end_byte = match buffer.line_to_byte(old_end.saturating_sub(1)) {
                     Some(b) => b,
                     None => buffer.len(),
                 };
 
                 buffer.delete(start_byte, end_byte - start_byte);
 
-                let new_text = hunk.new_lines.join("");
-                buffer.insert(start_byte, &new_text);
+                let new_text = new_lines.join("\n");
+                if !new_text.is_empty() {
+                    buffer.insert(start_byte, &new_text);
+                }
             }
         }
 
@@ -205,13 +213,8 @@ impl Command for DiffAcceptHunk {
 
         DispatchResult::Success
     }
-}
 
-#[derive(Clone)]
-pub struct DiffQuit;
-
-impl Command for DiffQuit {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn diff_quit(app: &mut EditorApp, _count: usize) -> DispatchResult {
         if let Some(state) = app.diff_state.take() {
             let original_buffer_id = state.original_buffer_id;
             app.delete_other_windows();
@@ -222,4 +225,3 @@ impl Command for DiffQuit {
         }
         DispatchResult::NotHandled
     }
-}

@@ -1,14 +1,10 @@
+//! Kill-ring commands (kill, yank, yank-pop).
+use crate::config::keys::InputModel;
 use crate::core::app::EditorApp;
 /// Kill ring and yank (clipboard) commands
-use crate::core::command::Command;
 use crate::core::dispatcher::DispatchResult;
 
-/// Kill text from cursor to end of line
-#[derive(Clone)]
-pub struct KillLine;
-
-impl Command for KillLine {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn kill_to_end_of_line(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let active_window_id = app.active_window;
         let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
 
@@ -22,10 +18,7 @@ impl Command for KillLine {
                                 crate::core::utf8::GraphemeIterator::new(&line).collect();
                             let kill_text: String =
                                 graphemes.iter().skip(window.cursor_x).copied().collect();
-                            let byte_pos = match window.get_byte_offset(buffer) {
-                                Some(b) => b,
-                                None => 0,
-                            };
+                            let byte_pos = window.get_byte_offset(buffer).unwrap_or_default();
                             Some((kill_text, byte_pos))
                         } else {
                             None
@@ -46,23 +39,16 @@ impl Command for KillLine {
                 app.set_kill_flag();
 
                 // Delete the text from buffer using clean Buffer API
-                if !kill_text.is_empty() {
-                    if let Some(buffer) = app.buffers.get_mut(&buffer_id) {
+                if !kill_text.is_empty()
+                    && let Some(buffer) = app.buffers.get_mut(&buffer_id) {
                         buffer.delete(byte_pos, kill_text.len());
                     }
-                }
             }
         }
         DispatchResult::Success
     }
-}
 
-/// Kill word forward from cursor (actually kills backward - matching uEmacs M-backspace)
-#[derive(Clone)]
-pub struct KillWord;
-
-impl Command for KillWord {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn kill_word(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let active_window_id = app.active_window;
         let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
 
@@ -70,16 +56,10 @@ impl Command for KillWord {
             let kill_data: Option<(String, usize, usize, usize)> = {
                 if let Some(window) = app.windows.get(&active_window_id) {
                     if let Some(buffer) = app.buffers.get(&buffer_id) {
-                        let start_byte = match window.get_byte_offset(buffer) {
-                            Some(b) => b,
-                            None => 0,
-                        };
+                        let start_byte = window.get_byte_offset(buffer).unwrap_or_default();
                         let mut temp_window = window.clone();
                         temp_window.forward_word(buffer);
-                        let end_byte = match temp_window.get_byte_offset(buffer) {
-                            Some(b) => b,
-                            None => 0,
-                        };
+                        let end_byte = temp_window.get_byte_offset(buffer).unwrap_or_default();
 
                         if end_byte > start_byte {
                             let text_to_kill =
@@ -106,24 +86,17 @@ impl Command for KillWord {
                 app.kill_ring.push(&text_to_kill, append);
                 app.set_kill_flag();
 
-                if !text_to_kill.is_empty() {
-                    if let Some(buffer) = app.buffers.get_mut(&buffer_id) {
+                if !text_to_kill.is_empty()
+                    && let Some(buffer) = app.buffers.get_mut(&buffer_id) {
                         buffer.delete(start_byte, text_to_kill.len());
                     }
                     // Cursor position stays the same for forward kill
-                }
             }
         }
         DispatchResult::Success
     }
-}
 
-/// Kill word backward from cursor
-#[derive(Clone)]
-pub struct BackwardKillWord;
-
-impl Command for BackwardKillWord {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn backward_kill_word(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let active_window_id = app.active_window;
         let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
 
@@ -131,16 +104,10 @@ impl Command for BackwardKillWord {
             let kill_data: Option<(String, usize, usize)> = {
                 if let Some(window) = app.windows.get(&active_window_id) {
                     if let Some(buffer) = app.buffers.get(&buffer_id) {
-                        let end_byte = match window.get_byte_offset(buffer) {
-                            Some(b) => b,
-                            None => 0,
-                        };
+                        let end_byte = window.get_byte_offset(buffer).unwrap_or_default();
                         let mut temp_window = window.clone();
                         temp_window.backward_word(buffer);
-                        let start_byte = match temp_window.get_byte_offset(buffer) {
-                            Some(b) => b,
-                            None => 0,
-                        };
+                        let start_byte = temp_window.get_byte_offset(buffer).unwrap_or_default();
 
                         if start_byte < end_byte {
                             let text_to_kill =
@@ -167,42 +134,59 @@ impl Command for BackwardKillWord {
                         buffer.delete(start_byte, text_to_kill.len());
                     }
                     // Move cursor to start position
-                    if let Some(window) = app.windows.get_mut(&active_window_id) {
-                        if let Some(buffer) = app.buffers.get(&buffer_id) {
+                    if let Some(window) = app.windows.get_mut(&active_window_id)
+                        && let Some(buffer) = app.buffers.get(&buffer_id) {
                             let line = buffer.byte_to_line(start_byte);
                             window.cursor_y = line;
                             // Calculate cursor_x from byte position
-                            if let Some(line_start) = buffer.line_to_byte(line) {
-                                if let Some(line_text) = buffer.line(line) {
+                            if let Some(line_start) = buffer.line_to_byte(line)
+                                && let Some(line_text) = buffer.line(line) {
                                     let byte_offset = start_byte.saturating_sub(line_start);
                                     window.cursor_x = crate::core::utf8::byte_to_grapheme_col(
                                         &line_text,
                                         byte_offset,
                                     );
                                 }
-                            }
                         }
-                    }
                 }
             }
         }
         DispatchResult::Success
     }
+
+/// Yank (paste): in the given input model.
+///
+/// Standard mode pastes from the clipboard register; Emacs/Vim paste from
+/// the kill-ring. Yank-pop (M-y) is an emacs-model behavior and does not
+/// apply to the clipboard. The runtime model is
+/// [`crate::config::keys::INPUT_MODEL`].
+pub fn yank(app: &mut EditorApp, count: usize) -> DispatchResult {
+    yank_in_model(app, count, crate::config::keys::INPUT_MODEL)
 }
 
-/// Yank (paste) text from kill ring
-#[derive(Clone)]
-pub struct Yank;
-
-impl Command for Yank {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+/// [`yank`] with an explicit input model.
+///
+/// Passing the compile-time [`crate::config::keys::INPUT_MODEL`] const
+/// monomorphizes away the branch, so this is zero-cost; tests may pass any
+/// [`InputModel`] to exercise model-specific paths.
+pub fn yank_in_model(
+        app: &mut EditorApp,
+        _count: usize,
+        model: InputModel,
+) -> DispatchResult {
         let active_window_id = app.active_window;
-        let text = app.kill_ring.peek().map(|s| s.to_string());
+        // Standard mode pastes from the clipboard register; Emacs/Vim from the kill-ring.
+        // Yank-pop (M-y) is an emacs-model behavior and does not apply to the clipboard.
+        let text = if model == InputModel::Standard {
+            app.clipboard.clone()
+        } else {
+            app.kill_ring.peek().map(|s| s.to_string())
+        };
 
         if let Some(text) = text {
             let text_len = text.len();
-            if let Some(window) = app.windows.get_mut(&active_window_id) {
-                if let Some(buffer) = app.buffers.get_mut(&window.buffer_id) {
+            if let Some(window) = app.windows.get_mut(&active_window_id)
+                && let Some(buffer) = app.buffers.get_mut(&window.buffer_id) {
                     // Record position before insert for yank-pop
                     let insert_pos = window.get_byte_offset(buffer).unwrap_or(0);
 
@@ -217,19 +201,12 @@ impl Command for Yank {
                     app.last_command_was_yank = true;
                     return DispatchResult::Success;
                 }
-            }
         }
         app.last_command_was_yank = false;
         DispatchResult::Success
     }
-}
 
-/// Transpose characters at cursor (swap current and previous character)
-#[derive(Clone)]
-pub struct TransposeWords;
-
-impl Command for TransposeWords {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn transpose_words(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let active_window_id = app.active_window;
         let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
 
@@ -237,15 +214,9 @@ impl Command for TransposeWords {
             // Get current line content
             let cursor_y = app.windows.get(&active_window_id).map(|w| w.cursor_y);
             let line_content =
-                match cursor_y.and_then(|y| app.buffers.get(&buffer_id).and_then(|b| b.line(y))) {
-                    Some(s) => s,
-                    None => String::new(),
-                };
+                cursor_y.and_then(|y| app.buffers.get(&buffer_id).and_then(|b| b.line(y))).unwrap_or_default();
 
-            let cursor_x = match app.windows.get(&active_window_id).map(|w| w.cursor_x) {
-                Some(x) => x,
-                None => 0,
-            };
+            let cursor_x = app.windows.get(&active_window_id).map(|w| w.cursor_x).unwrap_or_default();
 
             // Find word boundaries
             let graphemes: Vec<&str> =
@@ -289,8 +260,8 @@ impl Command for TransposeWords {
                 return DispatchResult::Success;
             }
 
-            if let Some(buffer) = app.buffers.get_mut(&buffer_id) {
-                if let Some(window) = app.windows.get_mut(&active_window_id) {
+            if let Some(buffer) = app.buffers.get_mut(&buffer_id)
+                && let Some(window) = app.windows.get_mut(&active_window_id) {
                     // Delete from word1_start to word2_end
                     let delete_len = word2_end - word1_start;
                     window.cursor_x = word1_start;
@@ -309,18 +280,11 @@ impl Command for TransposeWords {
                         window.insert_char(buffer, c);
                     }
                 }
-            }
         }
         DispatchResult::Success
     }
-}
 
-/// Cycle through the kill ring (replace previous yank with next item)
-#[derive(Clone)]
-pub struct YankPop;
-
-impl Command for YankPop {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn yank_pop(app: &mut EditorApp, _count: usize) -> DispatchResult {
         // yank-pop only works immediately after yank or yank-pop
         if !app.last_command_was_yank {
             return DispatchResult::Info("yank-pop: No preceding yank".to_string());
@@ -341,8 +305,8 @@ impl Command for YankPop {
         let active_window_id = app.active_window;
         let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
 
-        if let Some(buffer_id) = buffer_id {
-            if let Some(buffer) = app.buffers.get_mut(&buffer_id) {
+        if let Some(buffer_id) = buffer_id
+            && let Some(buffer) = app.buffers.get_mut(&buffer_id) {
                 // Delete the previously yanked text
                 buffer.delete(yank_pos, old_len);
 
@@ -370,9 +334,7 @@ impl Command for YankPop {
 
                 return DispatchResult::Success;
             }
-        }
 
         app.last_command_was_yank = false;
         DispatchResult::NotHandled
     }
-}

@@ -1,29 +1,20 @@
-//! Expand Selection Command
+//! Expand-selection command.
 //!
 //! Expands the selection to the next larger syntactic unit.
 //! Uses the unified Lexer to find token boundaries.
 
 use crate::core::app::EditorApp;
-use crate::core::command::Command;
 use crate::core::dispatcher::DispatchResult;
 use crate::core::lexer::{LanguageConfig, Lexer, TokenKind};
 
-/// Mark the word under cursor (set mark at word start, cursor at word end)
-#[derive(Clone)]
-pub struct MarkWord;
-
-impl Command for MarkWord {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn mark_word(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let result: Option<(usize, usize)> = {
             let window = app.active_window_ref();
             let buffer = app.active_buffer();
 
             if let (Some(w), Some(b)) = (window, buffer) {
-                let cursor_byte = match w.get_byte_offset(b) {
-                    Some(pos) => pos,
-                    None => 0,
-                };
-                let content = b.to_string();
+                let cursor_byte = w.get_byte_offset(b).unwrap_or_default();
+                let content = b.content_string();
                 expand_to_word(&content, cursor_byte)
             } else {
                 None
@@ -42,19 +33,13 @@ impl Command for MarkWord {
             DispatchResult::Info("No word at cursor".to_string())
         }
     }
-}
 
-/// Mark entire current line (set mark at start, cursor at end)
-#[derive(Clone)]
-pub struct MarkLine;
-
-impl Command for MarkLine {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn mark_line(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let result: Option<(usize, usize)> = {
             let window = app.active_window_ref();
             let buffer = app.active_buffer();
             if let (Some(w), Some(b)) = (window, buffer) {
-                expand_to_line(&b.to_string(), w.cursor_y)
+                expand_to_line(&b.content_string(), w.cursor_y)
             } else {
                 None
             }
@@ -70,19 +55,13 @@ impl Command for MarkLine {
             DispatchResult::Info("Could not mark line".to_string())
         }
     }
-}
 
-/// Mark current paragraph
-#[derive(Clone)]
-pub struct MarkParagraph;
-
-impl Command for MarkParagraph {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn mark_paragraph(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let result: Option<(usize, usize)> = {
             let window = app.active_window_ref();
             let buffer = app.active_buffer();
             if let (Some(w), Some(b)) = (window, buffer) {
-                expand_to_paragraph(&b.to_string(), w.cursor_y)
+                expand_to_paragraph(&b.content_string(), w.cursor_y)
             } else {
                 None
             }
@@ -98,6 +77,21 @@ impl Command for MarkParagraph {
             DispatchResult::Info("Could not mark paragraph".to_string())
         }
     }
+
+/// Mark the whole buffer: point at start, mark at end.
+///
+/// The shared primitive for "select all" (Ctrl+A in Standard mode). All input
+/// models use this one implementation.
+pub fn mark_whole_buffer(app: &mut EditorApp, _count: usize) -> DispatchResult {
+    app.goto_byte(0);
+    if let Some(window) = app.active_window_mut() {
+        window.mark = Some((window.cursor_x, window.cursor_y));
+    }
+    if let Some(buffer) = app.active_buffer() {
+        let end = buffer.len();
+        app.goto_byte(end);
+    }
+    DispatchResult::Info("Whole buffer marked".to_string())
 }
 
 /// Expand selection to word boundaries using lexer
@@ -221,118 +215,105 @@ impl ExpansionLevel {
     }
 }
 
-/// Progressive expand selection command (word -> line -> paragraph -> all)
-#[derive(Clone)]
-pub struct ExpandSelection {
-    level: ExpansionLevel,
-}
-
-impl Default for ExpandSelection {
-    fn default() -> Self {
-        Self {
-            level: ExpansionLevel::None,
+/// Progressive expand selection command (word -> line -> paragraph -> all).
+///
+/// Stateless (N-236): the current level is derived from the existing selection
+/// by a pure function — if the selection already covers the word at the
+/// cursor, the level is Word; if it covers the line, Line; and so on. The
+/// command then advances one level. No state is stored in the command.
+pub fn expand_selection(app: &mut EditorApp, _count: usize) -> DispatchResult {
+    // Derive the current level from the selection, then advance.
+    let next_level = {
+        let window = app.active_window_ref();
+        let buffer = app.active_buffer();
+        match (window, buffer) {
+            (Some(w), Some(b)) => current_expansion_level(w, b).next(),
+            _ => return DispatchResult::NotHandled,
         }
-    }
+    };
+
+    // Apply the level (shared helper with mark_word/mark_line/mark_paragraph).
+    apply_expansion_level(app, next_level)
 }
 
-impl ExpandSelection {
-    pub fn new() -> Self {
-        Self::default()
+/// Derive the current expansion level from the window's selection (N-236).
+///
+/// Compares the selection's byte range against the word/line/paragraph/buffer
+/// bounds at the cursor: the level is the largest unit the selection already
+/// covers exactly.
+fn current_expansion_level(
+    window: &crate::core::window::Window,
+    buffer: &crate::core::buffer::Buffer,
+) -> ExpansionLevel {
+    let selection = match window.selection_manager.get_selection() {
+        Some(s) => s,
+        None => return ExpansionLevel::None,
+    };
+    let (sel_start, sel_end) = (selection.start().min(selection.end()), selection.start().max(selection.end()));
+    let content = buffer.content_string();
+    let cursor = window.get_byte_offset(buffer).unwrap_or(0);
+    let len = content.len();
+
+    if sel_start == 0 && sel_end == len {
+        return ExpansionLevel::All;
     }
+    if let Some((start, end)) = expand_to_paragraph(&content, window.cursor_y)
+        && sel_start == start && sel_end == end {
+            return ExpansionLevel::Paragraph;
+        }
+    if let Some((start, end)) = expand_to_line(&content, window.cursor_y)
+        && sel_start == start && sel_end == end {
+            return ExpansionLevel::Line;
+        }
+    if let Some((start, end)) = expand_to_word(&content, cursor)
+        && sel_start == start && sel_end == end {
+            return ExpansionLevel::Word;
+        }
+    ExpansionLevel::None
 }
 
-impl Command for ExpandSelection {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
-        // Determine next level based on whether we have a selection
-        let next_level = {
-            let window = app.active_window_ref();
-            if let Some(w) = window {
-                if w.mark.is_some() {
-                    // Already have a selection, expand to next level
-                    self.level.next()
+/// Apply an expansion level: select the word/line/paragraph/buffer at the cursor.
+fn apply_expansion_level(app: &mut EditorApp, level: ExpansionLevel) -> DispatchResult {
+    match level {
+        ExpansionLevel::None => DispatchResult::Success,
+        ExpansionLevel::Word | ExpansionLevel::Line | ExpansionLevel::Paragraph => {
+            let result: Option<(usize, usize)> = {
+                let w = app.active_window_ref();
+                let b = app.active_buffer();
+                if let (Some(w), Some(b)) = (w, b) {
+                    let content = b.content_string();
+                    match level {
+                        ExpansionLevel::Word => {
+                            let cursor = w.get_byte_offset(b).unwrap_or(0);
+                            expand_to_word(&content, cursor)
+                        }
+                        ExpansionLevel::Line => expand_to_line(&content, w.cursor_y),
+                        _ => expand_to_paragraph(&content, w.cursor_y),
+                    }
                 } else {
-                    ExpansionLevel::Word
+                    None
                 }
-            } else {
-                return DispatchResult::NotHandled;
-            }
-        };
-
-        match next_level {
-            ExpansionLevel::None => DispatchResult::Success,
-            ExpansionLevel::Word => {
-                let result: Option<(usize, usize)> = {
-                    let w = app.active_window_ref();
-                    let b = app.active_buffer();
-                    if let (Some(w), Some(b)) = (w, b) {
-                        let cursor = match w.get_byte_offset(b) {
-                            Some(pos) => pos,
-                            None => 0,
-                        };
-                        expand_to_word(&b.to_string(), cursor)
-                    } else {
-                        None
-                    }
-                };
-                if let Some((start, end)) = result {
-                    app.goto_byte(start);
-                    if let Some(w) = app.active_window_mut() {
-                        w.mark = Some((w.cursor_x, w.cursor_y));
-                    }
-                    app.goto_byte(end);
+            };
+            if let Some((start, end)) = result {
+                app.goto_byte(start);
+                if let Some(w) = app.active_window_mut() {
+                    w.mark = Some((w.cursor_x, w.cursor_y));
                 }
-                DispatchResult::Success
+                app.goto_byte(end);
             }
-            ExpansionLevel::Line => {
-                let result: Option<(usize, usize)> = {
-                    let w = app.active_window_ref();
-                    let b = app.active_buffer();
-                    if let (Some(w), Some(b)) = (w, b) {
-                        expand_to_line(&b.to_string(), w.cursor_y)
-                    } else {
-                        None
-                    }
-                };
-                if let Some((start, end)) = result {
-                    app.goto_byte(start);
-                    if let Some(w) = app.active_window_mut() {
-                        w.mark = Some((w.cursor_x, w.cursor_y));
-                    }
-                    app.goto_byte(end);
+            DispatchResult::Success
+        }
+        ExpansionLevel::All => {
+            // Select entire buffer
+            if let Some(buffer) = app.active_buffer() {
+                let len = buffer.len();
+                app.goto_byte(0);
+                if let Some(w) = app.active_window_mut() {
+                    w.mark = Some((w.cursor_x, w.cursor_y));
                 }
-                DispatchResult::Success
+                app.goto_byte(len);
             }
-            ExpansionLevel::Paragraph => {
-                let result: Option<(usize, usize)> = {
-                    let w = app.active_window_ref();
-                    let b = app.active_buffer();
-                    if let (Some(w), Some(b)) = (w, b) {
-                        expand_to_paragraph(&b.to_string(), w.cursor_y)
-                    } else {
-                        None
-                    }
-                };
-                if let Some((start, end)) = result {
-                    app.goto_byte(start);
-                    if let Some(w) = app.active_window_mut() {
-                        w.mark = Some((w.cursor_x, w.cursor_y));
-                    }
-                    app.goto_byte(end);
-                }
-                DispatchResult::Success
-            }
-            ExpansionLevel::All => {
-                // Select entire buffer
-                if let Some(buffer) = app.active_buffer() {
-                    let len = buffer.len();
-                    app.goto_byte(0);
-                    if let Some(w) = app.active_window_mut() {
-                        w.mark = Some((w.cursor_x, w.cursor_y));
-                    }
-                    app.goto_byte(len);
-                }
-                DispatchResult::Success
-            }
+            DispatchResult::Success
         }
     }
 }

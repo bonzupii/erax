@@ -1,4 +1,4 @@
-//! Programming Calculator
+//! Programming calculator commands and evaluation.
 //!
 //! A programmer's calculator supporting arithmetic, bitwise operations,
 //! and hex/binary/octal number formats. Accessible via ^X # keybinding.
@@ -9,6 +9,51 @@
 use std::collections::HashMap;
 
 // =============================================================================
+// ERROR TYPES
+// =============================================================================
+
+/// Typed errors for calculator evaluation (N-187: undefined identifiers are
+/// explicit errors, not silent 0 placeholders).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CalcError {
+    /// An identifier was used but never assigned.
+    UndefinedVariable(String),
+    /// Division by zero.
+    DivisionByZero,
+    /// Modulo by zero.
+    ModuloByZero,
+    /// Stack underflow (malformed expression).
+    StackUnderflow,
+    /// Invalid assignment (e.g. `5 = x` or `x + 1 = 5`).
+    InvalidAssignment,
+    /// Mismatched parentheses.
+    MismatchedParentheses,
+    /// Empty expression.
+    EmptyExpression,
+    /// Tokenization error.
+    Tokenize(String),
+}
+
+impl std::fmt::Display for CalcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CalcError::UndefinedVariable(name) => {
+                write!(f, "Undefined variable: {}", name)
+            }
+            CalcError::DivisionByZero => write!(f, "Division by zero"),
+            CalcError::ModuloByZero => write!(f, "Modulo by zero"),
+            CalcError::StackUnderflow => write!(f, "Stack underflow"),
+            CalcError::InvalidAssignment => write!(f, "Invalid assignment"),
+            CalcError::MismatchedParentheses => write!(f, "Mismatched parentheses"),
+            CalcError::EmptyExpression => write!(f, "Empty expression"),
+            CalcError::Tokenize(msg) => write!(f, "Tokenize error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for CalcError {}
+
+// =============================================================================
 // TOKEN TYPES
 // =============================================================================
 
@@ -17,6 +62,11 @@ use std::collections::HashMap;
 enum Token {
     Number(i64),
     Identifier(String),
+    /// Assignment target (e.g. `x` in `x = 5`). Distinguished from Identifier
+    /// at parse time so undefined-variable uses are errors (N-187).
+    AssignTarget(String),
+    /// Unary minus (N-188: distinguished from binary Minus at parse time).
+    UnaryMinus,
     Plus,
     Minus,
     Star,
@@ -47,14 +97,14 @@ fn precedence(token: &Token) -> u8 {
         Token::LessLess | Token::GreaterGreater => 5, // Shifts
         Token::Plus | Token::Minus => 6,
         Token::Star | Token::Slash | Token::Percent => 7,
-        Token::Tilde => 8, // Unary NOT (highest)
+        Token::Tilde | Token::UnaryMinus => 8, // Unary operators (highest)
         _ => 0,
     }
 }
 
 /// Check if operator is right-associative
 fn is_right_associative(token: &Token) -> bool {
-    matches!(token, Token::Equals | Token::Tilde)
+    matches!(token, Token::Equals | Token::Tilde | Token::UnaryMinus)
 }
 
 /// Check if token is an operator
@@ -63,6 +113,7 @@ fn is_operator(token: &Token) -> bool {
         token,
         Token::Plus
             | Token::Minus
+            | Token::UnaryMinus
             | Token::Star
             | Token::Slash
             | Token::Percent
@@ -81,7 +132,7 @@ fn is_operator(token: &Token) -> bool {
 // =============================================================================
 
 /// Tokenize a calculator expression
-fn tokenize(input: &str) -> Result<Vec<Token>, String> {
+fn tokenize(input: &str) -> Result<Vec<Token>, CalcError> {
     let mut tokens = Vec::new();
     let mut chars = input.chars().peekable();
 
@@ -140,7 +191,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
                     chars.next();
                     tokens.push(Token::LessLess);
                 } else {
-                    return Err("Expected << for left shift".to_string());
+                    return Err(CalcError::Tokenize("Expected << for left shift".to_string()));
                 }
             }
             '>' => {
@@ -149,7 +200,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
                     chars.next();
                     tokens.push(Token::GreaterGreater);
                 } else {
-                    return Err("Expected >> for right shift".to_string());
+                    return Err(CalcError::Tokenize("Expected >> for right shift".to_string()));
                 }
             }
             '(' => {
@@ -165,7 +216,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
                 tokens.push(Token::Equals);
             }
             _ => {
-                return Err(format!("Unexpected character: {}", ch));
+                return Err(CalcError::Tokenize(format!("Unexpected character: {}", ch)));
             }
         }
     }
@@ -174,7 +225,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
 }
 
 /// Parse a number (supports hex 0x, binary 0b, octal 0o prefixes)
-fn parse_number(chars: &mut std::iter::Peekable<std::str::Chars>) -> Result<i64, String> {
+fn parse_number(chars: &mut std::iter::Peekable<std::str::Chars>) -> Result<i64, CalcError> {
     let mut num_str = String::new();
 
     // Check for base prefix
@@ -186,44 +237,44 @@ fn parse_number(chars: &mut std::iter::Peekable<std::str::Chars>) -> Result<i64,
             Some('x') | Some('X') => {
                 chars.next();
                 // Hex number
-                while chars.peek().map_or(false, |ch| ch.is_ascii_hexdigit()) {
+                while chars.peek().is_some_and(|ch| ch.is_ascii_hexdigit()) {
                     if let Some(ch) = chars.next() {
                         num_str.push(ch);
                     }
                 }
                 return i64::from_str_radix(&num_str[1..], 16)
-                    .map_err(|e| format!("Invalid hex number: {}", e));
+                    .map_err(|e| CalcError::Tokenize(format!("Invalid hex number: {}", e)));
             }
             Some('b') | Some('B') => {
                 chars.next();
                 num_str.clear();
                 // Binary number
-                while chars.peek().map_or(false, |&ch| ch == '0' || ch == '1') {
+                while chars.peek().is_some_and(|&ch| ch == '0' || ch == '1') {
                     if let Some(ch) = chars.next() {
                         num_str.push(ch);
                     }
                 }
                 return i64::from_str_radix(&num_str, 2)
-                    .map_err(|e| format!("Invalid binary number: {}", e));
+                    .map_err(|e| CalcError::Tokenize(format!("Invalid binary number: {}", e)));
             }
             Some('o') | Some('O') => {
                 chars.next();
                 num_str.clear();
                 // Octal number
-                while chars.peek().map_or(false, |&ch| ch >= '0' && ch <= '7') {
+                while chars.peek().is_some_and(|&ch| ('0'..='7').contains(&ch)) {
                     if let Some(ch) = chars.next() {
                         num_str.push(ch);
                     }
                 }
                 return i64::from_str_radix(&num_str, 8)
-                    .map_err(|e| format!("Invalid octal number: {}", e));
+                    .map_err(|e| CalcError::Tokenize(format!("Invalid octal number: {}", e)));
             }
             _ => {}
         }
     }
 
     // Decimal number
-    while chars.peek().map_or(false, |ch| ch.is_ascii_digit()) {
+    while chars.peek().is_some_and(|ch| ch.is_ascii_digit()) {
         if let Some(ch) = chars.next() {
             num_str.push(ch);
         }
@@ -231,7 +282,7 @@ fn parse_number(chars: &mut std::iter::Peekable<std::str::Chars>) -> Result<i64,
 
     num_str
         .parse::<i64>()
-        .map_err(|e| format!("Invalid number: {}", e))
+        .map_err(|e| CalcError::Tokenize(format!("Invalid number: {}", e)))
 }
 
 /// Parse an identifier
@@ -239,7 +290,7 @@ fn parse_identifier(chars: &mut std::iter::Peekable<std::str::Chars>) -> String 
     let mut ident = String::new();
     while chars
         .peek()
-        .map_or(false, |ch| ch.is_ascii_alphanumeric() || *ch == '_')
+        .is_some_and(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
     {
         if let Some(ch) = chars.next() {
             ident.push(ch);
@@ -253,13 +304,44 @@ fn parse_identifier(chars: &mut std::iter::Peekable<std::str::Chars>) -> String 
 // =============================================================================
 
 /// Convert infix tokens to postfix (Reverse Polish Notation) using shunting-yard
-fn shunting_yard(tokens: Vec<Token>) -> Result<Vec<Token>, String> {
+fn shunting_yard(tokens: Vec<Token>) -> Result<Vec<Token>, CalcError> {
     let mut output: Vec<Token> = Vec::new();
     let mut operator_stack: Vec<Token> = Vec::new();
 
-    for token in tokens {
+    // N-188: Distinguish unary vs binary minus at parse time. A minus is
+    // unary if it's the first token, after LParen, or after another operator.
+    // N-187: Convert Identifier followed by Equals into AssignTarget.
+    let mut i = 0;
+    while i < tokens.len() {
+        let token = tokens[i].clone();
+        let is_unary_minus = matches!(token, Token::Minus) && {
+            if i == 0 {
+                true
+            } else {
+                matches!(tokens[i - 1], Token::LParen) || is_operator(&tokens[i - 1])
+            }
+        };
+        let token = if is_unary_minus {
+            Token::UnaryMinus
+        } else {
+            token
+        };
+        // N-187: If this is an Identifier and the next token is Equals,
+        // it's an assignment target, not a variable use.
+        let token = match token {
+            Token::Identifier(name) => {
+                if i + 1 < tokens.len() && matches!(tokens[i + 1], Token::Equals) {
+                    Token::AssignTarget(name)
+                } else {
+                    Token::Identifier(name)
+                }
+            }
+            t => t,
+        };
+        i += 1;
+
         match &token {
-            Token::Number(_) | Token::Identifier(_) => {
+            Token::Number(_) | Token::Identifier(_) | Token::AssignTarget(_) => {
                 output.push(token);
             }
             Token::LParen => {
@@ -275,7 +357,7 @@ fn shunting_yard(tokens: Vec<Token>) -> Result<Vec<Token>, String> {
                     }
                 }
                 if operator_stack.pop() != Some(Token::LParen) {
-                    return Err("Mismatched parentheses".to_string());
+                    return Err(CalcError::MismatchedParentheses);
                 }
             }
             _ if is_operator(&token) => {
@@ -301,7 +383,7 @@ fn shunting_yard(tokens: Vec<Token>) -> Result<Vec<Token>, String> {
                 operator_stack.push(token);
             }
             _ => {
-                return Err(format!("Unexpected token: {:?}", token));
+                return Err(CalcError::Tokenize(format!("Unexpected token: {:?}", token)));
             }
         }
     }
@@ -309,7 +391,7 @@ fn shunting_yard(tokens: Vec<Token>) -> Result<Vec<Token>, String> {
     // Pop remaining operators
     while let Some(op) = operator_stack.pop() {
         if op == Token::LParen {
-            return Err("Mismatched parentheses".to_string());
+            return Err(CalcError::MismatchedParentheses);
         }
         output.push(op);
     }
@@ -322,7 +404,10 @@ fn shunting_yard(tokens: Vec<Token>) -> Result<Vec<Token>, String> {
 // =============================================================================
 
 /// Evaluate a postfix expression
-fn evaluate(postfix: Vec<Token>, variables: &mut HashMap<String, i64>) -> Result<i64, String> {
+fn evaluate(
+    postfix: Vec<Token>,
+    variables: &mut HashMap<String, i64>,
+) -> Result<i64, CalcError> {
     let mut stack: Vec<i64> = Vec::new();
     let mut pending_assignment: Option<String> = None;
 
@@ -331,14 +416,28 @@ fn evaluate(postfix: Vec<Token>, variables: &mut HashMap<String, i64>) -> Result
             Token::Number(n) => {
                 stack.push(n);
             }
+            // N-187: Undefined identifiers are explicit errors. Assignment
+            // targets are Token::AssignTarget, not Token::Identifier.
             Token::Identifier(name) => {
                 if let Some(val) = variables.get(&name) {
                     stack.push(*val);
                 } else {
-                    // Could be assignment target
-                    pending_assignment = Some(name);
-                    stack.push(0); // Placeholder
+                    return Err(CalcError::UndefinedVariable(name));
                 }
+            }
+            Token::AssignTarget(name) => {
+                // Assignment target: record for the Equals operator.
+                // No placeholder is pushed (the old code pushed 0, which was
+                // a bug — it left garbage on the stack).
+                if pending_assignment.is_some() {
+                    return Err(CalcError::InvalidAssignment);
+                }
+                pending_assignment = Some(name);
+            }
+            Token::UnaryMinus => {
+                // N-188: Unary minus negates the top of stack.
+                let a = stack.pop().ok_or(CalcError::StackUnderflow)?;
+                stack.push(-a);
             }
             Token::Plus => {
                 let (a, b) = pop_two(&mut stack)?;
@@ -355,14 +454,14 @@ fn evaluate(postfix: Vec<Token>, variables: &mut HashMap<String, i64>) -> Result
             Token::Slash => {
                 let (a, b) = pop_two(&mut stack)?;
                 if b == 0 {
-                    return Err("Division by zero".to_string());
+                    return Err(CalcError::DivisionByZero);
                 }
                 stack.push(a / b);
             }
             Token::Percent => {
                 let (a, b) = pop_two(&mut stack)?;
                 if b == 0 {
-                    return Err("Modulo by zero".to_string());
+                    return Err(CalcError::ModuloByZero);
                 }
                 stack.push(a % b);
             }
@@ -379,7 +478,7 @@ fn evaluate(postfix: Vec<Token>, variables: &mut HashMap<String, i64>) -> Result
                 stack.push(a ^ b);
             }
             Token::Tilde => {
-                let a = stack.pop().ok_or("Stack underflow")?;
+                let a = stack.pop().ok_or(CalcError::StackUnderflow)?;
                 stack.push(!a);
             }
             Token::LessLess => {
@@ -391,27 +490,30 @@ fn evaluate(postfix: Vec<Token>, variables: &mut HashMap<String, i64>) -> Result
                 stack.push(a >> b);
             }
             Token::Equals => {
-                let val = stack.pop().ok_or("Stack underflow")?;
+                let val = stack.pop().ok_or(CalcError::StackUnderflow)?;
                 if let Some(name) = pending_assignment.take() {
                     variables.insert(name, val);
                     stack.push(val);
                 } else {
-                    return Err("Invalid assignment".to_string());
+                    return Err(CalcError::InvalidAssignment);
                 }
             }
             _ => {
-                return Err(format!("Unexpected token in evaluation: {:?}", token));
+                return Err(CalcError::Tokenize(format!(
+                    "Unexpected token in evaluation: {:?}",
+                    token
+                )));
             }
         }
     }
 
-    stack.pop().ok_or_else(|| "Empty expression".to_string())
+    stack.pop().ok_or(CalcError::EmptyExpression)
 }
 
 /// Pop two values from stack (returns (first, second) where first was pushed first)
-fn pop_two(stack: &mut Vec<i64>) -> Result<(i64, i64), String> {
-    let b = stack.pop().ok_or("Stack underflow")?;
-    let a = stack.pop().ok_or("Stack underflow")?;
+fn pop_two(stack: &mut Vec<i64>) -> Result<(i64, i64), CalcError> {
+    let b = stack.pop().ok_or(CalcError::StackUnderflow)?;
+    let a = stack.pop().ok_or(CalcError::StackUnderflow)?;
     Ok((a, b))
 }
 
@@ -438,7 +540,7 @@ impl Calculator {
     }
 
     /// Evaluate an expression
-    pub fn eval(&mut self, expr: &str) -> Result<i64, String> {
+    pub fn eval(&mut self, expr: &str) -> Result<i64, CalcError> {
         let tokens = tokenize(expr)?;
         let postfix = shunting_yard(tokens)?;
         let result = evaluate(postfix, &mut self.variables)?;
@@ -468,54 +570,54 @@ impl Calculator {
     }
 
     /// Evaluate a built-in function call
-    pub fn call_function(name: &str, args: &[i64]) -> Result<i64, String> {
+    pub fn call_function(name: &str, args: &[i64]) -> Result<i64, CalcError> {
         match name {
             "min" => {
                 if args.len() < 2 {
-                    return Err("min requires 2 arguments".to_string());
+                    return Err(CalcError::Tokenize("min requires 2 arguments".to_string()));
                 }
                 args.iter()
                     .min()
                     .copied()
-                    .ok_or_else(|| "min: empty arguments".to_string())
+                    .ok_or(CalcError::Tokenize("min: empty arguments".to_string()))
             }
             "max" => {
                 if args.len() < 2 {
-                    return Err("max requires 2 arguments".to_string());
+                    return Err(CalcError::Tokenize("max requires 2 arguments".to_string()));
                 }
                 args.iter()
                     .max()
                     .copied()
-                    .ok_or_else(|| "max: empty arguments".to_string())
+                    .ok_or(CalcError::Tokenize("max: empty arguments".to_string()))
             }
             "abs" => {
                 if args.len() != 1 {
-                    return Err("abs requires 1 argument".to_string());
+                    return Err(CalcError::Tokenize("abs requires 1 argument".to_string()));
                 }
                 Ok(args[0].abs())
             }
             "popcount" => {
                 if args.len() != 1 {
-                    return Err("popcount requires 1 argument".to_string());
+                    return Err(CalcError::Tokenize("popcount requires 1 argument".to_string()));
                 }
                 Ok(args[0].count_ones() as i64)
             }
             "clz" => {
                 if args.len() != 1 {
-                    return Err("clz requires 1 argument".to_string());
+                    return Err(CalcError::Tokenize("clz requires 1 argument".to_string()));
                 }
                 Ok(args[0].leading_zeros() as i64)
             }
             "ctz" => {
                 if args.len() != 1 {
-                    return Err("ctz requires 1 argument".to_string());
+                    return Err(CalcError::Tokenize("ctz requires 1 argument".to_string()));
                 }
                 Ok(args[0].trailing_zeros() as i64)
             }
             "sizeof" => {
                 // Return size of common types
                 if args.len() != 1 {
-                    return Err("sizeof requires 1 argument (type code)".to_string());
+                    return Err(CalcError::Tokenize("sizeof requires 1 argument (type code)".to_string()));
                 }
                 // Type codes: 1=u8, 2=u16, 4=u32, 8=u64, 16=u128
                 match args[0] {
@@ -524,10 +626,10 @@ impl Calculator {
                     4 => Ok(4),
                     8 => Ok(8),
                     16 => Ok(16),
-                    _ => Err("Unknown type code for sizeof".to_string()),
+                    _ => Err(CalcError::Tokenize("Unknown type code for sizeof".to_string())),
                 }
             }
-            _ => Err(format!("Unknown function: {}", name)),
+            _ => Err(CalcError::Tokenize(format!("Unknown function: {}", name))),
         }
     }
 
@@ -648,5 +750,41 @@ mod tests {
         let mut calc = Calculator::new();
         assert!(calc.eval("(1 + 2").is_err());
         assert!(calc.eval("1 + 2)").is_err());
+    }
+
+    #[test]
+    fn test_undefined_variable_is_error() {
+        // N-187: Undefined identifiers are explicit errors, not silent 0.
+        let mut calc = Calculator::new();
+        let result = calc.eval("x + 1");
+        assert!(
+            matches!(result, Err(CalcError::UndefinedVariable(ref name)) if name == "x"),
+            "undefined variable must be UndefinedVariable error, got {:?}",
+            result
+        );
+        // Assignment still works.
+        assert_eq!(calc.eval("x = 5").unwrap(), 5);
+        assert_eq!(calc.eval("x + 1").unwrap(), 6);
+        // Using a different undefined variable still errors.
+        assert!(matches!(
+            calc.eval("y + 1"),
+            Err(CalcError::UndefinedVariable(_))
+        ));
+    }
+
+    #[test]
+    fn test_unary_minus() {
+        // N-188: Unary minus is distinguished from binary at parse time.
+        let mut calc = Calculator::new();
+        assert_eq!(calc.eval("-5").unwrap(), -5);
+        assert_eq!(calc.eval("10 + -5").unwrap(), 5);
+        assert_eq!(calc.eval("10 - -5").unwrap(), 15);
+        assert_eq!(calc.eval("(-5)").unwrap(), -5);
+        assert_eq!(calc.eval("-x").unwrap_err(), CalcError::UndefinedVariable("x".to_string()));
+        // Binary minus still works.
+        assert_eq!(calc.eval("10 - 5").unwrap(), 5);
+        // Unary minus with multiplication.
+        assert_eq!(calc.eval("-2 * 3").unwrap(), -6);
+        assert_eq!(calc.eval("2 * -3").unwrap(), -6);
     }
 }

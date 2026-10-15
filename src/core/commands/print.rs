@@ -1,67 +1,13 @@
+//! Print and message-line commands.
 use crate::core::app::EditorApp;
-use crate::core::command::Command;
 use crate::core::dispatcher::DispatchResult;
-use std::io::Write;
-use std::process::{Command as ShellCommand, Stdio};
+use crate::core::print::{print_active_buffer, PrintersBackend};
 
-/// Print buffer content using lpr
-#[derive(Clone)]
-pub struct PrintCommand;
-
-impl Command for PrintCommand {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
-        // Check if lpr exists
-        let lpr_exists = match ShellCommand::new("which")
-            .arg("lpr")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-        {
-            Ok(v) => v,
-            Err(_) => false,
-        };
-
-        if !lpr_exists {
-            app.message = Some("No printer driver available".to_string());
-            return DispatchResult::Success;
-        }
-
-        let active_window_id = app.active_window;
-        if let Some(window) = app.windows.get(&active_window_id) {
-            let buffer_id = window.buffer_id;
-            if let Some(buffer) = app.buffers.get(&buffer_id) {
-                let content = buffer.to_string();
-
-                let child = ShellCommand::new("lpr").stdin(Stdio::piped()).spawn();
-
-                match child {
-                    Ok(mut child) => {
-                        if let Some(mut stdin) = child.stdin.take() {
-                            if let Err(e) = stdin.write_all(content.as_bytes()) {
-                                app.message = Some(format!("Print failed: {}", e));
-                                return DispatchResult::Success;
-                            }
-                        }
-                        match child.wait() {
-                            Ok(status) if status.success() => {
-                                app.message = Some("Buffer sent to printer".to_string());
-                            }
-                            Ok(status) => {
-                                app.message = Some(format!("Print failed with status: {}", status));
-                            }
-                            Err(e) => {
-                                app.message = Some(format!("Print failed: {}", e));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        app.message = Some(format!("Failed to start lpr: {}", e));
-                    }
-                }
-            }
-        }
-
-        DispatchResult::Success
-    }
+/// Print the active buffer on the default printer (`print` command).
+///
+/// Uses the single cross-platform print path in [`crate::core::print`];
+/// success is reported only after the spooler accepts the job.
+pub fn print(app: &mut EditorApp, _count: usize) -> DispatchResult {
+    let backend = PrintersBackend::new();
+    print_active_buffer(app, |buffer| buffer.display_name(), &backend)
 }

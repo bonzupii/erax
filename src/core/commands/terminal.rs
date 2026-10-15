@@ -1,16 +1,11 @@
+//! Terminal-emulation commands.
 use crate::core::app::EditorApp;
 use crate::core::buffer::Buffer;
-use crate::core::command::Command;
 use crate::core::dispatcher::DispatchResult;
 use crate::core::terminal_host::TerminalHost;
 use std::path::PathBuf;
 
-/// Spawn a new terminal in the current window
-#[derive(Clone)]
-pub struct SpawnTerminal;
-
-impl Command for SpawnTerminal {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn spawn_terminal(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let shell = "sh";
 
         // Initial dimensions - will be updated by renderer/resize
@@ -43,37 +38,18 @@ impl Command for SpawnTerminal {
             }
         }
     }
-}
 
-/// Forward input to terminal (placeholder)
-#[derive(Clone)]
-pub struct TerminalSendInput;
-
-impl Command for TerminalSendInput {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn terminal_send_input(app: &mut EditorApp, _count: usize) -> DispatchResult {
         app.message = Some("Forwarding input to terminal (placeholder)".to_string());
         DispatchResult::Success
     }
-}
 
-/// Split window vertically and spawn terminal
-#[derive(Clone)]
-pub struct SplitSpawnTerminalVertical;
-
-impl Command for SplitSpawnTerminalVertical {
-    fn execute(&self, app: &mut EditorApp, count: usize) -> DispatchResult {
+pub fn split_spawn_terminal_vertical(app: &mut EditorApp, count: usize) -> DispatchResult {
         app.split_window_vertically();
-        SpawnTerminal.execute(app, count)
+        spawn_terminal(app, count)
     }
-}
 
-/// Split window horizontally and spawn terminal
-#[derive(Clone)]
-pub struct SplitSpawnTerminalHorizontal;
-
-impl Command for SplitSpawnTerminalHorizontal {
-    fn execute(&self, app: &mut EditorApp, count: usize) -> DispatchResult {
+pub fn split_spawn_terminal_horizontal(app: &mut EditorApp, count: usize) -> DispatchResult {
         app.split_window_horizontally();
-        SpawnTerminal.execute(app, count)
+        spawn_terminal(app, count)
     }
-}

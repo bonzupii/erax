@@ -1,15 +1,9 @@
-//! Word Completion Commands
+//! Word-completion commands.
 
 use crate::core::app::EditorApp;
-use crate::core::command::Command;
 use crate::core::dispatcher::DispatchResult;
 
-/// Buffer-local word completion command (M-/)
-#[derive(Clone, Debug)]
-pub struct WordCompletion;
-
-impl Command for WordCompletion {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn word_completion(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let (cursor_byte, prefix_len) = {
             let window = match app.active_window_ref() {
                 Some(w) => w,
@@ -34,7 +28,7 @@ impl Command for WordCompletion {
                 }
             };
 
-            let content = buffer.to_string();
+            let content = buffer.content_string();
             let prefix_start = match content[..byte_offset]
                 .char_indices()
                 .rev()
@@ -96,7 +90,6 @@ impl Command for WordCompletion {
 
         DispatchResult::Success
     }
-}
 
 #[cfg(test)]
 mod tests {
@@ -120,13 +113,12 @@ mod tests {
         // Move cursor to end of "func"
         app.goto_byte(30);
 
-        let cmd = WordCompletion;
-        let result = cmd.execute(&mut app, 1);
+        let result = word_completion(&mut app, 1);
 
         assert!(matches!(result, DispatchResult::Success));
 
         if let Some(buffer) = app.active_buffer() {
-            let content = buffer.to_string();
+            let content = buffer.content_string();
 
             // Should complete "func" to "function_one" or "function_two"
             // WordCompleter sorts by length then alphabetically.

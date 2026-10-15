@@ -1,13 +1,9 @@
+//! Snippet-expansion commands.
 use crate::core::app::EditorApp;
-use crate::core::command::Command;
 use crate::core::dispatcher::DispatchResult;
+use crate::core::snippets::SnippetLanguage;
 
-/// Expand a snippet based on the word before the cursor
-#[derive(Clone)]
-pub struct ExpandSnippet;
-
-impl Command for ExpandSnippet {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn expand_snippet(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let active_window_id = app.active_window;
         let buffer_id = match app.windows.get(&active_window_id) {
             Some(w) => w.buffer_id,
@@ -46,32 +42,21 @@ impl Command for ExpandSnippet {
             let trigger = graphemes[word_start..word_end].join("");
 
             // Determine language based on file extension
-            let extension = match buffer
+            let language = buffer
                 .filename
                 .as_ref()
                 .and_then(|p| p.extension())
                 .and_then(|e| e.to_str())
-            {
-                Some(e) => e,
-                None => "txt",
-            }
-            .to_lowercase();
+                .map(SnippetLanguage::from_extension)
+                .unwrap_or(SnippetLanguage::Generic);
 
-            let language = match extension.as_str() {
-                "rs" => "rust",
-                "c" | "h" => "c",
-                "py" | "pyw" => "python",
-                "js" | "ts" => "javascript",
-                "go" => "go",
-                _ => "generic",
-            };
-
-            (language.to_string(), trigger, word_start, word_end)
+            (language, trigger, word_start, word_end)
         };
 
-        let snippets = app.snippet_manager.get_snippets(&language, &trigger);
+        let snippets = app.snippet_manager.get_snippets(language, &trigger);
         if let Some(snippet) = snippets.first() {
-            let (expanded, cursor_offset_in_expanded) = app.snippet_manager.expand(snippet);
+            let expanded = app.snippet_manager.expand(snippet);
+            let cursor_offset = expanded.initial_cursor_offset();
 
             // Need to calculate byte offsets for deletion
             let (trigger_start_byte, trigger_len) = {
@@ -89,17 +74,11 @@ impl Command for ExpandSnippet {
 
                 let mut byte_start = 0;
                 for i in 0..word_start_col {
-                    byte_start += match graphemes.get(i).map(|g| g.len()) {
-                        Some(l) => l,
-                        None => 0,
-                    };
+                    byte_start += graphemes.get(i).map(|g| g.len()).unwrap_or_default();
                 }
                 let mut byte_end = byte_start;
                 for i in word_start_col..word_end_col {
-                    byte_end += match graphemes.get(i).map(|g| g.len()) {
-                        Some(l) => l,
-                        None => 0,
-                    };
+                    byte_end += graphemes.get(i).map(|g| g.len()).unwrap_or_default();
                 }
 
                 let Some(line_start_byte) = buffer.line_to_byte(window.cursor_y) else {
@@ -111,10 +90,10 @@ impl Command for ExpandSnippet {
             // Mutably borrow app elements to apply changes
             if let Some(buffer_mut) = app.buffers.get_mut(&buffer_id) {
                 buffer_mut.delete(trigger_start_byte, trigger_len);
-                buffer_mut.insert(trigger_start_byte, &expanded);
+                buffer_mut.insert(trigger_start_byte, &expanded.text);
 
-                // Position cursor
-                app.goto_byte(trigger_start_byte + cursor_offset_in_expanded);
+                // Position cursor at the first tab stop ($1), else $0 / end.
+                app.goto_byte(trigger_start_byte + cursor_offset);
 
                 // Clear any previous error message
                 app.message = None;
@@ -126,7 +105,6 @@ impl Command for ExpandSnippet {
             DispatchResult::Success
         }
     }
-}
 
 fn is_word_char(grapheme: &str) -> bool {
     grapheme.chars().all(|c| c.is_alphanumeric() || c == '_')

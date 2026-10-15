@@ -1,14 +1,9 @@
+//! File commands (open, save, revert).
 use crate::core::app::EditorApp;
 /// File and buffer operation commands
-use crate::core::command::Command;
 use crate::core::dispatcher::{DispatchResult, InputAction};
 
-/// Save active buffer to file
-#[derive(Clone)]
-pub struct SaveBuffer;
-
-impl Command for SaveBuffer {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn save_buffer(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let active_window_id = app.active_window;
         if let Some(window) = app.windows.get(&active_window_id) {
             let buffer_id = window.buffer_id;
@@ -30,53 +25,29 @@ impl Command for SaveBuffer {
         }
         DispatchResult::Success
     }
-}
 
-/// Open a file (prompts for filename)
-#[derive(Clone)]
-pub struct FindFile;
-
-impl Command for FindFile {
-    fn execute(&self, _app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn find_file(_app: &mut EditorApp, _count: usize) -> DispatchResult {
         DispatchResult::NeedsInput {
             prompt: "Find file: ".to_string(),
             action: InputAction::OpenFile,
         }
     }
-}
 
-/// Save buffer with new filename (prompts)
-#[derive(Clone)]
-pub struct WriteFile;
-
-impl Command for WriteFile {
-    fn execute(&self, _app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn write_file(_app: &mut EditorApp, _count: usize) -> DispatchResult {
         DispatchResult::NeedsInput {
             prompt: "Write file: ".to_string(),
             action: InputAction::SaveAs,
         }
     }
-}
 
-/// Read file contents at cursor position (prompts)
-#[derive(Clone)]
-pub struct ReadFile;
-
-impl Command for ReadFile {
-    fn execute(&self, _app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn read_file(_app: &mut EditorApp, _count: usize) -> DispatchResult {
         DispatchResult::NeedsInput {
             prompt: "Read file: ".to_string(),
             action: InputAction::ReadFile,
         }
     }
-}
 
-/// Kill active buffer
-#[derive(Clone)]
-pub struct KillBuffer;
-
-impl Command for KillBuffer {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn delete_buffer(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let active_window_id = app.active_window;
         if let Some(window) = app.windows.get(&active_window_id) {
             let buffer_id = window.buffer_id;
@@ -95,7 +66,7 @@ impl Command for KillBuffer {
 
                 // Switch to another buffer if available
                 if let Some((&new_buffer_id, _)) = app.buffers.iter().next() {
-                    for (_, window) in app.windows.iter_mut() {
+                    for window in app.windows.values_mut() {
                         if window.buffer_id == buffer_id {
                             window.buffer_id = new_buffer_id;
                         }
@@ -105,45 +76,26 @@ impl Command for KillBuffer {
         }
         DispatchResult::Success
     }
-}
 
-/// Switch to different buffer (prompts)
-#[derive(Clone)]
-pub struct SwitchToBuffer;
-
-impl Command for SwitchToBuffer {
-    fn execute(&self, _app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn select_buffer(_app: &mut EditorApp, _count: usize) -> DispatchResult {
         DispatchResult::NeedsInput {
             prompt: "Switch to buffer: ".to_string(),
             action: InputAction::SwitchToBuffer,
         }
     }
-}
 
-/// Print buffer to printer
-#[derive(Clone)]
-pub struct PrintBuffer;
+pub fn print_buffer(app: &mut EditorApp, _count: usize) -> DispatchResult {
+        use crate::core::print::{print_active_buffer, PrintersBackend};
 
-impl Command for PrintBuffer {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
-        use crate::core::print::{CupsBackend, PrintBackend};
-
-        let active_window_id = app.active_window;
-        if let Some(window) = app.windows.get(&active_window_id) {
-            let buffer_id = window.buffer_id;
-            if let Some(buffer) = app.buffers.get(&buffer_id) {
-                let content = buffer.to_string();
-                let job_name = match buffer.filename.as_ref().map(|p| p.display().to_string()) {
-                    Some(s) => s,
-                    None => "untitled".to_string(),
-                };
-
-                let printer = CupsBackend::new();
-                if let Err(e) = printer.print(&job_name, &content) {
-                    eprintln!("Print error: {}", e);
-                }
-            }
-        }
-        DispatchResult::Success
+        // Same cross-platform print path as the `print` command (N-193/N-267):
+        // one backend, one typed error model, bytes straight from the rope.
+        let backend = PrintersBackend::new();
+        print_active_buffer(
+            app,
+            |buffer| match buffer.filename.as_ref().map(|p| p.display().to_string()) {
+                Some(s) => s,
+                None => "untitled".to_string(),
+            },
+            &backend,
+        )
     }
-}

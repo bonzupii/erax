@@ -1,16 +1,11 @@
+//! Buffer-management commands (list, switch, kill).
 use crate::core::app::EditorApp;
 use crate::core::buffer::Buffer;
 /// Buffer info and introspection commands
-use crate::core::command::Command;
 use crate::core::dispatcher::DispatchResult;
 use crate::core::id::BufferId;
 
-/// Create a new empty buffer
-#[derive(Clone)]
-pub struct NewBuffer;
-
-impl Command for NewBuffer {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn new_buffer(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let buffer = Buffer::new();
         // Manually allocate buffer ID since alloc_buffer_id is private
         let buffer_id = BufferId(app.next_buffer_id);
@@ -25,14 +20,8 @@ impl Command for NewBuffer {
 
         DispatchResult::Success
     }
-}
 
-/// Switch to the next buffer in the list
-#[derive(Clone)]
-pub struct NextBuffer;
-
-impl Command for NextBuffer {
-    fn execute(&self, app: &mut EditorApp, count: usize) -> DispatchResult {
+pub fn next_buffer(app: &mut EditorApp, count: usize) -> DispatchResult {
         if app.buffers.len() <= 1 {
             return DispatchResult::Success;
         }
@@ -66,14 +55,8 @@ impl Command for NextBuffer {
 
         DispatchResult::Success
     }
-}
 
-/// Switch to the previous buffer in the list
-#[derive(Clone)]
-pub struct PreviousBuffer;
-
-impl Command for PreviousBuffer {
-    fn execute(&self, app: &mut EditorApp, count: usize) -> DispatchResult {
+pub fn previous_buffer(app: &mut EditorApp, count: usize) -> DispatchResult {
         if app.buffers.len() <= 1 {
             return DispatchResult::Success;
         }
@@ -108,14 +91,8 @@ impl Command for PreviousBuffer {
 
         DispatchResult::Success
     }
-}
 
-/// Display buffer statistics
-#[derive(Clone)]
-pub struct BufferInfo;
-
-impl Command for BufferInfo {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn buffer_info(app: &mut EditorApp, _count: usize) -> DispatchResult {
         if let Some(buffer) = app.active_buffer() {
             let is_empty = buffer.is_empty();
             let line_count = buffer.line_count();
@@ -127,17 +104,11 @@ impl Command for BufferInfo {
         }
         DispatchResult::Success
     }
-}
 
-/// Display cursor position info
-#[derive(Clone)]
-pub struct WhatCursorPosition;
-
-impl Command for WhatCursorPosition {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn what_cursor_position(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let active_window_id = app.active_window;
-        if let Some(window) = app.windows.get(&active_window_id) {
-            if let Some(buffer) = app.buffers.get(&window.buffer_id) {
+        if let Some(window) = app.windows.get(&active_window_id)
+            && let Some(buffer) = app.buffers.get(&window.buffer_id) {
                 let win_id = window.id.0;
                 let win_width = window.width;
 
@@ -150,19 +121,12 @@ impl Command for WhatCursorPosition {
                     );
                 }
             }
-        }
         DispatchResult::Success
     }
-}
 
-/// Count words in entire buffer
-#[derive(Clone)]
-pub struct CountWords;
-
-impl Command for CountWords {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn count_words(app: &mut EditorApp, _count: usize) -> DispatchResult {
         if let Some(buffer) = app.active_buffer() {
-            let text = buffer.to_string();
+            let text = buffer.content_string();
             let word_count = text.split_whitespace().count();
             let line_count = buffer.line_count();
             let char_count = text.len();
@@ -174,28 +138,16 @@ impl Command for CountWords {
             DispatchResult::Success
         }
     }
-}
 
-/// Go to byte offset (prompts for byte number)
-#[derive(Clone)]
-pub struct GotoByte;
-
-impl Command for GotoByte {
-    fn execute(&self, _app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn goto_byte(_app: &mut EditorApp, _count: usize) -> DispatchResult {
         // Return NeedsInput to prompt user for byte offset
         DispatchResult::NeedsInput {
             prompt: "Go to byte: ".to_string(),
             action: crate::core::dispatcher::InputAction::GotoLine, // Reuse GotoLine action handler
         }
     }
-}
 
-/// List all buffers (uEmacs compatible)
-#[derive(Clone)]
-pub struct ListBuffers;
-
-impl Command for ListBuffers {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn list_buffers(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let mut buffer_list = String::new();
         buffer_list.push_str("Buffer List:\n");
         buffer_list.push_str("------------\n");
@@ -232,25 +184,15 @@ impl Command for ListBuffers {
         // For now, we'll just return the info
         DispatchResult::Info(buffer_list)
     }
-}
 
-/// Display line, column and byte position (uEmacs show-position)
-#[derive(Clone)]
-pub struct ShowPosition;
-
-impl Command for ShowPosition {
-    fn execute(&self, app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn show_position(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let active_window_id = app.active_window;
-        if let Some(window) = app.windows.get(&active_window_id) {
-            if let Some(buffer) = app.buffers.get(&window.buffer_id) {
-                if let Some(byte_off) = window.get_byte_offset(buffer) {
+        if let Some(window) = app.windows.get(&active_window_id)
+            && let Some(buffer) = app.buffers.get(&window.buffer_id)
+                && let Some(byte_off) = window.get_byte_offset(buffer) {
                     let line = buffer.byte_to_line(byte_off);
                     let total_bytes = buffer.len();
-                    let percent = if total_bytes > 0 {
-                        (byte_off * 100) / total_bytes
-                    } else {
-                        100
-                    };
+                    let percent = (byte_off * 100).checked_div(total_bytes).unwrap_or(0);
                     return DispatchResult::Info(format!(
                         "Line {}, Col {}, Byte {}/{} ({}%)",
                         line + 1,
@@ -260,8 +202,5 @@ impl Command for ShowPosition {
                         percent
                     ));
                 }
-            }
-        }
         DispatchResult::Success
     }
-}
