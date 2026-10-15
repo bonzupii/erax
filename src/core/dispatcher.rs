@@ -9,6 +9,7 @@
 use crate::config::keys::InputModel;
 use crate::core::app::EditorApp;
 use crate::core::command::Command;
+use crate::core::id::BufferId;
 
 /// Action requiring user input
 #[derive(Debug, Clone, PartialEq)]
@@ -45,8 +46,12 @@ pub enum DispatchResult {
     Success,
     /// Command not found/handled
     NotHandled,
-    /// File modified on disk - needs user confirmation
-    FileModified,
+    /// File modified on disk: the buffer named here needs the user's
+    /// answer before the command can complete. Every consumer routes this
+    /// through [`crate::core::focus::push_reload_question`], which owns the
+    /// question state; the answer comes back through the same focus
+    /// machinery in every shell.
+    FileModified(BufferId),
     /// Exit requested
     Exit,
     /// Command needs user input before completing
@@ -58,11 +63,6 @@ pub enum DispatchResult {
     /// Wait for the next keypress (e.g., for describe-key)
     AwaitKey(InputAction), // The action expecting the key (e.g., DescribeKey)
 }
-
-/// The user-facing text for [`DispatchResult::FileModified`], shared by
-/// every consumer (TUI event loop, modal engine, prompt handler) so the
-/// three report the external-modification stop identically.
-pub const FILE_MODIFIED_MESSAGE: &str = "File changed on disk. Reload? (y/n)";
 
 /// A recorded macro step: a typed command or a character insertion (N-157,
 /// N-229). No string sentinels, no `"__insert:"` prefix encoding; insertion

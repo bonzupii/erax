@@ -94,6 +94,11 @@ pub struct Buffer {
     pub modified: bool,
     /// Last modification time of the file on disk
     pub last_modified_time: Option<SystemTime>,
+    /// On-disk mtime the user has already answered the reload question for.
+    /// Declining the reload ("n") records the then-current mtime here, so a
+    /// later save does not re-ask for the same on-disk state; any newer
+    /// mtime re-arms the question. Cleared by reload and by save.
+    pub acknowledged_mtime: Option<SystemTime>,
     /// Version counter for tracking buffer changes
     pub version: u64,
     /// Undo stack (VecDeque for O(1) pop_front when capping depth)
@@ -132,6 +137,7 @@ impl Buffer {
             buffer_kind: BufferKind::Normal,
             modified: false,
             last_modified_time: None,
+            acknowledged_mtime: None,
             version: 0,
             undo_stack: VecDeque::new(),
             redo_stack: VecDeque::new(),
@@ -151,6 +157,7 @@ impl Buffer {
             buffer_kind: BufferKind::Normal,
             modified: false,
             last_modified_time: None,
+            acknowledged_mtime: None,
             version: 0,
             undo_stack: VecDeque::new(),
             redo_stack: VecDeque::new(),
@@ -201,6 +208,7 @@ impl Buffer {
                     buffer_kind: BufferKind::Normal,
                     modified: false,
                     last_modified_time: modified_time,
+                    acknowledged_mtime: None,
                     version: 0,
                     undo_stack: VecDeque::new(),
                     redo_stack: VecDeque::new(),
@@ -251,6 +259,7 @@ impl Buffer {
             buffer_kind: BufferKind::Normal,
             modified: false,
             last_modified_time: modified_time,
+            acknowledged_mtime: None,
             version: 0,
             undo_stack: VecDeque::new(),
             redo_stack: VecDeque::new(),
@@ -282,6 +291,7 @@ impl Buffer {
             buffer_kind: BufferKind::Normal,
             modified: false,
             last_modified_time: modified_time,
+            acknowledged_mtime: None,
             version: 0,
             undo_stack: VecDeque::new(),
             redo_stack: VecDeque::new(),
@@ -316,6 +326,7 @@ impl Buffer {
             buffer_kind: BufferKind::Normal,
             modified: false,
             last_modified_time: modified_time,
+            acknowledged_mtime: None,
             version: 0,
             undo_stack: VecDeque::new(),
             redo_stack: VecDeque::new(),
@@ -342,6 +353,7 @@ impl Buffer {
             buffer_kind: BufferKind::Normal,
             modified: false,
             last_modified_time: None,
+            acknowledged_mtime: None,
             version: 0,
             undo_stack: VecDeque::new(),
             redo_stack: VecDeque::new(),
@@ -842,6 +854,8 @@ impl Buffer {
         // Update state
         self.modified = false;
         self.last_modified_time = fs::metadata(path).ok().and_then(|m| m.modified().ok());
+        // A successful save resyncs with disk: any recorded divergence is stale.
+        self.acknowledged_mtime = None;
 
         Ok(())
     }
@@ -900,38 +914,48 @@ impl Buffer {
         }
     }
 
-    /// Check if file has been modified externally
+    /// Check if the file changed on disk since this buffer last synced with
+    /// it. A change the user already answered the reload question for
+    /// (`acknowledged_mtime`) is not new: declining records that exact
+    /// on-disk state, and only a *newer* state re-arms the question.
     pub fn check_external_modification(&self) -> bool {
         if let (Some(path), Some(stored_time)) = (&self.filename, &self.last_modified_time)
             && let Ok(metadata) = fs::metadata(path)
-                && let Ok(current_time) = metadata.modified() {
-                    return current_time != *stored_time;
-                }
+                && let Ok(current_time) = metadata.modified()
+                    && current_time != *stored_time {
+                        return Some(current_time) != self.acknowledged_mtime;
+                    }
         false
     }
 
-    /// Reload buffer from disk
-    pub fn reload(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let path = self
-            .filename
+    /// The on-disk mtime at the moment of the call, if the file exists.
+    /// The decline path of the reload question records this so the same
+    /// on-disk state is never asked about twice.
+    pub fn current_disk_mtime(&self) -> Option<SystemTime> {
+        self.filename
             .as_ref()
-            .ok_or("No filename set for buffer")?
-            .clone();
+            .and_then(|path| fs::metadata(path).ok())
+            .and_then(|metadata| metadata.modified().ok())
+    }
 
-        use std::io::{BufReader, Read};
-        let file = std::fs::File::open(&path)?;
-        let mut reader = BufReader::new(file);
-        let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes)?;
-        self.text = BText::from_bytes(&bytes);
-
+    /// Replace this buffer's file-derived state with a freshly loaded one,
+    /// keeping the buffer's identity: filename, windows, and undo grouper
+    /// survive; text, encoding view, mtime, and caches come from `fresh`.
+    /// Post: the buffer is unmodified, undo/redo are empty, and any
+    /// recorded divergence is cleared.
+    pub fn adopt_loaded(&mut self, fresh: Buffer) {
+        self.text = fresh.text;
+        self.buffer_kind = fresh.buffer_kind;
         self.modified = false;
-        self.last_modified_time = fs::metadata(&path).ok().and_then(|m| m.modified().ok());
+        self.last_modified_time = fresh.last_modified_time;
+        self.acknowledged_mtime = None;
         self.version += 1;
         self.undo_stack.clear();
         self.redo_stack.clear();
-
-        Ok(())
+        self.diagnostics = fresh.diagnostics;
+        self.syntax_state_cache = fresh.syntax_state_cache;
+        self.original_bytes = fresh.original_bytes;
+        self.pager_error = fresh.pager_error;
     }
 
     // ==================== Diagnostics ====================

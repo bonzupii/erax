@@ -57,8 +57,8 @@ fn handle_dispatch_result(
             display.dirty = true;
             Ok(false)
         }
-        DispatchResult::FileModified => {
-            display.set_message(crate::core::dispatcher::FILE_MODIFIED_MESSAGE.into());
+        DispatchResult::FileModified(buffer_id) => {
+            crate::core::focus::push_reload_question(app, buffer_id);
             display.dirty = true;
             Ok(false)
         }
@@ -496,6 +496,26 @@ fn handle_focus_input(
                 return Ok(false);
             }
             crate::core::focus::FocusResult::Confirmed(input) => {
+                if target == crate::core::focus::FocusTarget::ConfirmReload {
+                    // The payload is set by the only constructor for this
+                    // target, so the question cannot exist without its
+                    // buffer; the key mapping ("y" reloads, anything else
+                    // declines) is the single rule in
+                    // `FocusState::confirm_reload_key`.
+                    let buffer_id = app
+                        .focus_manager
+                        .current_state()
+                        .and_then(|s| s.reload_buffer_id())
+                        .expect("ConfirmReload focus always carries its buffer");
+                    app.focus_manager.pop();
+                    crate::core::commands::file::answer_reload_question(
+                        app,
+                        buffer_id,
+                        input == "y",
+                    );
+                    display.dirty = true;
+                    return Ok(false);
+                }
                 let action = match target {
                     crate::core::focus::FocusTarget::Calculator => InputAction::Calculator,
                     crate::core::focus::FocusTarget::Minibuffer => InputAction::ExecuteNamedCommand,

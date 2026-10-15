@@ -298,10 +298,8 @@ pub fn handle_prompt_action(
                             "Describe Key: ",
                         ));
                     }
-                    DispatchResult::FileModified => {
-                        app.message = Some(
-                            crate::core::dispatcher::FILE_MODIFIED_MESSAGE.to_string(),
-                        );
+                    DispatchResult::FileModified(buffer_id) => {
+                        crate::core::focus::push_reload_question(app, buffer_id);
                     }
                     DispatchResult::Exit => {
                         return Ok(true);

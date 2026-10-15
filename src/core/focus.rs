@@ -8,6 +8,8 @@
 
 use std::fmt;
 
+use crate::core::id::BufferId;
+
 /// Map a prompt-requesting input action to its focus target: the single
 /// rule for entering prompt mode, used by the TUI event loop and the
 /// modal engine alike.
@@ -62,6 +64,9 @@ pub enum FocusTarget {
     Help,
     /// Waiting for key (describe-key)
     DescribeKey,
+    /// Yes/no answer to "file changed on disk, reload?". One keypress
+    /// answers; the state carries the buffer the question is about.
+    ConfirmReload,
 }
 
 impl FocusTarget {
@@ -79,6 +84,7 @@ impl FocusTarget {
                 | FocusTarget::FindReplace
                 | FocusTarget::ISearch
                 | FocusTarget::Calculator
+                | FocusTarget::ConfirmReload
         )
     }
 
@@ -101,8 +107,18 @@ impl fmt::Display for FocusTarget {
             FocusTarget::FindReplace => write!(f, "Find/Replace"),
             FocusTarget::Help => write!(f, "Help"),
             FocusTarget::DescribeKey => write!(f, "Describe Key"),
+            FocusTarget::ConfirmReload => write!(f, "Confirm Reload"),
         }
     }
+}
+
+/// Context a focus state carries that a text input cannot express.
+/// Kept as data on the state (not in a side table) so the question and
+/// its subject can never disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusPayload {
+    /// A pending "file changed on disk" question for this buffer.
+    ReloadConfirm(BufferId),
 }
 
 // =============================================================================
@@ -140,6 +156,9 @@ pub struct FocusState {
     pub history: Vec<String>,
     /// History navigation index
     pub history_index: Option<usize>,
+    /// Non-text context for targets that need it (e.g. which buffer a
+    /// reload question is about). None for plain text prompts.
+    pub payload: Option<FocusPayload>,
 }
 
 impl FocusState {
@@ -154,6 +173,7 @@ impl FocusState {
             selected: 0,
             history: Vec::new(),
             history_index: None,
+            payload: None,
         }
     }
 
@@ -169,6 +189,7 @@ impl FocusState {
             selected: 0,
             history: Vec::new(),
             history_index: None,
+            payload: None,
         }
     }
 
@@ -183,7 +204,54 @@ impl FocusState {
             selected: 0,
             history: Vec::new(),
             history_index: None,
+            payload: None,
         }
+    }
+
+    /// Create the reload-confirm state for this buffer. The only way to
+    /// build a [`FocusTarget::ConfirmReload`] state, so the question always
+    /// carries its subject.
+    pub fn for_reload(buffer_id: BufferId, prompt: &str) -> Self {
+        Self {
+            target: FocusTarget::ConfirmReload,
+            prompt: prompt.to_string(),
+            input: String::new(),
+            cursor: 0,
+            items: Vec::new(),
+            selected: 0,
+            history: Vec::new(),
+            history_index: None,
+            payload: Some(FocusPayload::ReloadConfirm(buffer_id)),
+        }
+    }
+
+    /// The buffer a [`FocusTarget::ConfirmReload`] state is asking about.
+    pub fn reload_buffer_id(&self) -> Option<BufferId> {
+        match self.payload {
+            Some(FocusPayload::ReloadConfirm(id)) => Some(id),
+            _ => None,
+        }
+    }
+
+    /// One keypress answers the reload question. `y` reloads; every other
+    /// way out (`n`, Enter, Esc, C-g) declines: Enter never reloads, so no
+    /// stray keypress can trigger one. Any other key is ignored and the
+    /// question stays up. The answer travels as `Confirmed("y"|"n")`, the
+    /// same target-specific payload idiom the text prompts use.
+    fn confirm_reload_key(&mut self, event: &crate::core::input::KeyPress) -> FocusResult {
+        use crate::core::input::Key;
+        let plain = |c: char| event.key == Key::Char(c) && !event.ctrl && !event.alt;
+        if plain('y') || plain('Y') {
+            return FocusResult::Confirmed("y".to_string());
+        }
+        if plain('n')
+            || plain('N')
+            || matches!(&event.key, Key::Enter | Key::Esc)
+            || (event.key == Key::Char('g') && event.ctrl && !event.alt)
+        {
+            return FocusResult::Confirmed("n".to_string());
+        }
+        FocusResult::Continue
     }
 
     /// Process a key event in the focused component.
@@ -193,6 +261,9 @@ impl FocusState {
     /// separate key variant.
     pub fn handle_key(&mut self, event: &crate::core::input::KeyPress) -> FocusResult {
         use crate::core::input::Key;
+        if self.target == FocusTarget::ConfirmReload {
+            return self.confirm_reload_key(event);
+        }
         let ctrl = |c: char| event.key == Key::Char(c) && event.ctrl && !event.alt;
         match &event.key {
             Key::Enter => FocusResult::Confirmed(self.input.clone()),
@@ -462,6 +533,14 @@ impl FocusManager {
         FocusResult::Cancelled
     }
 
+    /// True when a reload-confirm question for this buffer is already on
+    /// the stack: asking twice for the same on-disk state is noise.
+    pub fn has_reload_question(&self, buffer_id: BufferId) -> bool {
+        self.stack
+            .iter()
+            .any(|s| s.target == FocusTarget::ConfirmReload && s.reload_buffer_id() == Some(buffer_id))
+    }
+
     /// Confirm current focus and return result
     pub fn confirm(&mut self) -> FocusResult {
         if let Some(mut state) = self.pop() {
@@ -474,6 +553,43 @@ impl FocusManager {
         } else {
             FocusResult::Cancelled
         }
+    }
+}
+
+// =============================================================================
+// RELOAD CONFIRM
+// =============================================================================
+
+/// Push the reload-confirm focus state for `buffer_id`, unless the same
+/// question is already pending: the single rule for entering the
+/// reload-confirm, used by the TUI event loop, the modal engine, and the
+/// prompt handler alike so the three cannot drift. Questions nest on the
+/// focus stack (LIFO); each prompt names its buffer, and a buffer never
+/// gets two pending questions for the same on-disk state.
+pub fn push_reload_question(app: &mut crate::core::app::EditorApp, buffer_id: BufferId) {
+    if app.focus_manager.has_reload_question(buffer_id) {
+        return;
+    }
+    let prompt = reload_prompt(app, buffer_id);
+    app.focus_manager
+        .push(FocusState::for_reload(buffer_id, &prompt));
+}
+
+/// The question text: names the file, and names the consequence when the
+/// buffer holds unsaved edits, so `y` never destroys work the prompt did
+/// not warn about.
+fn reload_prompt(app: &crate::core::app::EditorApp, buffer_id: BufferId) -> String {
+    let (name, modified) = app
+        .buffers
+        .get(&buffer_id)
+        .map(|b| (b.display_name(), b.modified))
+        .unwrap_or_else(|| ("<closed>".to_string(), false));
+    if modified {
+        format!(
+            "File changed on disk; '{name}' has unsaved edits. Reload and lose the edits? (y/n)"
+        )
+    } else {
+        format!("File changed on disk. Reload '{name}'? (y/n)")
     }
 }
 
@@ -520,6 +636,51 @@ mod tests {
 
         state.delete_backward();
         assert_eq!(state.input, "hello");
+    }
+
+    #[test]
+    fn reload_key_answers_yes_no_or_ignores() {
+        use crate::core::input::{Key, KeyPress};
+        let mut s = FocusState::for_reload(BufferId(0), "Reload? (y/n)");
+        assert_eq!(s.reload_buffer_id(), Some(BufferId(0)));
+        assert!(matches!(
+            s.handle_key(&KeyPress::plain(Key::Char('y'))),
+            FocusResult::Confirmed(a) if a == "y"
+        ));
+        assert!(matches!(
+            s.handle_key(&KeyPress::plain(Key::Char('Y'))),
+            FocusResult::Confirmed(a) if a == "y"
+        ));
+        for key in [
+            KeyPress::plain(Key::Char('n')),
+            KeyPress::plain(Key::Char('N')),
+            KeyPress::plain(Key::Enter),
+            KeyPress::plain(Key::Esc),
+            KeyPress::ctrl(Key::Char('g')),
+        ] {
+            assert!(
+                matches!(s.handle_key(&key), FocusResult::Confirmed(a) if a == "n"),
+                "declines on {key:?}"
+            );
+        }
+        // Stray keys (including modified y) leave the question up.
+        assert!(matches!(
+            s.handle_key(&KeyPress::plain(Key::Char('x'))),
+            FocusResult::Continue
+        ));
+        assert!(matches!(
+            s.handle_key(&KeyPress::ctrl(Key::Char('y'))),
+            FocusResult::Continue
+        ));
+    }
+
+    #[test]
+    fn reload_question_dedups_per_buffer() {
+        let mut m = FocusManager::new();
+        assert!(!m.has_reload_question(BufferId(3)));
+        m.push(FocusState::for_reload(BufferId(3), "Reload? (y/n)"));
+        assert!(m.has_reload_question(BufferId(3)));
+        assert!(!m.has_reload_question(BufferId(4)));
     }
 
     #[test]

@@ -481,10 +481,8 @@ impl ModalEngine {
                     .push(FocusState::new(target, "Describe Key: "));
                 ModalOutcome::Consumed
             }
-            DispatchResult::FileModified => {
-                app.message = Some(
-                    crate::core::dispatcher::FILE_MODIFIED_MESSAGE.to_string(),
-                );
+            DispatchResult::FileModified(buffer_id) => {
+                crate::core::focus::push_reload_question(app, buffer_id);
                 ModalOutcome::Consumed
             }
             _ => ModalOutcome::Consumed,
@@ -3684,6 +3682,52 @@ mod tests {
             .as_deref()
             .unwrap_or("")
             .contains("No write since last change"));
+    }
+
+    #[test]
+    fn colon_w_raises_real_reload_question() {
+        use crate::core::focus::FocusTarget;
+        use crate::terminal::display::Display;
+        use crate::terminal::event_handler::process_terminal_event;
+        use crate::terminal::events::EditorEvent;
+        use crate::terminal::keybinds::KeyBindingManager;
+
+        let path = std::env::temp_dir().join(format!("erax-reload-vim-{}", std::process::id()));
+        std::fs::write(&path, "original\n").unwrap();
+        let mut app = EditorApp::new();
+        let bid = app.load_file(&path).unwrap();
+        let win = app.active_window;
+        app.windows.get_mut(&win).unwrap().buffer_id = bid;
+        // External change with a guaranteed-different mtime.
+        std::fs::write(&path, "changed\n").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(30))
+            .unwrap();
+
+        // `:w` dispatches save-buffer through the modal engine.
+        seq(&mut app, &[kp(':'), kp('w'), enter()]);
+        assert_eq!(
+            app.focus_manager.current_target(),
+            FocusTarget::ConfirmReload,
+            ":w must raise the real reload question"
+        );
+        // The focus machinery owns the answer in every model: the modal
+        // engine never sees the key.
+        let mut display = Display::new(80, 24, None, None);
+        let mut kbm = KeyBindingManager::new();
+        let exit = process_terminal_event(&mut app, &mut display, &mut kbm, EditorEvent::Input(kp('y')))
+            .unwrap();
+        assert!(!exit);
+        let buffer = app.buffers.get(&bid).unwrap();
+        let text: String = (0..buffer.line_count())
+            .filter_map(|i| buffer.line(i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(text, "changed\n");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
