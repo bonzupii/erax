@@ -3084,6 +3084,17 @@ fn word_object_range(
 /// `i(`/`a(` (and `)`/`b` aliases), `i[`/`a[`, `i{`/`a{`, `i<`/`a<`:
 /// the innermost bracket pair containing the cursor, buffer-wide like vim.
 /// A count selects outward: `2i(` is the enclosing pair.
+///
+/// The scan runs on bytes through the buffer's chunk iterator, never
+/// materializing the whole buffer: brackets are ASCII, so byte comparison
+/// is exactly equivalent to char comparison, and a multi-byte char's
+/// continuation bytes (>= 0x80) can never match, which also makes chunk
+/// boundaries irrelevant. The backward search is a forward open-bracket
+/// stack over [0, limit): pushing opens and popping closes leaves the
+/// innermost still-open bracket on top, the same bracket the old
+/// backward depth scan found. Owned leaves scan zero-copy; mapped leaves
+/// copy once per visited leaf through the pager (unavoidable); a pager
+/// failure ends the scan and yields no pair.
 fn pair_object_range(
     app: &EditorApp,
     open: char,
@@ -3097,85 +3108,107 @@ fn pair_object_range(
         '<' => '>',
         _ => return None,
     };
+    let (open_b, close_b) = (open as u8, close as u8);
     let buffer = app.active_buffer()?;
-    let pos = cursor_byte(app);
     let total = buffer.len();
-    let chars: Vec<char> = buffer.get_range_as_string(0, total).chars().collect();
-    let boff = char_byte_offsets(&chars);
-    // Char index at the cursor (a boundary by construction).
-    let pi = boff.iter().position(|&ob| ob >= pos).unwrap_or(chars.len());
-
-    let mut search = pi;
+    let mut cursor = cursor_byte(app).min(total);
     let mut result = None;
     for _ in 0..count.max(1) {
-        // Backward: the innermost still-open bracket at or before `search`.
-        // A close bracket under the cursor is the pair's own end, not a
-        // nested one (so `di(` on `)` finds the pair).
-        let mut depth = 0usize;
-        let mut j = None;
-        let mut k = search;
-        if k < chars.len() && chars[k] == close {
-            k = k.saturating_sub(1);
-            if k == search {
-                // Cursor at 0 on a close bracket: no pair.
-                break;
+        // Byte under the cursor: a close bracket there is the pair's own
+        // end, so the backward search excludes it (vim `di(` on `)`).
+        // Anything else is included.
+        let mut under = None;
+        scan_bytes(buffer, cursor, cursor + 1, |_, b| {
+            under = Some(b);
+            false
+        });
+        let limit = if under == Some(close_b) {
+            cursor
+        } else {
+            cursor + 1
+        };
+
+        // Backward search as a forward stack: the top on exit is the
+        // innermost unclosed bracket at or before the cursor.
+        let mut stack: Vec<usize> = Vec::new();
+        scan_bytes(buffer, 0, limit, |off, b| {
+            if b == open_b {
+                stack.push(off);
+            } else if b == close_b {
+                stack.pop();
             }
-        }
-        loop {
-            if k < chars.len() {
-                let c = chars[k];
-                if c == close {
-                    depth += 1;
-                } else if c == open {
-                    if depth == 0 {
-                        j = Some(k);
-                        break;
-                    }
-                    depth -= 1;
-                }
-            }
-            if k == 0 {
-                break;
-            }
-            k -= 1;
-        }
-        // Forward fallback (vim): if no unclosed bracket precedes the
-        // cursor, use the next opening bracket at or after it.
+            true
+        });
+        let mut j = stack.pop();
         if j.is_none() {
-            j = chars
-                .iter()
-                .enumerate()
-                .skip(search)
-                .find(|(_, c)| **c == open)
-                .map(|(l, _)| l);
+            // Forward fallback (vim): no unclosed bracket precedes the
+            // cursor, so use the next opening bracket at or after it.
+            scan_bytes(buffer, cursor, total, |off, b| {
+                if b == open_b {
+                    j = Some(off);
+                    false
+                } else {
+                    true
+                }
+            });
         }
         let j = j?;
-        // Forward: its match.
+        // Forward: the bracket's match.
         let mut depth = 0usize;
         let mut kk = None;
-        for (l, &c) in chars.iter().enumerate().skip(j + 1) {
-            if c == open {
+        scan_bytes(buffer, j + 1, total, |off, b| {
+            if b == open_b {
                 depth += 1;
-            } else if c == close {
+            } else if b == close_b {
                 if depth == 0 {
-                    kk = Some(l);
-                    break;
+                    kk = Some(off);
+                    return false;
                 }
                 depth -= 1;
             }
-        }
+            true
+        });
         let kk = kk?;
         result = Some(if inner {
-            (boff[j] + open.len_utf8(), boff[kk])
+            (j + 1, kk)
         } else {
-            (boff[j], boff[kk] + close.len_utf8())
+            (j, kk + 1)
         });
         if j == 0 {
             break;
         }
-        search = j - 1;
+        // A count selects outward: the next search ends before this pair's
+        // opening bracket.
+        cursor = j - 1;
     }
     result
+}
+
+/// Run `f` over buffer bytes in `[start, end)`, in order, with absolute
+/// offsets. Stops early when `f` returns false, and on a pager failure.
+/// Never materializes more than the visited chunks.
+fn scan_bytes(buffer: &Buffer, start: usize, end: usize, mut f: impl FnMut(usize, u8) -> bool) {
+    let end = end.min(buffer.len());
+    let mut base: usize = 0;
+    for chunk in buffer.chunks() {
+        let bytes = match chunk {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let bytes = bytes.as_bytes();
+        let chunk_start = base;
+        base += bytes.len();
+        if base <= start || chunk_start >= end {
+            continue;
+        }
+        let lo = start.saturating_sub(chunk_start);
+        let hi = (end - chunk_start).min(bytes.len());
+        for (i, &b) in bytes[lo..hi].iter().enumerate() {
+            if !f(chunk_start + lo + i, b) {
+                return;
+            }
+        }
+    }
 }
 
 /// `i"`/`a"`/`i'`/`a'`: the quote pair around the cursor on its line, like
@@ -3934,6 +3967,74 @@ mod tests {
             "{} corpus mismatches (vim is the oracle):\n{}",
             failures.len(),
             failures.join("\n")
+        );
+    }
+
+    /// Bracket text objects, driven directly: cursor_x is a grapheme
+    /// column, results are byte offsets.
+    fn pair_at(
+        text: &str,
+        x: usize,
+        open: char,
+        inner: bool,
+        count: usize,
+    ) -> Option<(usize, usize)> {
+        let mut app = app_with(text);
+        app.active_window_mut().unwrap().cursor_x = x;
+        pair_object_range(&app, open, inner, count)
+    }
+
+    #[test]
+    fn pair_basic_inner_and_around() {
+        assert_eq!(pair_at("a(b)c", 2, '(', true, 1), Some((2, 3)));
+        assert_eq!(pair_at("a(b)c", 2, '(', false, 1), Some((1, 4)));
+    }
+
+    #[test]
+    fn pair_nested_and_count_outward() {
+        // a(b(c)d)e: inner pair (3..5), outer pair (1..7) in bytes.
+        assert_eq!(pair_at("a(b(c)d)e", 4, '(', true, 1), Some((4, 5)));
+        assert_eq!(pair_at("a(b(c)d)e", 4, '(', true, 2), Some((2, 7)));
+        assert_eq!(pair_at("a(b(c)d)e", 4, '(', false, 2), Some((1, 8)));
+    }
+
+    #[test]
+    fn pair_cursor_on_brackets() {
+        // A close bracket under the cursor is the pair's own end (vim).
+        assert_eq!(pair_at("a(b)", 3, '(', false, 1), Some((1, 4)));
+        // An open bracket under the cursor starts the pair there.
+        assert_eq!(pair_at("a(b)", 1, '(', false, 1), Some((1, 4)));
+    }
+
+    #[test]
+    fn pair_forward_fallback_and_missing() {
+        // No unclosed bracket before the cursor: next `(` forward.
+        assert_eq!(pair_at("ab(cd)", 0, '(', false, 1), Some((2, 6)));
+        assert_eq!(pair_at("ab(cd", 0, '(', false, 1), None);
+        assert_eq!(pair_at("abc", 1, '(', false, 1), None);
+        assert_eq!(pair_at("a[b]c", 2, '[', true, 1), Some((2, 3)));
+        assert_eq!(pair_at("a{b}c", 2, '{', false, 1), Some((1, 4)));
+    }
+
+    #[test]
+    fn pair_multibyte_text() {
+        // Byte offsets stay exact around multi-byte chars.
+        assert_eq!(pair_at("é(b)é", 1, '(', false, 1), Some((2, 5)));
+        assert_eq!(pair_at("é(b)é", 1, '(', true, 1), Some((3, 4)));
+    }
+
+    #[test]
+    fn pair_far_from_buffer_start() {
+        // The pair sits past 1 MiB of text: the scan walks chunks, it
+        // never materializes the whole buffer to find it.
+        let mut text = "x".repeat(1 << 20);
+        text.push_str("(target)");
+        text.push_str(&"y".repeat(100));
+        let mut app = app_with(&text);
+        app.active_window_mut().unwrap().cursor_x = (1 << 20) + 2;
+        assert_eq!(
+            pair_object_range(&app, '(', false, 1),
+            Some(((1 << 20), (1 << 20) + 8))
         );
     }
 }

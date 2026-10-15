@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use tempfile::NamedTempFile;
 
-use crate::core::btext::{BText, LineRef, PagerError};
+use crate::core::btext::{BText, ChunkRef, LineRef, PagerError};
 use crate::core::diagnostics::Diagnostic;
 use crate::core::lexer::LexerState;
 use crate::core::syntax::SyntaxLexerState;
@@ -506,6 +506,15 @@ impl Buffer {
             }
         }
         out
+    }
+
+    /// In-order leaf chunks for byte scans. Borrowed for owned leaves
+    /// (zero-copy); mapped leaves copy once per visited leaf through the
+    /// pager. Items are `Result`: a pager failure ends the scan, and the
+    /// caller treats the truncated scan as "not found" (the same
+    /// degradation [`Buffer::get_range_as_string`] chooses).
+    pub fn chunks(&self) -> impl Iterator<Item = Result<ChunkRef<'_>, PagerError>> + '_ {
+        self.text.chunks()
     }
 
     /// Get a range of text as string
