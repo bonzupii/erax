@@ -1,56 +1,54 @@
 //! Application execution modes for erax.
 //!
-//! This module contains the implementation of different editor modes:
-//! - Sed mode for stream editing
-//! - Terminal mode for TUI
-//! - GUI mode for graphical interface
+//! The three modes — sed (stream editor), terminal (TUI), and GUI — are all
+//! compiled unconditionally (N-005: no feature gates, no stub fallbacks).
+//! Each runner takes the typed [`crate::cli::Invocation`] and returns a
+//! concrete typed error.
 
+mod gui;
 mod sed;
 mod tui;
 
-#[cfg(feature = "gui")]
-mod gui;
-
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
-// Re-export mode runners
+pub use gui::run_gui_mode;
 pub use sed::run_sed_mode;
 pub use tui::run_terminal_mode;
 
-#[cfg(feature = "gui")]
-pub use gui::run_gui_mode;
-
-#[cfg(not(feature = "gui"))]
-pub fn run_gui_mode(
-    _files: &[PathBuf],
-    _config: &crate::config::Config,
-) -> Result<(), Box<dyn std::error::Error>> {
-    Err("GUI mode requires the 'gui' feature to be enabled. \
-         Rebuild with: cargo build --features gui"
-        .into())
+/// One path-validation function with one concrete error type, used by all
+/// callers (N-017): sed mode, buffer loading, and file commands share this
+/// policy instead of each implementing their own stringly validator.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PathError {
+    /// The path could not be canonicalized.
+    InvalidPath(String),
+    /// The parent directory does not exist.
+    InvalidParent(String),
+    /// The path has no file name component.
+    MissingFileName,
+    /// The current directory could not be determined.
+    NoCurrentDir,
+    /// Special file types that could hang or crash the editor.
+    BlockedFileType(&'static str),
 }
 
-/// Editor execution mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EditorMode {
-    Sed,
-    AsciiTerminal,
-    AnsiTerminal,
-    Utf8Terminal,
-    Gui,
+impl std::fmt::Display for PathError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PathError::InvalidPath(p) => write!(f, "invalid path '{p}'"),
+            PathError::InvalidParent(p) => write!(f, "invalid parent directory '{p}'"),
+            PathError::MissingFileName => write!(f, "invalid file path: missing filename"),
+            PathError::NoCurrentDir => write!(f, "cannot determine current directory"),
+            PathError::BlockedFileType(kind) => write!(f, "cannot open {kind} files"),
+        }
+    }
 }
 
-/// Terminal capability level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TerminalCaps {
-    Ascii,
-    Ansi,
-    Utf8,
-}
-
-/// Validate and canonicalize file paths to prevent directory traversal and block device files.
-pub fn validate_file_path(path: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+/// Validate and canonicalize file paths to prevent directory traversal and
+/// block device files.
+///
+/// Returns the canonical path or a typed [`PathError`]; no boxed strings.
+pub fn validate_file_path(path: &Path) -> Result<PathBuf, PathError> {
     let canonical = match path.canonicalize() {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -58,19 +56,21 @@ pub fn validate_file_path(path: &Path) -> Result<PathBuf, Box<dyn std::error::Er
             if let Some(parent) = path.parent() {
                 let canonical_parent = parent
                     .canonicalize()
-                    .map_err(|_| "Invalid parent directory")?;
+                    .map_err(|_| PathError::InvalidParent(parent.display().to_string()))?;
                 if let Some(filename) = path.file_name() {
                     canonical_parent.join(filename)
                 } else {
-                    return Err("Invalid file path: missing filename".into());
+                    return Err(PathError::MissingFileName);
                 }
             } else {
                 let current_dir =
-                    std::env::current_dir().map_err(|_| "Cannot determine current directory")?;
+                    std::env::current_dir().map_err(|_| PathError::NoCurrentDir)?;
                 current_dir.join(path)
             }
         }
-        Err(e) => return Err(format!("Invalid path: {}", e).into()),
+        Err(_) => {
+            return Err(PathError::InvalidPath(path.display().to_string()));
+        }
     };
 
     // Block special file types that could hang or crash the editor
@@ -80,16 +80,16 @@ pub fn validate_file_path(path: &Path) -> Result<PathBuf, Box<dyn std::error::Er
         if let Ok(metadata) = std::fs::metadata(&canonical) {
             let ft = metadata.file_type();
             if ft.is_char_device() {
-                return Err("Cannot open character device files (e.g., /dev/zero)".into());
+                return Err(PathError::BlockedFileType("character device"));
             }
             if ft.is_block_device() {
-                return Err("Cannot open block device files".into());
+                return Err(PathError::BlockedFileType("block device"));
             }
             if ft.is_fifo() {
-                return Err("Cannot open FIFO/named pipe files".into());
+                return Err(PathError::BlockedFileType("FIFO/named pipe"));
             }
             if ft.is_socket() {
-                return Err("Cannot open socket files".into());
+                return Err(PathError::BlockedFileType("socket"));
             }
         }
     }
@@ -99,120 +99,38 @@ pub fn validate_file_path(path: &Path) -> Result<PathBuf, Box<dyn std::error::Er
     {
         let path_str = canonical.to_string_lossy();
         if path_str.starts_with(r"\\.\pipe\") || path_str.starts_with(r"\\?\pipe\") {
-            return Err("Cannot open Windows named pipes".into());
+            return Err(PathError::BlockedFileType("Windows named pipe"));
         }
     }
 
     Ok(canonical)
 }
 
-/// Detect the appropriate editor mode based on environment.
-pub fn detect_mode() -> Result<EditorMode, Box<dyn std::error::Error>> {
-    let is_stdin_tty = std::io::stdin().is_terminal();
-    detect_mode_internal(is_stdin_tty, |k| std::env::var(k))
-}
-
-/// Internal mode detection with injectable environment lookup.
-pub fn detect_mode_internal<F>(
-    is_stdin_tty: bool,
-    get_env: F,
-) -> Result<EditorMode, Box<dyn std::error::Error>>
-where
-    F: Fn(&str) -> Result<String, std::env::VarError>,
-{
-    if !is_stdin_tty {
-        return Ok(EditorMode::Sed);
-    }
-
-    if get_env("DISPLAY").is_ok() || get_env("WAYLAND_DISPLAY").is_ok() {
-        if cfg!(feature = "gui") {
-            return Ok(EditorMode::Gui);
-        }
-    }
-
-    let caps = detect_terminal_caps_with_env(get_env)?;
-    Ok(match caps {
-        TerminalCaps::Ascii => EditorMode::AsciiTerminal,
-        TerminalCaps::Ansi => EditorMode::AnsiTerminal,
-        TerminalCaps::Utf8 => EditorMode::Utf8Terminal,
-    })
-}
-
-/// Detect terminal capabilities from environment variables.
-pub fn detect_terminal_caps_with_env<F>(
-    get_env: F,
-) -> Result<TerminalCaps, Box<dyn std::error::Error>>
-where
-    F: Fn(&str) -> Result<String, std::env::VarError>,
-{
-    if let Ok(lang) = get_env("LANG").or_else(|_| get_env("LC_ALL")) {
-        if lang.to_lowercase().contains("utf-8") || lang.to_lowercase().contains("utf8") {
-            return Ok(TerminalCaps::Utf8);
-        }
-    }
-
-    if let Ok(term) = get_env("TERM") {
-        if term.contains("256color") || term.contains("ansi") || term.contains("xterm") {
-            return Ok(TerminalCaps::Ansi);
-        }
-    }
-
-    Ok(TerminalCaps::Ascii)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env::VarError;
 
-    fn mock_env<'a>(vars: &'a [(&str, &str)]) -> impl Fn(&str) -> Result<String, VarError> + 'a {
-        move |key| {
-            for (k, v) in vars {
-                if *k == key {
-                    return Ok((*v).to_string());
-                }
-            }
-            Err(VarError::NotPresent)
-        }
+    #[test]
+    fn validate_rejects_nonexistent_parent() {
+        let result = validate_file_path(Path::new("/no/such/dir/erax-test.txt"));
+        assert!(matches!(result, Err(PathError::InvalidParent(_))));
     }
 
     #[test]
-    fn test_detect_terminal_caps_ascii_default() {
-        let env = mock_env(&[]);
-        if let Ok(result) = detect_terminal_caps_with_env(env) {
-            assert_eq!(result, TerminalCaps::Ascii);
-        } else {
-            panic!("Detection should succeed");
-        }
+    fn validate_accepts_new_file_in_existing_dir() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("erax-validate-test-new-file.txt");
+        let result = validate_file_path(&path);
+        assert!(result.is_ok());
     }
 
     #[test]
-    fn test_detect_terminal_caps_utf8() {
-        let env = mock_env(&[("LANG", "en_US.UTF-8")]);
-        if let Ok(result) = detect_terminal_caps_with_env(env) {
-            assert_eq!(result, TerminalCaps::Utf8);
-        } else {
-            panic!("Detection should succeed");
-        }
-    }
-
-    #[test]
-    fn test_detect_mode_sed() {
-        let env = mock_env(&[]);
-        if let Ok(result) = detect_mode_internal(false, env) {
-            assert_eq!(result, EditorMode::Sed);
-        } else {
-            panic!("Detection should succeed");
-        }
-    }
-
-    #[test]
-    fn test_detect_mode_terminal_fallback() {
-        let env = mock_env(&[]);
-        if let Ok(result) = detect_mode_internal(true, env) {
-            assert_eq!(result, EditorMode::AsciiTerminal);
-        } else {
-            panic!("Detection should succeed");
-        }
+    #[cfg(unix)]
+    fn validate_blocks_character_devices() {
+        let result = validate_file_path(Path::new("/dev/null"));
+        assert_eq!(
+            result,
+            Err(PathError::BlockedFileType("character device"))
+        );
     }
 }

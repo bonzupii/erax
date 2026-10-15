@@ -1,69 +1,80 @@
-//! erax - A modern, high-performance text editor
+//! The erax editor binary.
 //!
-//! This is the main entry point. It parses CLI arguments and delegates
-//! to the appropriate mode runner (sed, terminal, or GUI).
+//! The entry point parses CLI arguments into a typed [`cli::Invocation`] and
+//! routes to the single dispatch match below (N-004: one router). Failures are
+//! concrete typed errors matched exhaustively here (N-001); nothing exits the
+//! process from inside a parser or a run function — `main` returns an
+//! [`ExitCode`].
 
-mod cli;
-mod config;
-mod core;
-mod run;
-mod sed;
-mod terminal;
-mod user_config;
+use erax::cli;
+use erax::run;
 
-#[cfg(feature = "gui")]
-mod gui;
+use std::process::ExitCode;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Parse command line arguments
-    let cli = cli::Cli::parse()?;
+use cli::{Invocation, InvocationMode, ParseFailure};
 
-    // Load configuration
-    let mut config = config::Config::default();
-    user_config::configure(&mut config);
-
-    // Apply CLI overrides
-    cli.apply_to_config(&mut config);
-
-    // Determine mode
-    let mode = if cli.sed || !cli.expression.is_empty() || cli.script_file.is_some() {
-        run::EditorMode::Sed
-    } else if cli.ascii {
-        run::EditorMode::AsciiTerminal
-    } else if cli.ansi {
-        run::EditorMode::AnsiTerminal
-    } else if cli.utf8 {
-        run::EditorMode::Utf8Terminal
-    } else if cli.gui {
-        #[cfg(feature = "gui")]
-        {
-            run::run_gui_mode(&cli.files, &config)?;
-            return Ok(());
+fn main() -> ExitCode {
+    match cli::parse() {
+        Ok(invocation) => run(invocation),
+        Err(ParseFailure::Clap(e)) => {
+            // clap's help/version are values, not exits (N-006).
+            match e.kind() {
+                clap::error::ErrorKind::DisplayHelp
+                | clap::error::ErrorKind::DisplayVersion => {
+                    print!("{e}");
+                    ExitCode::SUCCESS
+                }
+                _ => {
+                    eprint!("{e}");
+                    ExitCode::FAILURE
+                }
+            }
         }
-        #[cfg(not(feature = "gui"))]
-        {
-            eprintln!("GUI feature not available. Compile with --features gui");
-            std::process::exit(1);
-        }
-    } else {
-        run::detect_mode()?
-    };
-
-    // Run in appropriate mode
-    match mode {
-        run::EditorMode::Sed => {
-            run::run_sed_mode(&cli)?;
-        }
-        run::EditorMode::AsciiTerminal
-        | run::EditorMode::AnsiTerminal
-        | run::EditorMode::Utf8Terminal => {
-            let display_mode = terminal::capabilities::DisplayMode::detect();
-            run::run_terminal_mode(&cli.files, &config, display_mode)?;
-        }
-        run::EditorMode::Gui => {
-            run::run_gui_mode(&cli.files, &config)?;
+        Err(ParseFailure::Cli(e)) => {
+            eprintln!("erax: {e}");
+            ExitCode::FAILURE
         }
     }
+}
 
-    Ok(())
+/// The single dispatch router (N-004): one match over the invocation mode.
+fn run(invocation: Invocation) -> ExitCode {
+    match invocation.mode {
+        InvocationMode::Sed => match run::run_sed_mode(&invocation) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("erax: sed: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        InvocationMode::Terminal(color_mode) => {
+            match run::run_terminal_mode(&invocation, color_mode) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("erax: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        InvocationMode::Gui => match run::run_gui_mode(&invocation) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("erax: gui: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        InvocationMode::WebServer => {
+            match erax::web::server::run_web_server(
+                &invocation,
+                &invocation.web_bind,
+                invocation.web_allow_remote,
+            ) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("erax: web-server: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+    }
 }
