@@ -49,13 +49,7 @@ fn shape_row(fm: &mut FontManager, text: &str) -> Vec<(u16, f32)> {
     use cosmic_text::{Align, Attrs, Buffer, Family, Metrics, Shaping};
     let cells: Vec<Cell> = text
         .chars()
-        .map(|ch| Cell {
-            ch,
-            fg: TermColor::White,
-            bg: TermColor::Reset,
-            hidden: false,
-            role: CellRole::EditorText,
-        })
+        .map(|ch| Cell::with_role(ch, TermColor::White, TermColor::Reset, CellRole::EditorText))
         .collect();
     let input = build_shaped_line(&cells);
     let mut buffer = Buffer::new(&mut fm.font_system, Metrics::new(16.0, 19.0));

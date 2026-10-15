@@ -12,13 +12,7 @@ use erax::terminal::display::{Cell, CellRole, Color as TermColor};
 use std::sync::Arc;
 
 fn cell(ch: char) -> Cell {
-    Cell {
-        ch,
-        fg: TermColor::White,
-        bg: TermColor::Reset,
-        hidden: false,
-        role: CellRole::EditorText,
-    }
+    Cell::with_role(ch, TermColor::White, TermColor::Reset, CellRole::EditorText)
 }
 
 #[test]

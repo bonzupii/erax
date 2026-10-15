@@ -127,13 +127,7 @@ mod tests {
     use crate::terminal::color::Color;
 
     fn sample_cell() -> Cell {
-        Cell {
-            ch: 'λ',
-            fg: Color::Rgb { r: 1, g: 2, b: 3 },
-            bg: Color::Reset,
-            hidden: false,
-            role: CellRole::EditorText,
-        }
+        Cell::with_role('λ', Color::Rgb { r: 1, g: 2, b: 3 }, Color::Reset, CellRole::EditorText)
     }
 
     #[test]

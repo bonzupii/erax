@@ -15,32 +15,27 @@ use erax::gui::renderer::{
     build_shaped_line, caret_x_for_byte_offset, clusters_from_runs, ShapedCluster, TextSpan,
 };
 use erax::terminal::display::{Cell, CellRole, Color as TermColor};
-use unicode_width::UnicodeWidthChar;
 
 fn cell(ch: char, fg: TermColor) -> Cell {
-    Cell {
-        ch,
-        fg,
-        bg: TermColor::Reset,
-        hidden: false,
-        role: CellRole::EditorText,
-    }
+    Cell::with_role(ch, fg, TermColor::Reset, CellRole::EditorText)
 }
 
-/// Build grid cells the way the TUI does: wide chars take two columns, the
-/// second one hidden.
+/// Build grid cells the way the TUI does: one cell per grapheme cluster
+/// (combining marks ride on the base), wide clusters take two columns,
+/// the second one hidden.
 fn cells_for(text: &str) -> Vec<Cell> {
+    use erax::core::utf8::grapheme_width;
+    use unicode_segmentation::UnicodeSegmentation;
     let mut cells = Vec::new();
-    for ch in text.chars() {
-        cells.push(cell(ch, TermColor::White));
-        if ch.width().unwrap_or(1) > 1 {
-            cells.push(Cell {
-                ch: ' ',
-                fg: TermColor::Reset,
-                bg: TermColor::Reset,
-                hidden: true,
-                role: CellRole::EditorText,
-            });
+    for grapheme in text.graphemes(true) {
+        cells.push(Cell::with_text(
+            grapheme,
+            TermColor::White,
+            TermColor::Reset,
+            CellRole::EditorText,
+        ));
+        if grapheme_width(grapheme) > 1 {
+            cells.push(Cell::hidden());
         }
     }
     cells

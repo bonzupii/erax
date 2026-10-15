@@ -75,6 +75,24 @@ pub fn grapheme_width(g: &str) -> usize {
     }
 }
 
+/// Width of one grapheme cluster as the TUI renderer lays it out.
+///
+/// This is the single layout rule every screen-coordinate computation must
+/// use: control characters never reach the terminal (zero cells), every
+/// other cluster takes [`grapheme_width`]. The window renderer, the
+/// selection highlight, cursor placement (`visual_width_up_to`), and mouse
+/// mapping (`grapheme_index_from_visual_x`) all route through here; a
+/// second rule anywhere else is a misalignment bug (Tamil combining marks
+/// were the live specimen: the renderer counted per-char widths while the
+/// model counted per-cluster).
+pub fn layout_grapheme_width(grapheme: &str) -> usize {
+    if grapheme.chars().next().is_some_and(|c| c.is_control()) {
+        0
+    } else {
+        grapheme_width(grapheme)
+    }
+}
+
 /// Get the visual (display) width of text up to a grapheme index, with tab handling
 /// Used for cursor positioning in terminals where tabs expand to multiple columns
 pub fn visual_width_up_to(text: &str, grapheme_idx: usize, tab_width: usize) -> usize {
@@ -87,7 +105,7 @@ pub fn visual_width_up_to(text: &str, grapheme_idx: usize, tab_width: usize) -> 
         if grapheme == "\t" {
             visual_x = (visual_x / tab_width + 1) * tab_width;
         } else {
-            visual_x += grapheme_width(grapheme);
+            visual_x += layout_grapheme_width(grapheme);
         }
     }
     visual_x
@@ -102,7 +120,7 @@ pub fn visual_width(text: &str, tab_width: usize) -> usize {
         if grapheme == "\t" {
             visual_x = (visual_x / tab_width + 1) * tab_width;
         } else {
-            visual_x += grapheme_width(grapheme);
+            visual_x += layout_grapheme_width(grapheme);
         }
     }
     visual_x
@@ -120,7 +138,7 @@ pub fn grapheme_index_from_visual_x(text: &str, target_visual_x: usize, tab_widt
             let next_tab_stop = (current_visual_x / tab_width + 1) * tab_width;
             next_tab_stop - current_visual_x
         } else {
-            grapheme_width(grapheme)
+            layout_grapheme_width(grapheme)
         };
 
         // If clicking on the left half of a wide char, picking 'i' is correct.
@@ -243,5 +261,36 @@ mod tests {
         assert_eq!(grapheme_width("コ"), 2);
         // Empty: zero.
         assert_eq!(grapheme_width(""), 0);
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    fn layout_rule_counts_one_cell_per_cluster() {
+        use unicode_segmentation::UnicodeSegmentation;
+        // "தமிழ்": த + மி(MA+vowel sign) + ழ்(LLLA+virama) = 3 cells.
+        // Per-char widths count 4 (the Mc vowel sign reports width 1; the
+        // Mn virama reports 0 and was silently dropped by the old renderer).
+        let line = "தமிழ்";
+        let clusters: Vec<&str> = line.graphemes(true).collect();
+        assert_eq!(clusters.len(), 3);
+        let per_char: usize = line.chars().map(char_width).sum();
+        assert_eq!(per_char, 4);
+        let per_cluster: usize = clusters.iter().map(|g| layout_grapheme_width(g)).sum();
+        assert_eq!(per_cluster, 3);
+        assert_eq!(visual_width(line, 4), 3);
+        assert_eq!(visual_width_up_to(line, 2, 4), 2);
+    }
+
+    #[test]
+    fn layout_rule_skips_control_characters() {
+        // Controls never reach the terminal; they take no cells.
+        assert_eq!(layout_grapheme_width("\x01"), 0);
+        assert_eq!(layout_grapheme_width("\x7f"), 0);
+        assert_eq!(visual_width("a\x01b", 4), 2);
+        assert_eq!(visual_width_up_to("a\x01b", 2, 4), 1);
     }
 }

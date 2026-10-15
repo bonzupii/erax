@@ -6,13 +6,14 @@ use crate::core::syntax::SyntaxHighlighter;
 use crate::terminal::capabilities::DisplayMode;
 use crate::terminal::prompt::PromptState;
 use crate::terminal::renderers::DirtyTracker;
+use unicode_segmentation::UnicodeSegmentation;
 
 // Re-export Color from color module for backward compatibility
 pub use crate::terminal::color::Color;
 
 // The pure screen-model types live in `super::model` (shared with the wasm
 // web shell); re-exported here for the TUI.
-pub use super::model::{Cell, CellRole, ScreenBuffer};
+pub use super::model::{Cell, CellRole, ClusterText, ScreenBuffer};
 
 use crate::terminal::theme::Theme;
 use crate::config::display::CursorStyle;
@@ -822,7 +823,7 @@ impl Display {
 
         // Check for buffer consistency (no invalid cells)
         for (i, cell) in self.back_buffer.cells.iter().enumerate() {
-            if cell.ch == '\0' {
+            if cell.text().is_empty() || cell.text() == "\0" {
                 return Err(
                     format!("Invalid null character found in back buffer at index {}", i).into(),
                 );
@@ -914,14 +915,15 @@ fn stamp_linewise_visual_newlines(
             continue;
         }
         // Visual width of the line content (tabs expanded, wide chars),
-        // mirroring the window renderer's layout math.
+        // mirroring the window renderer's layout math: one layout width
+        // per grapheme cluster.
         let content = buffer.line(line_idx).unwrap_or_default();
         let mut vx = 0usize;
-        for ch in content.chars() {
-            vx += if ch == '\t' {
+        for grapheme in content.graphemes(true) {
+            vx += if grapheme == "\t" {
                 window.tab_width - (vx % window.tab_width)
             } else {
-                crate::core::utf8::char_width(ch)
+                crate::core::utf8::layout_grapheme_width(grapheme)
             };
         }
         if vx < window.scroll_x || vx - window.scroll_x >= text_width {
@@ -1059,14 +1061,14 @@ mod tests {
 
         // Verify content was swapped
         if let Some(cell) = display.front_buffer.get(0, 0) {
-            assert_eq!(cell.ch, 'A', "Content should be swapped to front buffer");
+            assert_eq!(cell.text(), "A", "Content should be swapped to front buffer");
         } else {
             panic!("Cell should exist after swap");
         }
 
         // Verify back buffer was cleared
         if let Some(cell) = display.back_buffer.get(0, 0) {
-            assert_eq!(cell.ch, ' ', "Back buffer should be cleared after swap");
+            assert_eq!(cell.text(), " ", "Back buffer should be cleared after swap");
         }
     }
 
@@ -1109,11 +1111,11 @@ mod tests {
 
         // Verify buffers were cleared (not preserved) to avoid artifacts
         if let Some(cell) = display.front_buffer.get(10, 5) {
-            assert_eq!(cell.ch, ' ', "Front buffer should be cleared during resize");
+            assert_eq!(cell.text(), " ", "Front buffer should be cleared during resize");
         }
 
         if let Some(cell) = display.back_buffer.get(10, 5) {
-            assert_eq!(cell.ch, ' ', "Back buffer should be cleared during resize");
+            assert_eq!(cell.text(), " ", "Back buffer should be cleared during resize");
         }
 
         // Verify needs_full_redraw is set

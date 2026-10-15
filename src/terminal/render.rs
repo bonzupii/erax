@@ -101,7 +101,7 @@ pub fn render_display<W: Write>(
                 last_bg = Some(bg_term);
             }
 
-            out.queue(Print(new_cell.ch))?;
+            out.queue(Print(new_cell.text()))?;
         }
     }
 

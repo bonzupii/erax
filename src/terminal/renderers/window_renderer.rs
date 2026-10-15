@@ -10,6 +10,7 @@ use crate::core::commands::diff::DiffNavState;
 use crate::terminal::display::{Cell, CellRole, Color, ScreenBuffer};
 use crate::terminal::renderers::DirtyTracker;
 use crate::terminal::theme::Theme;
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Renders a window's content to the screen buffer
 pub struct WindowRenderer;
@@ -352,7 +353,6 @@ impl WindowRenderer {
                 let mut visual_x: usize = 0;
                 let mut screen_x_offset: u16 = 0;
                 let mut byte_offset = 0;
-                let chars: Vec<char> = line_content.chars().collect();
 
                 let get_token_color = |offset: usize, theme: &Theme| -> Color {
                     for span in &highlight_spans {
@@ -363,23 +363,28 @@ impl WindowRenderer {
                     theme.fg
                 };
 
-                for ch in &chars {
-                    let char_width = if *ch == '\t' {
+                // One cell per grapheme cluster: combining marks ride on
+                // their base character inside the same cell, so the emitted
+                // bytes match what `cat` would print and the width model
+                // (`layout_grapheme_width`) agrees with the cells.
+                for grapheme in line_content.graphemes(true) {
+                    let cluster_width = if grapheme == "\t" {
                         let tab_width = window.tab_width;
                         tab_width - (visual_x % tab_width)
                     } else {
-                        crate::core::utf8::char_width(*ch)
+                        let w = crate::core::utf8::layout_grapheme_width(grapheme);
+                        if w == 0 {
+                            // Control characters never reach the terminal.
+                            byte_offset += grapheme.len();
+                            continue;
+                        }
+                        w
                     };
 
-                    if char_width == 0 {
-                        byte_offset += ch.len_utf8();
-                        continue;
-                    }
-
                     let char_visible_start = visual_x.saturating_sub(scroll_x);
-                    let char_visible_end = (visual_x + char_width).saturating_sub(scroll_x);
+                    let char_visible_end = (visual_x + cluster_width).saturating_sub(scroll_x);
 
-                    if visual_x + char_width > scroll_x && visual_x < scroll_x + text_width {
+                    if visual_x + cluster_width > scroll_x && visual_x < scroll_x + text_width {
                         let is_selected = selection_range
                             .as_ref()
                             .is_some_and(|r| r.contains(&byte_offset));
@@ -401,8 +406,8 @@ impl WindowRenderer {
                             (get_token_color(byte_offset, theme), final_bg)
                         };
 
-                        if *ch == '\t' {
-                            for i in 0..char_width {
+                        if grapheme == "\t" {
+                            for i in 0..cluster_width {
                                 let abs_visual_x = visual_x + i;
                                 if abs_visual_x >= scroll_x && abs_visual_x < scroll_x + text_width
                                 {
@@ -430,11 +435,11 @@ impl WindowRenderer {
                                 screen_buffer.set(
                                     x,
                                     screen_y,
-                                    Cell::with_role(*ch, token_color, bg_color, text_role),
+                                    Cell::with_text(grapheme, token_color, bg_color, text_role),
                                 );
 
-                                if char_width > 1 {
-                                    for i in 1..char_width {
+                                if cluster_width > 1 {
+                                    for i in 1..cluster_width {
                                         let wide_x = x + i as u16;
                                         if wide_x < (text_start_x + text_width) as u16 {
                                             screen_buffer.set(wide_x, screen_y, Cell::hidden());
@@ -450,8 +455,8 @@ impl WindowRenderer {
                         screen_x_offset = char_visible_end as u16;
                     }
 
-                    visual_x += char_width;
-                    byte_offset += ch.len_utf8();
+                    visual_x += cluster_width;
+                    byte_offset += grapheme.len();
 
                     if visual_x >= scroll_x + text_width {
                         break;

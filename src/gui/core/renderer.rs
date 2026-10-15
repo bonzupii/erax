@@ -120,11 +120,12 @@ pub fn build_shaped_line(cells: &[Cell]) -> ShapedLineInput {
 
     for cell in cells {
         col_to_byte.push(text.len());
-        if cell.hidden || cell.ch == '\0' {
+        let cell_text = cell.text();
+        if cell.hidden || cell_text.is_empty() || cell_text == "\0" {
             continue;
         }
-        let ch = if cell.ch == '\t' { ' ' } else { cell.ch };
-        if ch.is_control() {
+        let cell_text = if cell_text == "\t" { " " } else { cell_text };
+        if cell_text.chars().next().is_some_and(|c| c.is_control()) {
             continue;
         }
         let (r, g, b) = cell.fg.rgb8();
@@ -140,7 +141,7 @@ pub fn build_shaped_line(cells: &[Cell]) -> ShapedLineInput {
             span_start = text.len();
             span_color = Some(color);
         }
-        text.push(ch);
+        text.push_str(cell_text);
     }
     col_to_byte.push(text.len());
     if let Some(prev) = span_color {
@@ -923,7 +924,7 @@ impl Renderer {
         let unique: Vec<char> = screen_buffer
             .cells
             .iter()
-            .map(|c| c.ch)
+            .flat_map(|c| c.text().chars())
             .filter(|&ch| ch != ' ' && ch != '\0' && !ch.is_control())
             .collect::<HashSet<char>>()
             .into_iter()
@@ -1263,18 +1264,12 @@ mod tests {
     use crate::terminal::display::{CellRole, Color as TermColor};
 
     fn cell(ch: char, fg: TermColor) -> Cell {
-        Cell {
-            ch,
-            fg,
-            bg: TermColor::Reset,
-            hidden: false,
-            role: CellRole::EditorText,
-        }
+        Cell::with_role(ch, fg, TermColor::Reset, CellRole::EditorText)
     }
 
     fn hidden_cell() -> Cell {
         Cell {
-            ch: ' ',
+            text: crate::terminal::display::ClusterText::new(" "),
             fg: TermColor::Reset,
             bg: TermColor::Reset,
             hidden: true,

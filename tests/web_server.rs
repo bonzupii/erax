@@ -211,10 +211,10 @@ fn headless_editing_session() {
             Ok(Message::Text(text)) => {
                 if let Ok(ServerFrame::Screen { cells, .. }) = decode::<ServerFrame>(&text) {
                     for cu in cells {
-                        if cu.cell.ch == 'h' {
+                        if cu.cell.text() == "h" {
                             found_h = true;
                         }
-                        if cu.cell.ch == 'i' {
+                        if cu.cell.text() == "i" {
                             found_i = true;
                         }
                     }

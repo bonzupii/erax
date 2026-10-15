@@ -5,6 +5,7 @@ use crate::core::window::Window;
 use crate::terminal::display::{BarOwner, BarState, Cell, CellRole, ScreenBuffer};
 use crate::terminal::prompt::PromptState;
 use crate::terminal::theme::Theme;
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Everything the status renderer needs for one window's status line.
 pub struct StatusCtx<'a> {
@@ -136,9 +137,11 @@ impl StatusRenderer {
 
         // Render status line, stamping the echo region's semantic role (N-273).
         // The mode segment itself is status chrome (StatusBar role).
-        let seg_end = left.chars().count() + seg.chars().count();
-        let middle_end = seg_end + middle.chars().count();
-        for (i, ch) in full_status.chars().take(rect.width).enumerate() {
+        // Grapheme-granular: a non-ASCII filename must not desync the
+        // role boundaries or the cell loop.
+        let seg_end = left.graphemes(true).count() + seg.graphemes(true).count();
+        let middle_end = seg_end + middle.graphemes(true).count();
+        for (i, grapheme) in full_status.graphemes(true).take(rect.width).enumerate() {
             let screen_x = (rect.x + i) as u16;
             let role = if i >= seg_end && i < middle_end {
                 middle_role
@@ -148,7 +151,7 @@ impl StatusRenderer {
             screen_buffer.set(
                 screen_x,
                 status_y,
-                Cell::with_role(ch, fg_color, bg_color, role),
+                Cell::with_text(grapheme, fg_color, bg_color, role),
             );
         }
 
@@ -188,7 +191,7 @@ mod tests {
         let cursor = StatusRenderer::render(&mut display.back_buffer, &ctx);
         let y = (rect.y + rect.height - 1) as u16;
         let line: String = (0..rect.width as u16)
-            .map(|x| display.back_buffer.get(x, y).map(|c| c.ch).unwrap_or(' '))
+            .map(|x| display.back_buffer.get(x, y).map(|c| c.text()).unwrap_or(" "))
             .collect();
         (line, cursor)
     }
