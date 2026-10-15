@@ -116,58 +116,55 @@ pub fn transpose_characters(app: &mut EditorApp, _count: usize) -> DispatchResul
         let buffer_id = app.windows.get(&active_window_id).map(|w| w.buffer_id);
 
         if let Some(buffer_id) = buffer_id {
-            let data = {
-                let cursor_x = app.windows.get(&active_window_id).map(|w| w.cursor_x).unwrap_or_default();
-                let cursor_y = app.windows.get(&active_window_id).map(|w| w.cursor_y).unwrap_or_default();
+            // Compute the edit from the pre-edit state; borrows end
+            // before the buffer is mutated. The two graphemes are always
+            // adjacent, so the edit is one byte span and its swap.
+            let edit: Option<(usize, usize, String, usize)> = (|| {
+                let window = app.windows.get(&active_window_id)?;
+                let buffer = app.buffers.get(&buffer_id)?;
+                let cursor_x = window.cursor_x;
+                let line = buffer.line(window.cursor_y)?;
+                let graphemes: Vec<&str> =
+                    crate::core::utf8::GraphemeIterator::new(&line).collect();
 
-                let line_content = app.buffers.get(&buffer_id).and_then(|b| b.line(cursor_y)).unwrap_or_default();
-
-                let graphemes: Vec<String> =
-                    crate::core::utf8::GraphemeIterator::new(&line_content)
-                        .map(|s| s.to_string())
-                        .collect();
-
-                // Determine positions to transpose
                 let (pos1, pos2) = if cursor_x == 0 && graphemes.len() < 2 {
-                    return DispatchResult::Success;
+                    return None;
                 } else if cursor_x >= graphemes.len() && graphemes.len() >= 2 {
                     (graphemes.len() - 2, graphemes.len() - 1)
                 } else if cursor_x >= 1 && cursor_x < graphemes.len() {
                     (cursor_x - 1, cursor_x)
                 } else {
-                    return DispatchResult::Success;
+                    return None;
                 };
 
-                let char1 = graphemes.get(pos1).cloned().unwrap_or_default();
-                let char2 = graphemes.get(pos2).cloned().unwrap_or_default();
-
-                if char1.is_empty() || char2.is_empty() {
-                    return DispatchResult::Success;
+                let g1 = graphemes.get(pos1)?;
+                let g2 = graphemes.get(pos2)?;
+                if g1.is_empty() || g2.is_empty() {
+                    return None;
                 }
+                let line_start = buffer.line_to_byte(window.cursor_y).unwrap_or(0);
+                let byte_index = |n: usize| {
+                    crate::core::utf8::grapheme_byte_index(&line, n)
+                };
+                let start = line_start + byte_index(pos1)?;
+                let mid = line_start + byte_index(pos2)?;
+                let end = mid + g2.len();
+                Some((start, end, format!("{g2}{g1}"), pos1))
+            })();
 
-                (pos1, pos2, char1, char2)
-            };
-
-            let (pos1, _pos2, char1, char2) = data;
-
-            // Now we can mutably borrow
-            if let Some(buffer) = app.buffers.get_mut(&buffer_id)
-                && let Some(window) = app.windows.get_mut(&active_window_id) {
-                    // Delete second char first (higher index)
-                    window.cursor_x = pos1 + 1;
-                    window.delete_char(buffer, false);
-                    // Delete first char
-                    window.cursor_x = pos1;
-                    window.delete_char(buffer, false);
-
-                    // Insert in swapped order
-                    for c in char2.chars() {
-                        window.insert_char(buffer, c);
-                    }
-                    for c in char1.chars() {
-                        window.insert_char(buffer, c);
-                    }
-                }
+            if let Some((start, end, swapped, pos1)) = edit
+                && let Some(buffer) = app.buffers.get_mut(&buffer_id)
+                && let Some(window) = app.windows.get_mut(&active_window_id)
+            {
+                // One delete plus one insert moves both clusters whole: a
+                // multi-scalar cluster is never split, overwrite mode
+                // cannot eat following text, and the cursor lands past the
+                // pair in grapheme units (Emacs "move forward one").
+                buffer.delete(start, end - start);
+                buffer.insert(start, &swapped);
+                window.cursor_x = pos1 + 2;
+                window.update_visual_cursor(buffer);
+            }
         }
         DispatchResult::Success
     }
