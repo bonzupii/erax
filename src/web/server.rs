@@ -329,11 +329,25 @@ fn handle_connection(
     stream
         .set_read_timeout(Some(Duration::from_secs(15)))
         .map_err(|e| ServerError::Protocol(format!("set_read_timeout: {e}")))?;
-    // Peek at the request line without consuming it.
+    // Peek at the request line without consuming it. A request line
+    // split across TCP packets must not be evaluated partial: wait
+    // (bounded) for its line terminator before deciding. The per-peek
+    // read timeout fires while no bytes arrive at all; this deadline
+    // caps a client that dribbles bytes just under that timeout.
     let mut peek_buf = [0u8; 2048];
-    let n = stream
-        .peek(&mut peek_buf)
-        .map_err(|e| ServerError::Protocol(format!("peek: {e}")))?;
+    let peek_deadline = Instant::now() + Duration::from_secs(15);
+    let n = loop {
+        let n = stream
+            .peek(&mut peek_buf)
+            .map_err(|e| ServerError::Protocol(format!("peek: {e}")))?;
+        if n == 0 || peek_buf[..n].contains(&b'\n') || n == peek_buf.len() {
+            break n;
+        }
+        if Instant::now() >= peek_deadline {
+            return Err(ServerError::Protocol("peek: request line too slow".into()));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
     let head = String::from_utf8_lossy(&peek_buf[..n]);
     let request_line = head.lines().next().unwrap_or("");
     let is_websocket = head.to_ascii_lowercase().contains("upgrade: websocket");
@@ -369,15 +383,24 @@ fn handle_http(mut stream: TcpStream, request_line: &str) -> Result<(), ServerEr
     // endless headers must not hold the handler thread (or grow memory)
     // without limit. The 15s stream read timeout from `handle_connection`
     // applies on top.
+    const MAX_HEADER_LINE: u64 = 8192;
     let mut header_lines = 0usize;
     let mut header_bytes = 0usize;
     loop {
         line.clear();
+        // Bound the line itself, not just the total: read_line would
+        // otherwise read an unbounded line into memory before the
+        // aggregate check below ever runs.
         let n = reader
+            .by_ref()
+            .take(MAX_HEADER_LINE + 1)
             .read_line(&mut line)
             .map_err(|e| ServerError::Protocol(format!("read http: {e}")))?;
         if n == 0 {
             break;
+        }
+        if line.len() as u64 > MAX_HEADER_LINE {
+            return Err(ServerError::Protocol("http header line too long".into()));
         }
         header_lines += 1;
         header_bytes += n;
@@ -653,6 +676,16 @@ fn handle_websocket(
                 // Already authed; ignore.
             }
             None => {}
+        }
+
+        // Poll the built-in terminal the way the TUI loop does: child
+        // output must reach the client on its own, not wait for the next
+        // client event to trigger a frame.
+        if let Some(ref mut host) = app.terminal_host
+            && host.is_alive()
+            && host.read().is_some()
+        {
+            display.dirty = true;
         }
 
         if display.dirty {

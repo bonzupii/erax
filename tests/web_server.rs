@@ -537,3 +537,151 @@ fn http_serves_font_stack() {
     assert!(status.contains("200"), "status: {status}");
     assert!(!body.is_empty(), "/font empty");
 }
+
+/// Send one keypress to the server as a client Input frame.
+fn send_key(ws: &mut ClientWs, kp: erax::core::input::KeyPress) {
+    ws.send(
+        Message::Text(
+            encode(&ClientFrame::Input {
+                event: InputEvent::Key(kp),
+            })
+            .into(),
+        ),
+    )
+    .unwrap();
+}
+
+/// A request line split across TCP packets must still route correctly:
+/// the server waits (bounded) for the line terminator before deciding
+/// between the WebSocket upgrade and static-asset paths.
+#[test]
+fn split_request_line_still_upgrades() {
+    use std::io::{BufRead, Write};
+    let (addr, _token) = start_server();
+    let mut stream = TcpStream::connect(addr).expect("connect failed");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .unwrap();
+    // First packet: a partial request line, no terminator yet.
+    stream.write_all(b"GE").unwrap();
+    stream.flush().unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    // Second packet: the rest of the line plus a valid upgrade handshake.
+    // A server that evaluated the peeked prefix would 404/200 here.
+    stream
+        .write_all(
+            b"T /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+        )
+        .unwrap();
+    stream.flush().unwrap();
+    let mut reader = std::io::BufReader::new(&stream);
+    let mut status = String::new();
+    reader
+        .read_line(&mut status)
+        .expect("read status line failed");
+    assert!(
+        status.starts_with("HTTP/1.1 101"),
+        "split request line must still upgrade, got {status:?}"
+    );
+}
+
+/// Terminal child output must reach the web client on its own: the
+/// websocket loop polls the terminal host the way the TUI loop does, so
+/// a frame carrying the output arrives with no client event after it.
+#[test]
+fn terminal_output_reaches_client_unprompted() {
+    let (addr, token) = start_server();
+    let overall = std::time::Instant::now() + Duration::from_secs(150);
+    let (mut ws, _hello) = loop {
+        if let Some(pair) = connect_hello(&addr) {
+            break pair;
+        }
+        assert!(
+            std::time::Instant::now() < overall,
+            "server never completed the websocket handshake (accept loop starved?)"
+        );
+        std::thread::sleep(Duration::from_secs(1));
+    };
+    ws.send(Message::Text(encode(&ClientFrame::Auth { token }).into()))
+        .unwrap();
+    match read_server_frame(&mut ws) {
+        ServerFrame::AuthOk => {}
+        other => panic!("expected AuthOk, got {other:?}"),
+    }
+    match read_server_frame(&mut ws) {
+        ServerFrame::Screen { .. } => {}
+        other => panic!("expected initial Screen, got {other:?}"),
+    }
+
+    // Spawn the built-in terminal: C-x t 2 in the server's keytrie
+    // model (split + terminal, new window active).
+    let ctrl = erax::core::input::KeyPress::ctrl;
+    let plain = erax::core::input::KeyPress::plain;
+    let ch = erax::core::input::Key::Char;
+    for kp in [ctrl(ch('x')), plain(ch('t')), plain(ch('2'))] {
+        send_key(&mut ws, kp);
+        std::thread::sleep(Duration::from_millis(150));
+    }
+    // Drain to the post-spawn screen.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        match read_server_frame(&mut ws) {
+            ServerFrame::Screen { .. } => break,
+            _ => {}
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no screen after spawn-terminal"
+        );
+    }
+
+    // Run a command whose output is a value that never appears in the
+    // typed input itself (the pty echoes input, so a literal marker
+    // would be visible before the shell runs).
+    for c in "echo $((12345*6789))".chars() {
+        send_key(
+            &mut ws,
+            erax::core::input::KeyPress::plain(erax::core::input::Key::Char(c)),
+        );
+    }
+    send_key(
+        &mut ws,
+        erax::core::input::KeyPress::plain(erax::core::input::Key::Enter),
+    );
+
+    // From here on, nothing is sent. The shell's answer (83810205) must
+    // arrive in a Screen frame on the server's own 100ms terminal poll.
+    let mut grid: std::collections::HashMap<(u16, u16), String> =
+        std::collections::HashMap::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(25);
+    let mut saw_output = false;
+    while std::time::Instant::now() < deadline && !saw_output {
+        set_timeout(&mut ws, Some(Duration::from_millis(500)));
+        let frame = match ws.read() {
+            Ok(Message::Text(t)) => decode::<ServerFrame>(&t).expect("decode failed"),
+            _ => continue,
+        };
+        if let ServerFrame::Screen { cells, .. } = frame {
+            for cu in &cells {
+                grid.insert((cu.x, cu.y), cu.cell.text.as_str().to_string());
+            }
+            let mut rows: std::collections::BTreeMap<u16, Vec<(u16, &String)>> =
+                std::collections::BTreeMap::new();
+            for ((x, y), text) in &grid {
+                rows.entry(*y).or_default().push((*x, text));
+            }
+            for (_y, mut row) in rows {
+                row.sort_by_key(|(x, _)| *x);
+                let text: String = row.into_iter().map(|(_, s)| s.as_str()).collect();
+                if text.contains("83810205") && !text.contains("echo") {
+                    saw_output = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(
+        saw_output,
+        "terminal output never reached the client without a client event"
+    );
+}
