@@ -373,7 +373,9 @@ pub fn handle_prompt_action(
                     DispatchResult::Exit => {
                         return Ok(true);
                     }
-                    _ => {}
+                    // A full redraw is subsumed: the prompt's caller
+                    // repaints unconditionally on dismissal.
+                    DispatchResult::Redraw => {}
                 }
             }
         }

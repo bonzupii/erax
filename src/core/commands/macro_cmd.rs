@@ -50,30 +50,35 @@ pub fn execute_macro(app: &mut EditorApp, count: usize) -> DispatchResult {
     // remains defined. No clone of the whole macro per the N-229 direction.
     let steps = core::mem::take(&mut app.last_macro);
     app.executing_macro = true;
-    for _ in 0..count {
+    let mut result = DispatchResult::Success;
+    'replay: for _ in 0..count {
         for (step, cnt) in &steps {
-            match step {
+            let step_result = match step {
                 MacroStep::Command(Command::ExecuteMacro) => {
                     // Nested execution is rejected; the flag above guards
                     // the direct case, this guards macro-contained nesting.
-                    app.executing_macro = false;
-                    app.last_macro = steps;
-                    return DispatchResult::Info(
-                        "Macros cannot invoke execute-macro".to_string(),
-                    );
+                    DispatchResult::Info("Macros cannot invoke execute-macro".to_string())
                 }
-                MacroStep::Command(cmd) => {
-                    dispatch(app, *cmd, *cnt);
-                }
-                MacroStep::Insert(c) => {
-                    dispatch_insert(app, *c, *cnt);
+                MacroStep::Command(cmd) => dispatch(app, *cmd, *cnt),
+                MacroStep::Insert(c) => dispatch_insert(app, *c, *cnt),
+            };
+            match step_result {
+                // A step that only asks for a repaint folds into the
+                // final Success: the replay's caller repaints anyway.
+                DispatchResult::Success | DispatchResult::Redraw => {}
+                // Anything else (Exit, NeedsInput, AwaitKey, Info)
+                // stops the replay so the signal reaches the event
+                // layer instead of being swallowed mid-macro.
+                other => {
+                    result = other;
+                    break 'replay;
                 }
             }
         }
     }
     app.executing_macro = false;
     app.last_macro = steps;
-    DispatchResult::Success
+    result
 }
 
 #[cfg(test)]

@@ -490,7 +490,12 @@ impl ModalEngine {
                 crate::core::focus::push_reload_question(app, buffer_id);
                 ModalOutcome::Consumed
             }
-            _ => ModalOutcome::Consumed,
+            DispatchResult::Success | DispatchResult::NotHandled | DispatchResult::Redraw => {
+                // Success ran. NotHandled still consumed the key: it
+                // mapped to a modal binding. Redraw is subsumed: the
+                // caller repaints on Consumed.
+                ModalOutcome::Consumed
+            }
         }
     }
 }

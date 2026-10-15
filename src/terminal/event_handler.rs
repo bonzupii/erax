@@ -109,8 +109,8 @@ pub fn process_terminal_event(
                     return handle_menu_input(app, display, &key);
                 }
                 InputMode::SpecialBuffer { kind } => {
-                    if handle_special_buffer_input(app, display, &key, *kind)? {
-                        return Ok(false);
+                    if let Some(exit) = handle_special_buffer_input(app, display, &key, *kind)? {
+                        return Ok(exit);
                     }
                     // Fall through to normal handling if not consumed
                 }
@@ -648,12 +648,16 @@ fn handle_menu_input(
 /// a special view falls through to the model tables. Terminal buffers
 /// forward keys to the pty instead; that forwarding policy is engine
 /// behavior, not a mapping, and stays here.
+/// Input for diagnostics/diff/terminal buffers.
+///
+/// Returns `Some(exit_requested)` when the key was consumed, `None` when
+/// the caller should fall through to normal key handling.
 fn handle_special_buffer_input(
     app: &mut EditorApp,
     display: &mut Display,
     key: &crate::core::input::KeyPress,
     kind: crate::core::buffer::BufferKind,
-) -> Result<bool, Box<dyn std::error::Error>> {
+) -> Result<Option<bool>, Box<dyn std::error::Error>> {
     use crate::config::keys::{DIAGNOSTICS_KEYS, DIFF_KEYS};
     use crate::core::buffer::BufferKind;
     use crate::core::input::Key;
@@ -664,9 +668,13 @@ fn handle_special_buffer_input(
         _ => &[],
     };
     if let Some((_, command)) = table.iter().find(|(k, _)| k == key) {
-        dispatch(app, *command, 1);
-        display.dirty = true;
-        return Ok(true);
+        // The shared result handler, exactly as on the main input path:
+        // Info reaches the echo area, NeedsInput/AwaitKey open their
+        // prompts, and an Exit (reachable through user-edited key
+        // tables) propagates instead of being swallowed.
+        let result = dispatch(app, *command, 1);
+        let exit = handle_dispatch_result(app, display, result)?;
+        return Ok(Some(exit));
     }
     if kind == BufferKind::Terminal {
             // Forward keys to terminal (except Ctrl-X which is the prefix).
@@ -697,8 +705,8 @@ fn handle_special_buffer_input(
                         _ => {}
                     }
                     display.dirty = true;
-                    return Ok(true);
+                    return Ok(Some(false));
                 }
     }
-    Ok(false)
+    Ok(None)
 }
