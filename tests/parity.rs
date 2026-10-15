@@ -36,8 +36,9 @@ fn modal_direct(cmd: Command) -> bool {
     })
 }
 
-/// The modal `:` line is bound in Normal mode.
-fn colon_bound() -> bool {
+/// The modal command line is bound in Normal mode (as some key; the
+/// binding itself is config, the entry point is structural).
+fn cmdline_entry_bound() -> bool {
     MODAL_BINDINGS
         .iter()
         .any(|b| b.action == ModalAction::EnterMode(erax::config::keys::ModalMode::CommandLine))
@@ -60,8 +61,9 @@ fn reachable_keytrie(cmd: Command) -> bool {
 
 fn reachable_modal(cmd: Command) -> bool {
     // Direct engine action, ctrl/alt fall-through to the trie underneath,
-    // or the `:` line (every name resolves; toggle-menu stays on F10).
-    modal_direct(cmd) || bound_in(KEYBINDINGS, cmd) || cmd == Command::ToggleMenu || colon_bound()
+    // or the command-line entry (every name resolves; toggle-menu stays
+    // on its display-intercepted key).
+    modal_direct(cmd) || bound_in(KEYBINDINGS, cmd) || cmd == Command::ToggleMenu || cmdline_entry_bound()
 }
 
 fn reachable_standard(cmd: Command) -> bool {
@@ -71,9 +73,21 @@ fn reachable_standard(cmd: Command) -> bool {
 
 #[test]
 fn named_facilities_are_bound() {
-    assert!(mx_bound(), "M-x must stay bound in KEYBINDINGS");
-    assert!(colon_bound(), "`:` must stay bound in MODAL_BINDINGS");
-    assert!(palette_bound(), "the palette must stay bound in STANDARD_BINDINGS");
+    // Structural preconditions for the reachability proof: each model
+    // needs its named-command facility bound (to some key — the key
+    // itself is config and not asserted here).
+    assert!(
+        mx_bound(),
+        "KEYBINDINGS must bind the named-command facility"
+    );
+    assert!(
+        cmdline_entry_bound(),
+        "MODAL_BINDINGS must bind a command-line entry"
+    );
+    assert!(
+        palette_bound(),
+        "STANDARD_BINDINGS must bind the named-command facility"
+    );
 }
 
 #[test]

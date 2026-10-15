@@ -662,36 +662,3 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod continuation_tests {
-    use super::*;
-    use crate::core::input::Key;
-
-    fn has(table: &[(KeyPress, impl PartialEq)], key: KeyPress) -> bool {
-        table.iter().any(|(k, _)| *k == key)
-    }
-
-    #[test]
-    fn prefix_g_covers_vim_sequences() {
-        for c in ['g', 'e', 'E'] {
-            assert!(
-                has(MODAL_PREFIX_G, KeyPress::plain(Key::Char(c))),
-                "g{c} must be a configured continuation"
-            );
-        }
-        assert_eq!(MODAL_PREFIX_G.len(), 3);
-    }
-
-    #[test]
-    fn text_objects_cover_vim_object_keys() {
-        for c in [
-            'w', 'W', '(', ')', 'b', '[', ']', '{', '}', '<', '>', '"', '\'',
-        ] {
-            assert!(
-                has(MODAL_TEXT_OBJECTS, KeyPress::plain(Key::Char(c))),
-                "object key {c} must be a configured continuation"
-            );
-        }
-        assert_eq!(MODAL_TEXT_OBJECTS.len(), 13);
-    }
-}
