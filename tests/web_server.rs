@@ -685,3 +685,34 @@ fn terminal_output_reaches_client_unprompted() {
         "terminal output never reached the client without a client event"
     );
 }
+
+/// An overlong header line is rejected by the per-line read bound itself:
+/// the server closes the connection instead of buffering the line
+/// without limit or stalling past the read deadline.
+#[test]
+fn overlong_header_line_is_rejected() {
+    use std::io::{Read, Write};
+    let (addr, _token) = start_server();
+    let mut stream = TcpStream::connect(addr).expect("connect failed");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .unwrap();
+    stream.write_all(b"GET / HTTP/1.1\r\n").unwrap();
+    stream.write_all(b"X-Pad: ").unwrap();
+    stream.write_all(&vec![b'A'; 16_384]).unwrap();
+    stream.write_all(b"\r\n\r\n").unwrap();
+    stream.flush().unwrap();
+    // The server must close (or error) promptly: EOF, not a hang and
+    // not a 200 served after buffering 16KB into the line.
+    let mut buf = [0u8; 1];
+    match stream.read(&mut buf) {
+        Ok(0) => {}
+        Err(e)
+            if e.kind() == std::io::ErrorKind::UnexpectedEof
+                || e.kind() == std::io::ErrorKind::ConnectionReset =>
+        {
+            // also acceptable
+        }
+        other => panic!("expected prompt close on overlong header, got {other:?}"),
+    }
+}
