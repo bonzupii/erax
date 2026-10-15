@@ -13,7 +13,7 @@
 /// available system monospaces so the GUI and the WebUI have a font even
 /// where the primary is not installed.
 pub const FONT_STACK: &[&str] = &[
-    "JetBrains Mono",
+    "JetBrainsMono Nerd Font Mono",
     "Noto Sans Mono",
     "DejaVu Sans Mono",
     "Liberation Mono",
