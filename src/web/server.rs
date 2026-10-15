@@ -21,7 +21,7 @@ use tungstenite::{Message, WebSocket, accept_with_config};
 use tungstenite::protocol::WebSocketConfig;
 
 use crate::cli::Invocation;
-use crate::config::keys::KEYBINDINGS;
+use crate::config::keys::{INPUT_MODEL, bindings_for_model};
 use crate::core::app::EditorApp;
 use crate::terminal::display::*;
 use crate::terminal::events::EditorEvent;
@@ -567,7 +567,7 @@ fn handle_websocket(
 
     // --- Headless editor session (Core+TUI, no terminal). ---
     let mut keybind_manager = crate::terminal::keybinds::KeyBindingManager::new();
-    keybind_manager.load(KEYBINDINGS);
+    keybind_manager.load(bindings_for_model(INPUT_MODEL));
     let mut app = EditorApp::initialize(files);
     let mut display = crate::terminal::display::Display::new(width, height, theme, wrap);
     // WebUI renders with full color (the client does its own styling).

@@ -3,7 +3,7 @@
 use std::io;
 
 use crate::cli::{ColorMode, Invocation};
-use crate::config::keys::KEYBINDINGS;
+use crate::config::keys::bindings_for_model;
 use crate::core;
 use crate::terminal;
 use crate::terminal::events::EditorEvent;
@@ -38,7 +38,7 @@ pub fn run_terminal_mode(
     color_mode: ColorMode,
 ) -> Result<(), TuiError> {
     let mut keybind_manager = terminal::keybinds::KeyBindingManager::new();
-    keybind_manager.load(KEYBINDINGS);
+    keybind_manager.load(bindings_for_model(crate::config::keys::INPUT_MODEL));
 
     let mut app = core::app::EditorApp::initialize(&inv.files);
 

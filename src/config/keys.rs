@@ -196,6 +196,19 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
     KeyBinding { keys: &[plain(Key::F(10))], command: Command::ToggleMenu, policy: PrefixPolicy::ExecuteLeaf },
 ];
 
+/// The keybinding table the key trie loads for an input model.
+///
+/// The trie underneath the modal engine is the key-trie table: ctrl/alt
+/// chords pass through the engine to it (the engine only claims plain
+/// keys). The modal engine reads [`MODAL_BINDINGS`] itself.
+pub const fn bindings_for_model(model: InputModel) -> &'static [KeyBinding] {
+    match model {
+        InputModel::KeyTrie => KEYBINDINGS,
+        InputModel::Standard => STANDARD_BINDINGS,
+        InputModel::Modal => KEYBINDINGS,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Modal bindings (N-268): a real modal input path behind the INPUT_MODEL switch.
 // ---------------------------------------------------------------------------
@@ -511,3 +524,30 @@ pub const STANDARD_BINDINGS: &[KeyBinding] = &[
     // -- menu --
     KeyBinding { keys: &[plain(Key::F(10))], command: Command::ToggleMenu, policy: PrefixPolicy::ExecuteLeaf },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bindings_for_model_selects_each_table() {
+        // `const` statics materialize per use-site, so compare by content,
+        // not pointer identity.
+        let keytrie = bindings_for_model(InputModel::KeyTrie);
+        assert_eq!(keytrie.len(), KEYBINDINGS.len());
+        assert!(keytrie
+            .iter()
+            .zip(KEYBINDINGS.iter())
+            .all(|(a, b)| a == b));
+        let standard = bindings_for_model(InputModel::Standard);
+        assert_eq!(standard.len(), STANDARD_BINDINGS.len());
+        assert!(standard
+            .iter()
+            .zip(STANDARD_BINDINGS.iter())
+            .all(|(a, b)| a == b));
+        // The trie underneath the modal engine is the key-trie table:
+        // ctrl/alt chords pass through the engine to it.
+        let modal = bindings_for_model(InputModel::Modal);
+        assert_eq!(modal.len(), KEYBINDINGS.len());
+    }
+}

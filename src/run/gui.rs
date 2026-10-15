@@ -12,7 +12,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
 use crate::cli::Invocation;
-use crate::config::keys::{INPUT_MODEL, InputModel, KEYBINDINGS, MODAL_BINDINGS, STANDARD_BINDINGS};
+use crate::config::keys::{INPUT_MODEL, bindings_for_model};
 use crate::core;
 use crate::terminal;
 
@@ -41,17 +41,7 @@ impl std::fmt::Display for GuiError {
 pub fn run_gui_mode(inv: &Invocation) -> Result<(), GuiError> {
     let mut keybind_manager = terminal::keybinds::KeyBindingManager::new();
     // Load the keymap for the compile-time input model (N-268).
-    match INPUT_MODEL {
-        InputModel::KeyTrie => keybind_manager.load(KEYBINDINGS),
-        InputModel::Standard => keybind_manager.load(STANDARD_BINDINGS),
-        InputModel::Modal => {
-            // Modal bindings are handled by the modal engine, which
-            // intercepts plain keys first; the trie underneath is the emacs
-            // keymap for special keys and ctrl/alt chords (same as the TUI).
-            keybind_manager.load(KEYBINDINGS);
-            let _ = MODAL_BINDINGS;
-        }
-    }
+    keybind_manager.load(bindings_for_model(INPUT_MODEL));
 
     let editor_app = core::app::EditorApp::initialize(&inv.files);
     let display = terminal::display::Display::new(120, 40, inv.theme, inv.wrap);
