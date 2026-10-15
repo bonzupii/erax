@@ -1,4 +1,4 @@
-//! Unified Input Router
+//! Unified input router from events to commands.
 //!
 //! Centralizes input handling logic that was previously duplicated between GUI and TUI.
 //! Currently provides gutter width calculation used by both TUI and GUI.

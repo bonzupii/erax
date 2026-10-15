@@ -1,0 +1,2179 @@
+{
+ "cases": [
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "w"
+   ],
+   "name": "w_basic",
+   "vim_cursor": [
+    0,
+    6
+   ],
+   "vim_register": "",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "2",
+    "w"
+   ],
+   "name": "w_2",
+   "vim_cursor": [
+    0,
+    8
+   ],
+   "vim_register": "",
+   "vim_text": "one two three four\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "3",
+    "w"
+   ],
+   "name": "w_3",
+   "vim_cursor": [
+    0,
+    14
+   ],
+   "vim_register": "",
+   "vim_text": "one two three four\n"
+  },
+  {
+   "buffer": "single\n",
+   "keys": [
+    "w"
+   ],
+   "name": "w_at_end",
+   "vim_cursor": [
+    0,
+    5
+   ],
+   "vim_register": "",
+   "vim_text": "single\n"
+  },
+  {
+   "buffer": "foo,bar;baz:qux\n",
+   "keys": [
+    "w"
+   ],
+   "name": "w_punct",
+   "vim_cursor": [
+    0,
+    3
+   ],
+   "vim_register": "",
+   "vim_text": "foo,bar;baz:qux\n"
+  },
+  {
+   "buffer": "foo,bar;baz:qux\n",
+   "keys": [
+    "2",
+    "w"
+   ],
+   "name": "w_punct_2",
+   "vim_cursor": [
+    0,
+    4
+   ],
+   "vim_register": "",
+   "vim_text": "foo,bar;baz:qux\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "w",
+    "b"
+   ],
+   "name": "b_basic",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "b"
+   ],
+   "name": "b_at_start",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "2",
+    "w",
+    "2",
+    "b"
+   ],
+   "name": "b_2",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "",
+   "vim_text": "one two three four\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "e"
+   ],
+   "name": "e_basic",
+   "vim_cursor": [
+    0,
+    4
+   ],
+   "vim_register": "",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "2",
+    "e"
+   ],
+   "name": "e_2",
+   "vim_cursor": [
+    0,
+    6
+   ],
+   "vim_register": "",
+   "vim_text": "one two three four\n"
+  },
+  {
+   "buffer": "single\n",
+   "keys": [
+    "e"
+   ],
+   "name": "e_at_end",
+   "vim_cursor": [
+    0,
+    5
+   ],
+   "vim_register": "",
+   "vim_text": "single\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "4",
+    "l",
+    "e"
+   ],
+   "name": "e_last_char",
+   "vim_cursor": [
+    0,
+    10
+   ],
+   "vim_register": "",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "foo,bar;baz:qux\n",
+   "keys": [
+    "e"
+   ],
+   "name": "e_punct",
+   "vim_cursor": [
+    0,
+    2
+   ],
+   "vim_register": "",
+   "vim_text": "foo,bar;baz:qux\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "$",
+    "g",
+    "e"
+   ],
+   "name": "ge_basic",
+   "vim_cursor": [
+    0,
+    4
+   ],
+   "vim_register": "",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "g",
+    "e"
+   ],
+   "name": "ge_at_start",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "$",
+    "2",
+    "g",
+    "e"
+   ],
+   "name": "ge_2",
+   "vim_cursor": [
+    0,
+    6
+   ],
+   "vim_register": "",
+   "vim_text": "one two three four\n"
+  },
+  {
+   "buffer": "snake_case word-here and CAPS\n",
+   "keys": [
+    "W"
+   ],
+   "name": "W_basic",
+   "vim_cursor": [
+    0,
+    11
+   ],
+   "vim_register": "",
+   "vim_text": "snake_case word-here and CAPS\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "2",
+    "W"
+   ],
+   "name": "W_2",
+   "vim_cursor": [
+    0,
+    8
+   ],
+   "vim_register": "",
+   "vim_text": "one two three four\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "2",
+    "W",
+    "B"
+   ],
+   "name": "B_basic",
+   "vim_cursor": [
+    0,
+    4
+   ],
+   "vim_register": "",
+   "vim_text": "one two three four\n"
+  },
+  {
+   "buffer": "snake_case word-here and CAPS\n",
+   "keys": [
+    "E"
+   ],
+   "name": "E_basic",
+   "vim_cursor": [
+    0,
+    9
+   ],
+   "vim_register": "",
+   "vim_text": "snake_case word-here and CAPS\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "2",
+    "E"
+   ],
+   "name": "E_2",
+   "vim_cursor": [
+    0,
+    6
+   ],
+   "vim_register": "",
+   "vim_text": "one two three four\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "$",
+    "g",
+    "E"
+   ],
+   "name": "gE_basic",
+   "vim_cursor": [
+    0,
+    12
+   ],
+   "vim_register": "",
+   "vim_text": "one two three four\n"
+  },
+  {
+   "buffer": "  leading spaces\n",
+   "keys": [
+    "w"
+   ],
+   "name": "w_leading_ws",
+   "vim_cursor": [
+    0,
+    2
+   ],
+   "vim_register": "",
+   "vim_text": "  leading spaces\n"
+  },
+  {
+   "buffer": "  leading spaces\n",
+   "keys": [
+    "$",
+    "b"
+   ],
+   "name": "b_leading_ws",
+   "vim_cursor": [
+    0,
+    10
+   ],
+   "vim_register": "",
+   "vim_text": "  leading spaces\n"
+  },
+  {
+   "buffer": "trailing spaces   \n",
+   "keys": [
+    "e"
+   ],
+   "name": "e_trailing_ws",
+   "vim_cursor": [
+    0,
+    7
+   ],
+   "vim_register": "",
+   "vim_text": "trailing spaces   \n"
+  },
+  {
+   "buffer": "a  b   c\n",
+   "keys": [
+    "w"
+   ],
+   "name": "w_multi_ws",
+   "vim_cursor": [
+    0,
+    3
+   ],
+   "vim_register": "",
+   "vim_text": "a  b   c\n"
+  },
+  {
+   "buffer": "a  b   c\n",
+   "keys": [
+    "e"
+   ],
+   "name": "e_multi_ws",
+   "vim_cursor": [
+    0,
+    3
+   ],
+   "vim_register": "",
+   "vim_text": "a  b   c\n"
+  },
+  {
+   "buffer": "word. Next sentence! Third?\nMore here.\n",
+   "keys": [
+    ")"
+   ],
+   "name": "rparen",
+   "vim_cursor": [
+    0,
+    6
+   ],
+   "vim_register": "",
+   "vim_text": "word. Next sentence! Third?\nMore here.\n"
+  },
+  {
+   "buffer": "word. Next sentence! Third?\nMore here.\n",
+   "keys": [
+    "2",
+    ")"
+   ],
+   "name": "rparen_2",
+   "vim_cursor": [
+    0,
+    21
+   ],
+   "vim_register": "",
+   "vim_text": "word. Next sentence! Third?\nMore here.\n"
+  },
+  {
+   "buffer": "word. Next sentence! Third?\nMore here.\n",
+   "keys": [
+    ")",
+    "("
+   ],
+   "name": "lparen",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "",
+   "vim_text": "word. Next sentence! Third?\nMore here.\n"
+  },
+  {
+   "buffer": "word. Next sentence! Third?\nMore here.\n",
+   "keys": [
+    "("
+   ],
+   "name": "lparen_at_start",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "",
+   "vim_text": "word. Next sentence! Third?\nMore here.\n"
+  },
+  {
+   "buffer": "word. Next sentence! Third?\nMore here.\n",
+   "keys": [
+    "G",
+    ")"
+   ],
+   "name": "rparen_at_end",
+   "vim_cursor": [
+    1,
+    9
+   ],
+   "vim_register": "",
+   "vim_text": "word. Next sentence! Third?\nMore here.\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "f",
+    "o"
+   ],
+   "name": "f_char",
+   "vim_cursor": [
+    0,
+    4
+   ],
+   "vim_register": "",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "f",
+    "o",
+    ";"
+   ],
+   "name": "f_repeat",
+   "vim_cursor": [
+    0,
+    7
+   ],
+   "vim_register": "",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "f",
+    "o",
+    ","
+   ],
+   "name": "f_rev",
+   "vim_cursor": [
+    0,
+    4
+   ],
+   "vim_register": "",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "$",
+    "F",
+    "o"
+   ],
+   "name": "F_char",
+   "vim_cursor": [
+    0,
+    7
+   ],
+   "vim_register": "",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "t",
+    "o"
+   ],
+   "name": "t_char",
+   "vim_cursor": [
+    0,
+    3
+   ],
+   "vim_register": "",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "$",
+    "T",
+    "o"
+   ],
+   "name": "T_char",
+   "vim_cursor": [
+    0,
+    8
+   ],
+   "vim_register": "",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "f",
+    "z"
+   ],
+   "name": "f_missing",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "$"
+   ],
+   "name": "dollar",
+   "vim_cursor": [
+    0,
+    10
+   ],
+   "vim_register": "",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "$",
+    "0"
+   ],
+   "name": "zero",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "  leading spaces\n",
+   "keys": [
+    "$",
+    "^"
+   ],
+   "name": "caret",
+   "vim_cursor": [
+    0,
+    2
+   ],
+   "vim_register": "",
+   "vim_text": "  leading spaces\n"
+  },
+  {
+   "buffer": "line one\nline two\nline three\n",
+   "keys": [
+    "G"
+   ],
+   "name": "G_end",
+   "vim_cursor": [
+    2,
+    0
+   ],
+   "vim_register": "",
+   "vim_text": "line one\nline two\nline three\n"
+  },
+  {
+   "buffer": "line one\nline two\nline three\n",
+   "keys": [
+    "G",
+    "g",
+    "g"
+   ],
+   "name": "gg_start",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "",
+   "vim_text": "line one\nline two\nline three\n"
+  },
+  {
+   "buffer": "hello\n\nworld\n",
+   "keys": [
+    "}"
+   ],
+   "name": "paragraph_fwd",
+   "vim_cursor": [
+    1,
+    0
+   ],
+   "vim_register": "",
+   "vim_text": "hello\n\nworld\n"
+  },
+  {
+   "buffer": "hello\n\nworld\n",
+   "keys": [
+    "G",
+    "{"
+   ],
+   "name": "paragraph_bwd",
+   "vim_cursor": [
+    1,
+    0
+   ],
+   "vim_register": "",
+   "vim_text": "hello\n\nworld\n"
+  },
+  {
+   "buffer": "(foo [bar] {baz})\n",
+   "keys": [
+    "%"
+   ],
+   "name": "match_paren",
+   "vim_cursor": [
+    0,
+    16
+   ],
+   "vim_register": "",
+   "vim_text": "(foo [bar] {baz})\n"
+  },
+  {
+   "buffer": "(foo [bar] {baz})\n",
+   "keys": [
+    "w",
+    "%"
+   ],
+   "name": "match_bracket",
+   "vim_cursor": [
+    0,
+    9
+   ],
+   "vim_register": "",
+   "vim_text": "(foo [bar] {baz})\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "d",
+    "w"
+   ],
+   "name": "dw",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hello ",
+   "vim_text": "world\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "2",
+    "d",
+    "w"
+   ],
+   "name": "dw_2",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "one two ",
+   "vim_text": "three four\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "d",
+    "2",
+    "w"
+   ],
+   "name": "d2w",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "one two ",
+   "vim_text": "three four\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "d",
+    "e"
+   ],
+   "name": "de",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hello",
+   "vim_text": " world\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "d",
+    "2",
+    "e"
+   ],
+   "name": "de_2",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "one two",
+   "vim_text": " three four\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "w",
+    "d",
+    "b"
+   ],
+   "name": "db",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hello ",
+   "vim_text": "world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "$",
+    "d",
+    "g",
+    "e"
+   ],
+   "name": "dge",
+   "vim_cursor": [
+    0,
+    3
+   ],
+   "vim_register": "o world",
+   "vim_text": "hell\n"
+  },
+  {
+   "buffer": "snake_case word-here and CAPS\n",
+   "keys": [
+    "d",
+    "W"
+   ],
+   "name": "dW",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "snake_case ",
+   "vim_text": "word-here and CAPS\n"
+  },
+  {
+   "buffer": "snake_case word-here and CAPS\n",
+   "keys": [
+    "d",
+    "E"
+   ],
+   "name": "dE",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "snake_case",
+   "vim_text": " word-here and CAPS\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "d",
+    "$"
+   ],
+   "name": "dollar_op",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hello world",
+   "vim_text": "\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "$",
+    "d",
+    "0"
+   ],
+   "name": "d0",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hello worl",
+   "vim_text": "d\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "d",
+    "f",
+    "o"
+   ],
+   "name": "df",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hello",
+   "vim_text": " world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "d",
+    "t",
+    "o"
+   ],
+   "name": "dt",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hell",
+   "vim_text": "o world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "$",
+    "d",
+    "F",
+    "l"
+   ],
+   "name": "dF",
+   "vim_cursor": [
+    0,
+    9
+   ],
+   "vim_register": "l",
+   "vim_text": "hello word\n"
+  },
+  {
+   "buffer": "word. Next sentence! Third?\nMore here.\n",
+   "keys": [
+    "d",
+    ")"
+   ],
+   "name": "d_paren",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "word. ",
+   "vim_text": "Next sentence! Third?\nMore here.\n"
+  },
+  {
+   "buffer": "word. Next sentence! Third?\nMore here.\n",
+   "keys": [
+    ")",
+    "d",
+    "("
+   ],
+   "name": "d_lparen",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "word. ",
+   "vim_text": "Next sentence! Third?\nMore here.\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "y",
+    "w",
+    "w",
+    "p"
+   ],
+   "name": "yw_p",
+   "vim_cursor": [
+    0,
+    12
+   ],
+   "vim_register": "hello ",
+   "vim_text": "hello whello orld\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "y",
+    "e",
+    "p"
+   ],
+   "name": "ye_p",
+   "vim_cursor": [
+    0,
+    5
+   ],
+   "vim_register": "hello",
+   "vim_text": "hhelloello world\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "y",
+    "2",
+    "w",
+    "p"
+   ],
+   "name": "y2w_p",
+   "vim_cursor": [
+    0,
+    8
+   ],
+   "vim_register": "one two ",
+   "vim_text": "oone two ne two three four\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "c",
+    "w",
+    "X",
+    "<Esc>"
+   ],
+   "name": "cw_word",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hello",
+   "vim_text": "X world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "c",
+    "W",
+    "X",
+    "<Esc>"
+   ],
+   "name": "cW_word",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hello",
+   "vim_text": "X world\n"
+  },
+  {
+   "buffer": "  leading spaces\n",
+   "keys": [
+    "c",
+    "w",
+    "X",
+    "<Esc>"
+   ],
+   "name": "cw_ws",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "  ",
+   "vim_text": "Xleading spaces\n"
+  },
+  {
+   "buffer": "foo,bar;baz:qux\n",
+   "keys": [
+    "2",
+    "l",
+    "c",
+    "w",
+    "X",
+    "<Esc>"
+   ],
+   "name": "cw_punct",
+   "vim_cursor": [
+    0,
+    2
+   ],
+   "vim_register": "o",
+   "vim_text": "foX,bar;baz:qux\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "c",
+    "2",
+    "w",
+    "X",
+    "<Esc>"
+   ],
+   "name": "c2w",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "one two",
+   "vim_text": "X three four\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "c",
+    "2",
+    "e",
+    "X",
+    "<Esc>"
+   ],
+   "name": "c2e",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "one two",
+   "vim_text": "X three four\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "2",
+    "c",
+    "w",
+    "X",
+    "<Esc>"
+   ],
+   "name": "2cw",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "one two",
+   "vim_text": "X three four\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "c",
+    "e",
+    "X",
+    "<Esc>"
+   ],
+   "name": "ce",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hello",
+   "vim_text": "X world\n"
+  },
+  {
+   "buffer": "snake_case word-here and CAPS\n",
+   "keys": [
+    "c",
+    "E",
+    "X",
+    "<Esc>"
+   ],
+   "name": "cE",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "snake_case",
+   "vim_text": "X word-here and CAPS\n"
+  },
+  {
+   "buffer": "line one\nline two\nline three\n",
+   "keys": [
+    "d",
+    "d"
+   ],
+   "name": "dd",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "line one\n",
+   "vim_text": "line two\nline three\n"
+  },
+  {
+   "buffer": "line one\nline two\nline three\n",
+   "keys": [
+    "2",
+    "d",
+    "d"
+   ],
+   "name": "dd_2",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "line one\nline two\n",
+   "vim_text": "line three\n"
+  },
+  {
+   "buffer": "line one\nline two\nline three\n",
+   "keys": [
+    "y",
+    "y",
+    "p"
+   ],
+   "name": "yy_p",
+   "vim_cursor": [
+    1,
+    0
+   ],
+   "vim_register": "line one\n",
+   "vim_text": "line one\nline one\nline two\nline three\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "c",
+    "c",
+    "X",
+    "<Esc>"
+   ],
+   "name": "cc",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hello world\n",
+   "vim_text": "X\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "w",
+    "D"
+   ],
+   "name": "D",
+   "vim_cursor": [
+    0,
+    5
+   ],
+   "vim_register": "world",
+   "vim_text": "hello \n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "w",
+    "C",
+    "X",
+    "<Esc>"
+   ],
+   "name": "C",
+   "vim_cursor": [
+    0,
+    6
+   ],
+   "vim_register": "world",
+   "vim_text": "hello X\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "x"
+   ],
+   "name": "x",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "h",
+   "vim_text": "ello world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "3",
+    "x"
+   ],
+   "name": "x_3",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hel",
+   "vim_text": "lo world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "$",
+    "X"
+   ],
+   "name": "X",
+   "vim_cursor": [
+    0,
+    9
+   ],
+   "vim_register": "l",
+   "vim_text": "hello word\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "s",
+    "X",
+    "<Esc>"
+   ],
+   "name": "s",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "h",
+   "vim_text": "Xello world\n"
+  },
+  {
+   "buffer": "line one\nline two\nline three\n",
+   "keys": [
+    "j",
+    "S",
+    "X",
+    "<Esc>"
+   ],
+   "name": "S",
+   "vim_cursor": [
+    1,
+    0
+   ],
+   "vim_register": "line two\n",
+   "vim_text": "line one\nX\nline three\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "d",
+    "i",
+    "w"
+   ],
+   "name": "diw",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hello",
+   "vim_text": " world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "d",
+    "a",
+    "w"
+   ],
+   "name": "daw",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hello ",
+   "vim_text": "world\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "w",
+    "d",
+    "i",
+    "w"
+   ],
+   "name": "diw_mid",
+   "vim_cursor": [
+    0,
+    4
+   ],
+   "vim_register": "two",
+   "vim_text": "one  three four\n"
+  },
+  {
+   "buffer": "trailing spaces   \n",
+   "keys": [
+    "$",
+    "d",
+    "a",
+    "w"
+   ],
+   "name": "daw_eol",
+   "vim_cursor": [
+    0,
+    17
+   ],
+   "vim_register": "",
+   "vim_text": "trailing spaces   \n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "d",
+    "2",
+    "a",
+    "w"
+   ],
+   "name": "d2aw",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "one two ",
+   "vim_text": "three four\n"
+  },
+  {
+   "buffer": "snake_case word-here and CAPS\n",
+   "keys": [
+    "d",
+    "i",
+    "W"
+   ],
+   "name": "diW",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "snake_case",
+   "vim_text": " word-here and CAPS\n"
+  },
+  {
+   "buffer": "snake_case word-here and CAPS\n",
+   "keys": [
+    "d",
+    "a",
+    "W"
+   ],
+   "name": "daW",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "snake_case ",
+   "vim_text": "word-here and CAPS\n"
+  },
+  {
+   "buffer": "a  b   c\n",
+   "keys": [
+    "l",
+    "d",
+    "i",
+    "w"
+   ],
+   "name": "diw_ws",
+   "vim_cursor": [
+    0,
+    1
+   ],
+   "vim_register": "  ",
+   "vim_text": "ab   c\n"
+  },
+  {
+   "buffer": "a  b   c\n",
+   "keys": [
+    "l",
+    "d",
+    "a",
+    "w"
+   ],
+   "name": "daw_ws",
+   "vim_cursor": [
+    0,
+    1
+   ],
+   "vim_register": "  b",
+   "vim_text": "a   c\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "c",
+    "i",
+    "w",
+    "X",
+    "<Esc>"
+   ],
+   "name": "ciw",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hello",
+   "vim_text": "X world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "y",
+    "i",
+    "w",
+    "$",
+    "p"
+   ],
+   "name": "yiw_p",
+   "vim_cursor": [
+    0,
+    15
+   ],
+   "vim_register": "hello",
+   "vim_text": "hello worldhello\n"
+  },
+  {
+   "buffer": "(foo [bar] {baz})\n",
+   "keys": [
+    "d",
+    "i",
+    "("
+   ],
+   "name": "dipar",
+   "vim_cursor": [
+    0,
+    1
+   ],
+   "vim_register": "foo [bar] {baz}",
+   "vim_text": "()\n"
+  },
+  {
+   "buffer": "(foo [bar] {baz})\n",
+   "keys": [
+    "d",
+    "a",
+    "("
+   ],
+   "name": "dapar",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "(foo [bar] {baz})",
+   "vim_text": "\n"
+  },
+  {
+   "buffer": "(foo [bar] {baz})\n",
+   "keys": [
+    "w",
+    "d",
+    "i",
+    "["
+   ],
+   "name": "dibracket",
+   "vim_cursor": [
+    0,
+    6
+   ],
+   "vim_register": "bar",
+   "vim_text": "(foo [] {baz})\n"
+  },
+  {
+   "buffer": "(foo [bar] {baz})\n",
+   "keys": [
+    "w",
+    "d",
+    "a",
+    "["
+   ],
+   "name": "dabracket",
+   "vim_cursor": [
+    0,
+    5
+   ],
+   "vim_register": "[bar]",
+   "vim_text": "(foo  {baz})\n"
+  },
+  {
+   "buffer": "(foo [bar] {baz})\n",
+   "keys": [
+    "2",
+    "w",
+    "d",
+    "i",
+    "{"
+   ],
+   "name": "dibrace",
+   "vim_cursor": [
+    0,
+    12
+   ],
+   "vim_register": "baz",
+   "vim_text": "(foo [bar] {})\n"
+  },
+  {
+   "buffer": "(foo [bar] {baz})\n",
+   "keys": [
+    "2",
+    "w",
+    "d",
+    "a",
+    "{"
+   ],
+   "name": "dabrace",
+   "vim_cursor": [
+    0,
+    11
+   ],
+   "vim_register": "{baz}",
+   "vim_text": "(foo [bar] )\n"
+  },
+  {
+   "buffer": "((nested (deep)) outer)\n",
+   "keys": [
+    "4",
+    "l",
+    "d",
+    "i",
+    "("
+   ],
+   "name": "dinested",
+   "vim_cursor": [
+    0,
+    2
+   ],
+   "vim_register": "nested (deep)",
+   "vim_text": "(() outer)\n"
+  },
+  {
+   "buffer": "((nested (deep)) outer)\n",
+   "keys": [
+    "4",
+    "l",
+    "d",
+    "2",
+    "i",
+    "("
+   ],
+   "name": "d2inested",
+   "vim_cursor": [
+    0,
+    1
+   ],
+   "vim_register": "(nested (deep)) outer",
+   "vim_text": "()\n"
+  },
+  {
+   "buffer": "((nested (deep)) outer)\n",
+   "keys": [
+    "d",
+    "a",
+    "("
+   ],
+   "name": "danested_outer",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "((nested (deep)) outer)",
+   "vim_text": "\n"
+  },
+  {
+   "buffer": "(foo [bar] {baz})\n",
+   "keys": [
+    "$",
+    "d",
+    "i",
+    "("
+   ],
+   "name": "dipar_between",
+   "vim_cursor": [
+    0,
+    1
+   ],
+   "vim_register": "foo [bar] {baz}",
+   "vim_text": "()\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "d",
+    "i",
+    "("
+   ],
+   "name": "dipar_none",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "\"quoted\" and 'single'\n",
+   "keys": [
+    "d",
+    "i",
+    "\""
+   ],
+   "name": "diquote",
+   "vim_cursor": [
+    0,
+    1
+   ],
+   "vim_register": "quoted",
+   "vim_text": "\"\" and 'single'\n"
+  },
+  {
+   "buffer": "\"quoted\" and 'single'\n",
+   "keys": [
+    "d",
+    "a",
+    "\""
+   ],
+   "name": "daquote",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "\"quoted\" ",
+   "vim_text": "and 'single'\n"
+  },
+  {
+   "buffer": "\"quoted\" and 'single'\n",
+   "keys": [
+    "w",
+    "d",
+    "i",
+    "'"
+   ],
+   "name": "disquote",
+   "vim_cursor": [
+    0,
+    14
+   ],
+   "vim_register": "single",
+   "vim_text": "\"quoted\" and ''\n"
+  },
+  {
+   "buffer": "\"quoted\" and 'single'\n",
+   "keys": [
+    "w",
+    "d",
+    "a",
+    "'"
+   ],
+   "name": "dasquote",
+   "vim_cursor": [
+    0,
+    11
+   ],
+   "vim_register": " 'single'",
+   "vim_text": "\"quoted\" and\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "d",
+    "i",
+    "\""
+   ],
+   "name": "diquote_none",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "\"quoted\" and 'single'\n",
+   "keys": [
+    "d",
+    "i",
+    "\""
+   ],
+   "name": "diquote_on_open",
+   "vim_cursor": [
+    0,
+    1
+   ],
+   "vim_register": "quoted",
+   "vim_text": "\"\" and 'single'\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "d",
+    "w",
+    "."
+   ],
+   "name": "dot_dw",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "two ",
+   "vim_text": "three four\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "w",
+    "d",
+    "i",
+    "w",
+    "."
+   ],
+   "name": "dot_diw",
+   "vim_cursor": [
+    0,
+    3
+   ],
+   "vim_register": "  ",
+   "vim_text": "onethree four\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "c",
+    "w",
+    "X",
+    "<Esc>",
+    "w",
+    "."
+   ],
+   "name": "dot_cw",
+   "vim_cursor": [
+    0,
+    2
+   ],
+   "vim_register": "two",
+   "vim_text": "X X three four\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "\"",
+    "a",
+    "y",
+    "w",
+    "w",
+    "\"",
+    "a",
+    "p"
+   ],
+   "name": "named_yank_put",
+   "vim_cursor": [
+    0,
+    8
+   ],
+   "vim_register": "one ",
+   "vim_text": "one tone wo three four\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "\"",
+    "b",
+    "d",
+    "w"
+   ],
+   "name": "named_delete",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hello ",
+   "vim_text": "world\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "\"",
+    "a",
+    "y",
+    "w",
+    "y",
+    "w",
+    "\"",
+    "a",
+    "p"
+   ],
+   "name": "named_overwrite_keeps_unnamed",
+   "vim_cursor": [
+    0,
+    4
+   ],
+   "vim_register": "one ",
+   "vim_text": "oone ne two three four\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "d",
+    "w",
+    "u"
+   ],
+   "name": "undo",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hello ",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "d",
+    "w",
+    "d",
+    "w",
+    "2",
+    "u"
+   ],
+   "name": "undo_2",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "two ",
+   "vim_text": "one two three four\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "d",
+    "w",
+    "u",
+    "<C-R>"
+   ],
+   "name": "redo",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hello ",
+   "vim_text": "world\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "d",
+    "w",
+    "d",
+    "w",
+    "u",
+    "u",
+    "<C-R>",
+    "<C-R>"
+   ],
+   "name": "redo_2",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "two ",
+   "vim_text": "three four\n"
+  },
+  {
+   "buffer": "one two three four\n",
+   "keys": [
+    "d",
+    "w",
+    "d",
+    "w",
+    "u",
+    "u",
+    "2",
+    "<C-R>"
+   ],
+   "name": "redo_count",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "two ",
+   "vim_text": "three four\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "v",
+    "w",
+    "d"
+   ],
+   "name": "visual_w_d",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hello w",
+   "vim_text": "orld\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "v",
+    "e",
+    "y"
+   ],
+   "name": "visual_e_y",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hello",
+   "vim_text": "hello world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "v",
+    "i",
+    "w",
+    "d"
+   ],
+   "name": "visual_iw",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "hello",
+   "vim_text": " world\n"
+  },
+  {
+   "buffer": "line one\nline two\nline three\n",
+   "keys": [
+    "V",
+    "j",
+    "d"
+   ],
+   "name": "visual_line",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "line one\nline two\n",
+   "vim_text": "line three\n"
+  },
+  {
+   "buffer": "word. Next sentence! Third?\nMore here.\n",
+   "keys": [
+    "v",
+    ")",
+    "d"
+   ],
+   "name": "visual_paren",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "word. N",
+   "vim_text": "ext sentence! Third?\nMore here.\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "i",
+    "X",
+    "Y",
+    "<Esc>"
+   ],
+   "name": "insert_type",
+   "vim_cursor": [
+    0,
+    1
+   ],
+   "vim_register": "",
+   "vim_text": "XYhello world\n"
+  },
+  {
+   "buffer": "hello world\n",
+   "keys": [
+    "a",
+    "X",
+    "<Esc>"
+   ],
+   "name": "append",
+   "vim_cursor": [
+    0,
+    1
+   ],
+   "vim_register": "",
+   "vim_text": "hXello world\n"
+  },
+  {
+   "buffer": "line one\nline two\nline three\n",
+   "keys": [
+    "o",
+    "X",
+    "<Esc>"
+   ],
+   "name": "open_below",
+   "vim_cursor": [
+    1,
+    0
+   ],
+   "vim_register": "",
+   "vim_text": "line one\nX\nline two\nline three\n"
+  },
+  {
+   "buffer": "hello\n\nworld\n",
+   "keys": [
+    "j",
+    "w"
+   ],
+   "name": "w_empty_line",
+   "vim_cursor": [
+    2,
+    0
+   ],
+   "vim_register": "",
+   "vim_text": "hello\n\nworld\n"
+  },
+  {
+   "buffer": "hello\n\nworld\n",
+   "keys": [
+    "j",
+    "d",
+    "w"
+   ],
+   "name": "dw_empty_line",
+   "vim_cursor": [
+    1,
+    0
+   ],
+   "vim_register": "\n",
+   "vim_text": "hello\nworld\n"
+  },
+  {
+   "buffer": "a\n",
+   "keys": [
+    "e"
+   ],
+   "name": "e_single_char",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "",
+   "vim_text": "a\n"
+  },
+  {
+   "buffer": "a\n",
+   "keys": [
+    "d",
+    "e"
+   ],
+   "name": "de_single_char",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "a",
+   "vim_text": "\n"
+  },
+  {
+   "buffer": "x\n",
+   "keys": [
+    "x"
+   ],
+   "name": "x_single_char",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "x",
+   "vim_text": "\n"
+  },
+  {
+   "buffer": "   \n",
+   "keys": [
+    "d",
+    "w"
+   ],
+   "name": "dw_ws_only",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "   ",
+   "vim_text": "\n"
+  },
+  {
+   "buffer": "   \n",
+   "keys": [
+    "d",
+    "i",
+    "w"
+   ],
+   "name": "diw_ws_only",
+   "vim_cursor": [
+    0,
+    0
+   ],
+   "vim_register": "   ",
+   "vim_text": "\n"
+  },
+  {
+   "buffer": "line one\nline two\nline three\n",
+   "keys": [
+    "G",
+    "b"
+   ],
+   "name": "b_multiline",
+   "vim_cursor": [
+    1,
+    5
+   ],
+   "vim_register": "",
+   "vim_text": "line one\nline two\nline three\n"
+  },
+  {
+   "buffer": "line one\nline two\nline three\n",
+   "keys": [
+    "w"
+   ],
+   "name": "w_multiline",
+   "vim_cursor": [
+    0,
+    5
+   ],
+   "vim_register": "",
+   "vim_text": "line one\nline two\nline three\n"
+  },
+  {
+   "buffer": "line one\nline two\nline three\n",
+   "keys": [
+    "2",
+    "e"
+   ],
+   "name": "e_multiline",
+   "vim_cursor": [
+    0,
+    7
+   ],
+   "vim_register": "",
+   "vim_text": "line one\nline two\nline three\n"
+  }
+ ],
+ "generated_by": "tests/gen_vim_corpus.py (real vim oracle)"
+}
