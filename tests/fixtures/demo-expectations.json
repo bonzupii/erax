@@ -1,0 +1,1002 @@
+{
+ "unicode_version": "17.0.0",
+ "emoji_version": "16.0",
+ "generator": "gen_demo_corpus.py",
+ "width_model": "one cell per extended grapheme cluster; two cells for a cluster whose base character is East Asian Wide or Fullwidth; zero cells for a base control character",
+ "entries": [
+  {
+   "line": 21,
+   "section": "ligatures",
+   "text": "-> => ==> --> <-> <--> <==> =>> >=> <<> <>> <~ ~> ~~",
+   "clusters": 52,
+   "width": 52
+  },
+  {
+   "line": 23,
+   "section": "ligatures",
+   "text": "== === != !== <= >= <=> =< >=<",
+   "clusters": 30,
+   "width": 30
+  },
+  {
+   "line": 25,
+   "section": "ligatures",
+   "text": "&& || ||| !! ?? ??= ?. ?: |> <|",
+   "clusters": 31,
+   "width": 31
+  },
+  {
+   "line": 27,
+   "section": "ligatures",
+   "text": "+= -= *= /= //= **= %= ^= &= |= <<= >>= >>>=",
+   "clusters": 44,
+   "width": 44
+  },
+  {
+   "line": 29,
+   "section": "ligatures",
+   "text": "/* */ // /// ** *** ;; ::: :: := .. ... ....",
+   "clusters": 44,
+   "width": 44
+  },
+  {
+   "line": 36,
+   "section": "box-matrix",
+   "text": "─━│┃┄┅┆┇┈┉┊┋┌┍┎┏",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 39,
+   "section": "box-matrix",
+   "text": "┐┑┒┓└┕┖┗┘┙┚┛├┝┞┟",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 42,
+   "section": "box-matrix",
+   "text": "┠┡┢┣┤┥┦┧┨┩┪┫┬┭┮┯",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 45,
+   "section": "box-matrix",
+   "text": "┰┱┲┳┴┵┶┷┸┹┺┻┼┽┾┿",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 48,
+   "section": "box-matrix",
+   "text": "╀╁╂╃╄╅╆╇╈╉╊╋╌╍╎╏",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 51,
+   "section": "box-matrix",
+   "text": "═║╒╓╔╕╖╗╘╙╚╛╜╝╞╟",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 54,
+   "section": "box-matrix",
+   "text": "╠╡╢╣╤╥╦╧╨╩╪╫╬╭╮╯",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 57,
+   "section": "box-matrix",
+   "text": "╰╱╲╳╴╵╶╷╸╹╺╻╼╽╾╿",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 65,
+   "section": "box-families",
+   "text": "─│┌┐└┘├┤┬┴┼╴╵╶╷",
+   "clusters": 15,
+   "width": 15
+  },
+  {
+   "line": 68,
+   "section": "box-families",
+   "text": "━┃┍┎┏┑┒┓┕┖┗┙┚┛┝┞┟┠┡┢┣┥┦┧┨┩┪┫┭┮┯┰┱┲┳┵┶┷┸┹┺┻┽┾┿╀╁╂╃╄╅╆╇╈╉╊╋╸╹╺╻╼╽╾╿",
+   "clusters": 65,
+   "width": 65
+  },
+  {
+   "line": 71,
+   "section": "box-families",
+   "text": "╌╍╎╏═║╒╓╔╕╖╗╘╙╚╛╜╝╞╟╠╡╢╣╤╥╦╧╨╩╪╫╬",
+   "clusters": 33,
+   "width": 33
+  },
+  {
+   "line": 74,
+   "section": "box-families",
+   "text": "┄┅┆┇┈┉┊┋",
+   "clusters": 8,
+   "width": 8
+  },
+  {
+   "line": 77,
+   "section": "box-families",
+   "text": "╭╮╯╰",
+   "clusters": 4,
+   "width": 4
+  },
+  {
+   "line": 80,
+   "section": "box-families",
+   "text": "╱╲╳",
+   "clusters": 3,
+   "width": 3
+  },
+  {
+   "line": 86,
+   "section": "box-alignment",
+   "text": "╔═════════╗",
+   "clusters": 11,
+   "width": 11
+  },
+  {
+   "line": 88,
+   "section": "box-alignment",
+   "text": "║         ║",
+   "clusters": 11,
+   "width": 11
+  },
+  {
+   "line": 90,
+   "section": "box-alignment",
+   "text": "╚═════════╝",
+   "clusters": 11,
+   "width": 11
+  },
+  {
+   "line": 92,
+   "section": "box-alignment",
+   "text": "┌─────────┬─────────┐",
+   "clusters": 21,
+   "width": 21
+  },
+  {
+   "line": 94,
+   "section": "box-alignment",
+   "text": "│ Test    │ Result  │",
+   "clusters": 21,
+   "width": 21
+  },
+  {
+   "line": 96,
+   "section": "box-alignment",
+   "text": "├─────────┼─────────┤",
+   "clusters": 21,
+   "width": 21
+  },
+  {
+   "line": 98,
+   "section": "box-alignment",
+   "text": "│ Passed  │ ✓       │",
+   "clusters": 21,
+   "width": 21
+  },
+  {
+   "line": 100,
+   "section": "box-alignment",
+   "text": "└─────────┴─────────┘",
+   "clusters": 21,
+   "width": 21
+  },
+  {
+   "line": 105,
+   "section": "blocks",
+   "text": "▀▁▂▃▄▅▆▇█▉▊▋▌▍▎▏",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 107,
+   "section": "blocks",
+   "text": "▐░▒▓▔▕▖▗▘▙▚▛▜▝▞▟",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 109,
+   "section": "blocks",
+   "text": " ░▒▓█",
+   "clusters": 5,
+   "width": 5
+  },
+  {
+   "line": 111,
+   "section": "blocks",
+   "text": "🬀🬁🬂🬃🬄🬅🬆🬇🬈🬉🬊🬋🬌🬍🬎🬏",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 118,
+   "section": "braille",
+   "text": "⠀⠁⠂⠃⠄⠅⠆⠇⠈⠉⠊⠋⠌⠍⠎⠏",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 121,
+   "section": "braille",
+   "text": "⠐⠑⠒⠓⠔⠕⠖⠗⠘⠙⠚⠛⠜⠝⠞⠟",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 124,
+   "section": "braille",
+   "text": "⠠⠡⠢⠣⠤⠥⠦⠧⠨⠩⠪⠫⠬⠭⠮⠯",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 127,
+   "section": "braille",
+   "text": "⠰⠱⠲⠳⠴⠵⠶⠷⠸⠹⠺⠻⠼⠽⠾⠿",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 130,
+   "section": "braille",
+   "text": "⡀⡁⡂⡃⡄⡅⡆⡇⡈⡉⡊⡋⡌⡍⡎⡏",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 133,
+   "section": "braille",
+   "text": "⡐⡑⡒⡓⡔⡕⡖⡗⡘⡙⡚⡛⡜⡝⡞⡟",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 136,
+   "section": "braille",
+   "text": "⡠⡡⡢⡣⡤⡥⡦⡧⡨⡩⡪⡫⡬⡭⡮⡯",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 139,
+   "section": "braille",
+   "text": "⡰⡱⡲⡳⡴⡵⡶⡷⡸⡹⡺⡻⡼⡽⡾⡿",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 142,
+   "section": "braille",
+   "text": "⢀⢁⢂⢃⢄⢅⢆⢇⢈⢉⢊⢋⢌⢍⢎⢏",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 145,
+   "section": "braille",
+   "text": "⢐⢑⢒⢓⢔⢕⢖⢗⢘⢙⢚⢛⢜⢝⢞⢟",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 148,
+   "section": "braille",
+   "text": "⢠⢡⢢⢣⢤⢥⢦⢧⢨⢩⢪⢫⢬⢭⢮⢯",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 151,
+   "section": "braille",
+   "text": "⢰⢱⢲⢳⢴⢵⢶⢷⢸⢹⢺⢻⢼⢽⢾⢿",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 154,
+   "section": "braille",
+   "text": "⣀⣁⣂⣃⣄⣅⣆⣇⣈⣉⣊⣋⣌⣍⣎⣏",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 157,
+   "section": "braille",
+   "text": "⣐⣑⣒⣓⣔⣕⣖⣗⣘⣙⣚⣛⣜⣝⣞⣟",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 160,
+   "section": "braille",
+   "text": "⣠⣡⣢⣣⣤⣥⣦⣧⣨⣩⣪⣫⣬⣭⣮⣯",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 163,
+   "section": "braille",
+   "text": "⣰⣱⣲⣳⣴⣵⣶⣷⣸⣹⣺⣻⣼⣽⣾⣿",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 168,
+   "section": "hangul",
+   "text": "가",
+   "clusters": 1,
+   "width": 2
+  },
+  {
+   "line": 170,
+   "section": "hangul",
+   "text": "각",
+   "clusters": 1,
+   "width": 2
+  },
+  {
+   "line": 172,
+   "section": "hangul",
+   "text": "각",
+   "clusters": 1,
+   "width": 2
+  },
+  {
+   "line": 174,
+   "section": "hangul",
+   "text": "각",
+   "clusters": 1,
+   "width": 2
+  },
+  {
+   "line": 176,
+   "section": "hangul",
+   "text": "ᄀ",
+   "clusters": 1,
+   "width": 2
+  },
+  {
+   "line": 178,
+   "section": "hangul",
+   "text": "ᅡ",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 180,
+   "section": "hangul",
+   "text": "가각",
+   "clusters": 2,
+   "width": 4
+  },
+  {
+   "line": 182,
+   "section": "hangul",
+   "text": "가각간",
+   "clusters": 3,
+   "width": 6
+  },
+  {
+   "line": 188,
+   "section": "indic",
+   "text": "क्ष",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 190,
+   "section": "indic",
+   "text": "क्षि",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 192,
+   "section": "indic",
+   "text": "र्क",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 194,
+   "section": "indic",
+   "text": "ज्ञ",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 196,
+   "section": "indic",
+   "text": "ൻ",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 198,
+   "section": "indic",
+   "text": "ക്ക",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 200,
+   "section": "indic",
+   "text": "က္ခ",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 202,
+   "section": "indic",
+   "text": "ක්ෂ",
+   "clusters": 2,
+   "width": 2
+  },
+  {
+   "line": 207,
+   "section": "tibetan",
+   "text": "སྐ",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 209,
+   "section": "tibetan",
+   "text": "རྩ",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 211,
+   "section": "tibetan",
+   "text": "སྐྲ",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 216,
+   "section": "mongolian",
+   "text": "ᠮᠣᠩᠭᠣᠯ",
+   "clusters": 6,
+   "width": 6
+  },
+  {
+   "line": 218,
+   "section": "mongolian",
+   "text": "ᠪᠢᠬᠢᠭ",
+   "clusters": 5,
+   "width": 5
+  },
+  {
+   "line": 220,
+   "section": "mongolian",
+   "text": "᠍",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 226,
+   "section": "khmer",
+   "text": "ក្ក",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 228,
+   "section": "khmer",
+   "text": "ខ្មែរ",
+   "clusters": 2,
+   "width": 2
+  },
+  {
+   "line": 230,
+   "section": "khmer",
+   "text": "ក្ក្ក",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 236,
+   "section": "thai",
+   "text": "เก",
+   "clusters": 2,
+   "width": 2
+  },
+  {
+   "line": 238,
+   "section": "thai",
+   "text": "ก่",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 240,
+   "section": "thai",
+   "text": "เกา่",
+   "clusters": 3,
+   "width": 3
+  },
+  {
+   "line": 246,
+   "section": "arabic",
+   "text": "لا",
+   "clusters": 2,
+   "width": 2
+  },
+  {
+   "line": 248,
+   "section": "arabic",
+   "text": "ﷲ",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 250,
+   "section": "arabic",
+   "text": "الله",
+   "clusters": 4,
+   "width": 4
+  },
+  {
+   "line": 252,
+   "section": "arabic",
+   "text": "اــل",
+   "clusters": 4,
+   "width": 4
+  },
+  {
+   "line": 254,
+   "section": "arabic",
+   "text": "آ",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 256,
+   "section": "arabic",
+   "text": "آ",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 261,
+   "section": "hebrew",
+   "text": "שָׁלוֹם",
+   "clusters": 4,
+   "width": 4
+  },
+  {
+   "line": 263,
+   "section": "hebrew",
+   "text": "אבג",
+   "clusters": 3,
+   "width": 3
+  },
+  {
+   "line": 270,
+   "section": "bidi",
+   "text": "‪١(א)",
+   "clusters": 5,
+   "width": 5
+  },
+  {
+   "line": 272,
+   "section": "bidi",
+   "text": "‪١(٢)",
+   "clusters": 5,
+   "width": 5
+  },
+  {
+   "line": 274,
+   "section": "bidi",
+   "text": "‬١(٢)",
+   "clusters": 5,
+   "width": 5
+  },
+  {
+   "line": 276,
+   "section": "bidi",
+   "text": "א(]⁩1)",
+   "clusters": 6,
+   "width": 6
+  },
+  {
+   "line": 278,
+   "section": "bidi",
+   "text": "א‪b‬ 1 2",
+   "clusters": 8,
+   "width": 8
+  },
+  {
+   "line": 280,
+   "section": "bidi",
+   "text": "א‫b‬ 1 2",
+   "clusters": 8,
+   "width": 8
+  },
+  {
+   "line": 286,
+   "section": "variation-selectors",
+   "text": "❤︎",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 288,
+   "section": "variation-selectors",
+   "text": "❤️",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 290,
+   "section": "variation-selectors",
+   "text": "️",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 292,
+   "section": "variation-selectors",
+   "text": "〰️",
+   "clusters": 1,
+   "width": 2
+  },
+  {
+   "line": 298,
+   "section": "tags",
+   "text": "🏴󠁧󠁢󠁥󠁮󠁧󠁿",
+   "clusters": 1,
+   "width": 2
+  },
+  {
+   "line": 300,
+   "section": "tags",
+   "text": "🏴",
+   "clusters": 1,
+   "width": 2
+  },
+  {
+   "line": 306,
+   "section": "keycaps",
+   "text": "1️⃣",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 308,
+   "section": "keycaps",
+   "text": "9️⃣",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 310,
+   "section": "keycaps",
+   "text": "*️⃣",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 312,
+   "section": "keycaps",
+   "text": "#️⃣",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 318,
+   "section": "emoji-modifiers",
+   "text": "👍🏽",
+   "clusters": 1,
+   "width": 2
+  },
+  {
+   "line": 320,
+   "section": "emoji-modifiers",
+   "text": "👍🏻",
+   "clusters": 1,
+   "width": 2
+  },
+  {
+   "line": 322,
+   "section": "emoji-modifiers",
+   "text": "✋🏿",
+   "clusters": 1,
+   "width": 2
+  },
+  {
+   "line": 324,
+   "section": "emoji-modifiers",
+   "text": "🏽",
+   "clusters": 1,
+   "width": 2
+  },
+  {
+   "line": 330,
+   "section": "emoji-zwj",
+   "text": "👨‍👩‍👧‍👦",
+   "clusters": 1,
+   "width": 2
+  },
+  {
+   "line": 332,
+   "section": "emoji-zwj",
+   "text": "👩‍⚕️",
+   "clusters": 1,
+   "width": 2
+  },
+  {
+   "line": 334,
+   "section": "emoji-zwj",
+   "text": "🏳️‍🌈",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 336,
+   "section": "emoji-zwj",
+   "text": "🏴‍☠️",
+   "clusters": 1,
+   "width": 2
+  },
+  {
+   "line": 338,
+   "section": "emoji-zwj",
+   "text": "👁️‍🗨️",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 344,
+   "section": "flags",
+   "text": "🇺🇸",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 346,
+   "section": "flags",
+   "text": "🇩🇪",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 348,
+   "section": "flags",
+   "text": "🇯🇵",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 350,
+   "section": "flags",
+   "text": "🇺🇸🇺",
+   "clusters": 2,
+   "width": 2
+  },
+  {
+   "line": 352,
+   "section": "flags",
+   "text": "🇦",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 357,
+   "section": "combining-ladder",
+   "text": "é",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 359,
+   "section": "combining-ladder",
+   "text": "é́",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 361,
+   "section": "combining-ladder",
+   "text": "é́́́",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 363,
+   "section": "combining-ladder",
+   "text": "é́́́́́́́",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 365,
+   "section": "combining-ladder",
+   "text": "é́́́́́́́́́́́́́́́",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 367,
+   "section": "combining-ladder",
+   "text": "é́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 373,
+   "section": "zero-width",
+   "text": "a​b",
+   "clusters": 3,
+   "width": 3
+  },
+  {
+   "line": 375,
+   "section": "zero-width",
+   "text": "a‍b",
+   "clusters": 2,
+   "width": 2
+  },
+  {
+   "line": 377,
+   "section": "zero-width",
+   "text": "a⁠b",
+   "clusters": 3,
+   "width": 3
+  },
+  {
+   "line": 379,
+   "section": "zero-width",
+   "text": "a­b",
+   "clusters": 3,
+   "width": 3
+  },
+  {
+   "line": 381,
+   "section": "zero-width",
+   "text": "a b",
+   "clusters": 3,
+   "width": 3
+  },
+  {
+   "line": 383,
+   "section": "zero-width",
+   "text": "a b",
+   "clusters": 3,
+   "width": 3
+  },
+  {
+   "line": 385,
+   "section": "zero-width",
+   "text": "a　b",
+   "clusters": 3,
+   "width": 4
+  },
+  {
+   "line": 390,
+   "section": "control-pictures",
+   "text": "␀␁␂␃␄␅␆␇␈␉␊␋␌␍␎␏",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 392,
+   "section": "control-pictures",
+   "text": "␐␑␒␓␔␕␖␗␘␙␚␛␜␝␞␟",
+   "clusters": 16,
+   "width": 16
+  },
+  {
+   "line": 394,
+   "section": "control-pictures",
+   "text": "␠␡␢␣␤␥␦",
+   "clusters": 7,
+   "width": 7
+  },
+  {
+   "line": 400,
+   "section": "unassigned-etc",
+   "text": "￾￿",
+   "clusters": 2,
+   "width": 2
+  },
+  {
+   "line": 402,
+   "section": "unassigned-etc",
+   "text": "﷐",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 404,
+   "section": "unassigned-etc",
+   "text": "􏿿",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 406,
+   "section": "unassigned-etc",
+   "text": "",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 408,
+   "section": "unassigned-etc",
+   "text": "",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 410,
+   "section": "unassigned-etc",
+   "text": "͸",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 412,
+   "section": "unassigned-etc",
+   "text": "͹",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 414,
+   "section": "unassigned-etc",
+   "text": "㄀",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 419,
+   "section": "astral",
+   "text": "𠀋",
+   "clusters": 1,
+   "width": 2
+  },
+  {
+   "line": 421,
+   "section": "astral",
+   "text": "𐌀",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 423,
+   "section": "astral",
+   "text": "𓀀",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 425,
+   "section": "astral",
+   "text": "𐀀",
+   "clusters": 1,
+   "width": 1
+  },
+  {
+   "line": 427,
+   "section": "astral",
+   "text": "𑀩",
+   "clusters": 1,
+   "width": 1
+  }
+ ]
+}

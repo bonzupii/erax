@@ -1,97 +1,427 @@
-# Unicode Rendering Test Suite for erax
-# This file tests font fallback, ligatures, complex scripts, and bidirectional text
+# UTF-8 demo corpus for erax, generated from canonical Unicode data.
+# Unicode 17.0.0 (UCD property tables and conformance tests); Emoji 16.0
+# sequence catalogs. Generator: gen_demo_corpus.py in ~/workspace/erax-work.
+# Regenerate with: python3 gen_demo_corpus.py
+#
+# Width model: one cell per extended grapheme cluster; two cells for a
+# cluster whose base character is East Asian Wide or Fullwidth; zero cells
+# for a base control character.
+# The comment above each sample states the expected cluster count and cell
+# width, computed from the canonical data. tests/demo_corpus.rs checks
+# every sample against demo-expectations.json using the editor's own
+# segmentation and width code.
+#
+# Sample lines start with the sentinel "» ".
 
-## Programming Ligatures (should render as single glyphs in code fonts)
-→ != >= <= == === !== -> => /* */ // ++ -- ** && || |> <| <> <<< >>> <!-- --> 
 
-## Box Drawing (must align perfectly with NO gaps)
-┌─────────┬─────────┐
-│ Test    │ Result  │
-├─────────┼─────────┤
-│ Passed  │ ✓       │
-└─────────┴─────────┘
+## Programming ligatures
+# Each sample is plain ASCII: one cluster and one cell per character.
+# Ligature shaping happens in the font; the width model must not move.
+# 52 clusters, 52 cells: arrows
+» -> => ==> --> <-> <--> <==> =>> >=> <<> <>> <~ ~> ~~
+# 30 clusters, 30 cells: comparisons
+» == === != !== <= >= <=> =< >=<
+# 31 clusters, 31 cells: logic and pipes
+» && || ||| !! ?? ??= ?. ?: |> <|
+# 44 clusters, 44 cells: assignment operators
+» += -= *= /= //= **= %= ^= &= |= <<= >>= >>>=
+# 44 clusters, 44 cells: misc pairs
+» /* */ // /// ** *** ;; ::: :: := .. ... ....
 
-## Brahmi (ancient Indian script, 300 BCE)
-# Text: brāhmī (the name of the script in its own writing)
-𑀩𑁆𑀭𑀸𑀳𑁆𑀫𑀻
-# Should render: consonant clusters with combining marks above/below
-# Width: Each character is 1 cell, combiners attach to base
+## Box drawing: full repertoire matrix
+# Every box-drawing character U+2500..U+257F, in codepoint order.
+# Codepoint labels sit above each row of 16 for audit.
+# U+2500 U+2501 U+2502 U+2503 U+2504 U+2505 U+2506 U+2507 U+2508 U+2509 U+250A U+250B U+250C U+250D U+250E U+250F
+# 16 clusters, 16 cells: row U+2500..U+250F
+» ─━│┃┄┅┆┇┈┉┊┋┌┍┎┏
+# U+2510 U+2511 U+2512 U+2513 U+2514 U+2515 U+2516 U+2517 U+2518 U+2519 U+251A U+251B U+251C U+251D U+251E U+251F
+# 16 clusters, 16 cells: row U+2510..U+251F
+» ┐┑┒┓└┕┖┗┘┙┚┛├┝┞┟
+# U+2520 U+2521 U+2522 U+2523 U+2524 U+2525 U+2526 U+2527 U+2528 U+2529 U+252A U+252B U+252C U+252D U+252E U+252F
+# 16 clusters, 16 cells: row U+2520..U+252F
+» ┠┡┢┣┤┥┦┧┨┩┪┫┬┭┮┯
+# U+2530 U+2531 U+2532 U+2533 U+2534 U+2535 U+2536 U+2537 U+2538 U+2539 U+253A U+253B U+253C U+253D U+253E U+253F
+# 16 clusters, 16 cells: row U+2530..U+253F
+» ┰┱┲┳┴┵┶┷┸┹┺┻┼┽┾┿
+# U+2540 U+2541 U+2542 U+2543 U+2544 U+2545 U+2546 U+2547 U+2548 U+2549 U+254A U+254B U+254C U+254D U+254E U+254F
+# 16 clusters, 16 cells: row U+2540..U+254F
+» ╀╁╂╃╄╅╆╇╈╉╊╋╌╍╎╏
+# U+2550 U+2551 U+2552 U+2553 U+2554 U+2555 U+2556 U+2557 U+2558 U+2559 U+255A U+255B U+255C U+255D U+255E U+255F
+# 16 clusters, 16 cells: row U+2550..U+255F
+» ═║╒╓╔╕╖╗╘╙╚╛╜╝╞╟
+# U+2560 U+2561 U+2562 U+2563 U+2564 U+2565 U+2566 U+2567 U+2568 U+2569 U+256A U+256B U+256C U+256D U+256E U+256F
+# 16 clusters, 16 cells: row U+2560..U+256F
+» ╠╡╢╣╤╥╦╧╨╩╪╫╬╭╮╯
+# U+2570 U+2571 U+2572 U+2573 U+2574 U+2575 U+2576 U+2577 U+2578 U+2579 U+257A U+257B U+257C U+257D U+257E U+257F
+# 16 clusters, 16 cells: row U+2570..U+257F
+» ╰╱╲╳╴╵╶╷╸╹╺╻╼╽╾╿
 
-## Khmer (Cambodian script)
-# Text: "Khmer script" in Khmer
-អក្សរខ្មែរ
-# Should render: Stacked consonants (subscript forms) with vowel marks
-# Complex shaping: ក្ស shows subscript SA under KA
-# Width: 1-2 cells per cluster depending on combining marks
+## Box drawing: weight families
+# Same characters grouped by stroke family for visual comparison.
+# The faithfulness litmus: double stays double, dashes stay dashed,
+# arcs stay arcs. Ranges named per row.
+# U+2500..U+2577
+# 15 clusters, 15 cells: light lines, 15 chars
+» ─│┌┐└┘├┤┬┴┼╴╵╶╷
+# U+2501..U+257F
+# 65 clusters, 65 cells: heavy lines, 65 chars
+» ━┃┍┎┏┑┒┓┕┖┗┙┚┛┝┞┟┠┡┢┣┥┦┧┨┩┪┫┭┮┯┰┱┲┳┵┶┷┸┹┺┻┽┾┿╀╁╂╃╄╅╆╇╈╉╊╋╸╹╺╻╼╽╾╿
+# U+254C..U+256C
+# 33 clusters, 33 cells: double lines, 33 chars
+» ╌╍╎╏═║╒╓╔╕╖╗╘╙╚╛╜╝╞╟╠╡╢╣╤╥╦╧╨╩╪╫╬
+# U+2504..U+250B
+# 8 clusters, 8 cells: dash lines, 8 chars
+» ┄┅┆┇┈┉┊┋
+# U+256D..U+2570
+# 4 clusters, 4 cells: arc lines, 4 chars
+» ╭╮╯╰
+# U+2571..U+2573
+# 3 clusters, 3 cells: diagonal lines, 3 chars
+» ╱╲╳
 
-## Arabic (right-to-left)
-# Text: "Arabic language" 
-اللغة العربية
-# Should render: RIGHT-TO-LEFT, cursive joining forms
-# Characters change shape based on position (initial/medial/final/isolated)
-# Width: Each character ~1 cell, text flows RIGHT to LEFT
+## Box drawing: alignment
+# Nested boxes and the classic table: strokes must chain with no gaps.
+# Each row below is its own sample; together they form the figures.
+# 11 clusters, 11 cells: nested frame, top
+» ╔═════════╗
+# 11 clusters, 11 cells: nested frame, middle
+» ║         ║
+# 11 clusters, 11 cells: nested frame, bottom
+» ╚═════════╝
+# 21 clusters, 21 cells: table, top
+» ┌─────────┬─────────┐
+# 21 clusters, 21 cells: table, header
+» │ Test    │ Result  │
+# 21 clusters, 21 cells: table, separator
+» ├─────────┼─────────┤
+# 21 clusters, 21 cells: table, row
+» │ Passed  │ ✓       │
+# 21 clusters, 21 cells: table, bottom
+» └─────────┴─────────┘
 
-## Tamil (South Indian script)
-# Text: "Tamil language"
-தமிழ் மொழி
-# Should render: Rounded glyphs with vowel marks attached
-# Complex: ழி் shows vowel mark above base
-# Width: 1-2 cells per cluster
+## Block elements and shades
+# Full block range in order, then the shade ramp and a quadrant sample.
+# 16 clusters, 16 cells: U+2580..U+258F
+» ▀▁▂▃▄▅▆▇█▉▊▋▌▍▎▏
+# 16 clusters, 16 cells: U+2590..U+259F
+» ▐░▒▓▔▕▖▗▘▙▚▛▜▝▞▟
+# 5 clusters, 5 cells: shade ramp
+»  ░▒▓█
+# 16 clusters, 16 cells: quadrants sample
+» 🬀🬁🬂🬃🬄🬅🬆🬇🬈🬉🬊🬋🬌🬍🬎🬏
 
-## Hebrew (right-to-left)
-# Text: "Hebrew language"
-עברית
-# Should render: RIGHT-TO-LEFT, square block letters
-# Some letters may have dots (nikkud) above/below
-# Width: ~1 cell per letter, flows RIGHT to LEFT
+## Braille
+# All 256 braille patterns in codepoint order, 16 per row.
+# Each pattern must render its own dots, evenly spaced.
+# U+2800 U+2801 U+2802 U+2803 U+2804 U+2805 U+2806 U+2807 U+2808 U+2809 U+280A U+280B U+280C U+280D U+280E U+280F
+# 16 clusters, 16 cells: patterns U+2800..U+280F
+» ⠀⠁⠂⠃⠄⠅⠆⠇⠈⠉⠊⠋⠌⠍⠎⠏
+# U+2810 U+2811 U+2812 U+2813 U+2814 U+2815 U+2816 U+2817 U+2818 U+2819 U+281A U+281B U+281C U+281D U+281E U+281F
+# 16 clusters, 16 cells: patterns U+2810..U+281F
+» ⠐⠑⠒⠓⠔⠕⠖⠗⠘⠙⠚⠛⠜⠝⠞⠟
+# U+2820 U+2821 U+2822 U+2823 U+2824 U+2825 U+2826 U+2827 U+2828 U+2829 U+282A U+282B U+282C U+282D U+282E U+282F
+# 16 clusters, 16 cells: patterns U+2820..U+282F
+» ⠠⠡⠢⠣⠤⠥⠦⠧⠨⠩⠪⠫⠬⠭⠮⠯
+# U+2830 U+2831 U+2832 U+2833 U+2834 U+2835 U+2836 U+2837 U+2838 U+2839 U+283A U+283B U+283C U+283D U+283E U+283F
+# 16 clusters, 16 cells: patterns U+2830..U+283F
+» ⠰⠱⠲⠳⠴⠵⠶⠷⠸⠹⠺⠻⠼⠽⠾⠿
+# U+2840 U+2841 U+2842 U+2843 U+2844 U+2845 U+2846 U+2847 U+2848 U+2849 U+284A U+284B U+284C U+284D U+284E U+284F
+# 16 clusters, 16 cells: patterns U+2840..U+284F
+» ⡀⡁⡂⡃⡄⡅⡆⡇⡈⡉⡊⡋⡌⡍⡎⡏
+# U+2850 U+2851 U+2852 U+2853 U+2854 U+2855 U+2856 U+2857 U+2858 U+2859 U+285A U+285B U+285C U+285D U+285E U+285F
+# 16 clusters, 16 cells: patterns U+2850..U+285F
+» ⡐⡑⡒⡓⡔⡕⡖⡗⡘⡙⡚⡛⡜⡝⡞⡟
+# U+2860 U+2861 U+2862 U+2863 U+2864 U+2865 U+2866 U+2867 U+2868 U+2869 U+286A U+286B U+286C U+286D U+286E U+286F
+# 16 clusters, 16 cells: patterns U+2860..U+286F
+» ⡠⡡⡢⡣⡤⡥⡦⡧⡨⡩⡪⡫⡬⡭⡮⡯
+# U+2870 U+2871 U+2872 U+2873 U+2874 U+2875 U+2876 U+2877 U+2878 U+2879 U+287A U+287B U+287C U+287D U+287E U+287F
+# 16 clusters, 16 cells: patterns U+2870..U+287F
+» ⡰⡱⡲⡳⡴⡵⡶⡷⡸⡹⡺⡻⡼⡽⡾⡿
+# U+2880 U+2881 U+2882 U+2883 U+2884 U+2885 U+2886 U+2887 U+2888 U+2889 U+288A U+288B U+288C U+288D U+288E U+288F
+# 16 clusters, 16 cells: patterns U+2880..U+288F
+» ⢀⢁⢂⢃⢄⢅⢆⢇⢈⢉⢊⢋⢌⢍⢎⢏
+# U+2890 U+2891 U+2892 U+2893 U+2894 U+2895 U+2896 U+2897 U+2898 U+2899 U+289A U+289B U+289C U+289D U+289E U+289F
+# 16 clusters, 16 cells: patterns U+2890..U+289F
+» ⢐⢑⢒⢓⢔⢕⢖⢗⢘⢙⢚⢛⢜⢝⢞⢟
+# U+28A0 U+28A1 U+28A2 U+28A3 U+28A4 U+28A5 U+28A6 U+28A7 U+28A8 U+28A9 U+28AA U+28AB U+28AC U+28AD U+28AE U+28AF
+# 16 clusters, 16 cells: patterns U+28A0..U+28AF
+» ⢠⢡⢢⢣⢤⢥⢦⢧⢨⢩⢪⢫⢬⢭⢮⢯
+# U+28B0 U+28B1 U+28B2 U+28B3 U+28B4 U+28B5 U+28B6 U+28B7 U+28B8 U+28B9 U+28BA U+28BB U+28BC U+28BD U+28BE U+28BF
+# 16 clusters, 16 cells: patterns U+28B0..U+28BF
+» ⢰⢱⢲⢳⢴⢵⢶⢷⢸⢹⢺⢻⢼⢽⢾⢿
+# U+28C0 U+28C1 U+28C2 U+28C3 U+28C4 U+28C5 U+28C6 U+28C7 U+28C8 U+28C9 U+28CA U+28CB U+28CC U+28CD U+28CE U+28CF
+# 16 clusters, 16 cells: patterns U+28C0..U+28CF
+» ⣀⣁⣂⣃⣄⣅⣆⣇⣈⣉⣊⣋⣌⣍⣎⣏
+# U+28D0 U+28D1 U+28D2 U+28D3 U+28D4 U+28D5 U+28D6 U+28D7 U+28D8 U+28D9 U+28DA U+28DB U+28DC U+28DD U+28DE U+28DF
+# 16 clusters, 16 cells: patterns U+28D0..U+28DF
+» ⣐⣑⣒⣓⣔⣕⣖⣗⣘⣙⣚⣛⣜⣝⣞⣟
+# U+28E0 U+28E1 U+28E2 U+28E3 U+28E4 U+28E5 U+28E6 U+28E7 U+28E8 U+28E9 U+28EA U+28EB U+28EC U+28ED U+28EE U+28EF
+# 16 clusters, 16 cells: patterns U+28E0..U+28EF
+» ⣠⣡⣢⣣⣤⣥⣦⣧⣨⣩⣪⣫⣬⣭⣮⣯
+# U+28F0 U+28F1 U+28F2 U+28F3 U+28F4 U+28F5 U+28F6 U+28F7 U+28F8 U+28F9 U+28FA U+28FB U+28FC U+28FD U+28FE U+28FF
+# 16 clusters, 16 cells: patterns U+28F0..U+28FF
+» ⣰⣱⣲⣳⣴⣵⣶⣷⣸⣹⣺⣻⣼⣽⣾⣿
 
-## Thai (no spaces between words)
-# Text: "Thai language"
-ภาษาไทย
-# Should render: No word boundaries, tone marks above consonants
-# Complex: Vowels can appear above, below, before, or after consonants
-# Width: 1 cell per character, tone marks combine with base
+## Hangul Jamo
+# Leading consonant, vowel, and trailing consonant join one cluster.
+# 1 cluster, 2 cells: L+V joins
+» 가
+# 1 cluster, 2 cells: L+V+T joins
+» 각
+# 1 cluster, 2 cells: LV+T joins
+» 각
+# 1 cluster, 2 cells: single LVT syllable
+» 각
+# 1 cluster, 2 cells: lone leading consonant
+» ᄀ
+# 1 cluster, 1 cell: lone vowel
+» ᅡ
+# 2 clusters, 4 cells: two syllables
+» 가각
+# 3 clusters, 6 cells: precomposed trio
+» 가각간
 
-## CJK Full-Width (East Asian)
-# Text: Japanese "Hello" in Katakana
-こんにちは
-# Should render: Wide characters, each takes 2 cells
-# Width: EXACTLY 2 cells per character, must align with double-width grid
+## Indic conjuncts
+# Virama-joined consonants form one cluster per the rules, even
+# when the shaper stacks them into a single visual conjunct.
+# 1 cluster, 1 cell: Devanagari kssa
+» क्ष
+# 1 cluster, 1 cell: Devanagari kssi
+» क्षि
+# 1 cluster, 1 cell: Devanagari rka, repha form
+» र्क
+# 1 cluster, 1 cell: Devanagari jnya
+» ज्ञ
+# 1 cluster, 1 cell: Malayalam chillu n
+» ൻ
+# 1 cluster, 1 cell: Malayalam kka
+» ക്ക
+# 1 cluster, 1 cell: Myanmar subjoined kha
+» က္ခ
+# 2 clusters, 2 cells: Sinhala kssa (al-lakuna is InCB Extend, not a linker)
+» ක්ෂ
 
-## Emoji and Modifiers
-👨‍👩‍👧‍👦 👍🏿 🇯🇵
-# Should render: Family emoji (ZWJ sequence), thumbs up with skin tone, flag
-# Width: 2 cells per emoji, modifiers combine with base
+## Tibetan stacks
+# Subjoined letters are combining marks: they ride the base cluster.
+# 1 cluster, 1 cell: sa with subjoined ka
+» སྐ
+# 1 cluster, 1 cell: ra with subjoined ta
+» རྩ
+# 1 cluster, 1 cell: sa with subjoined ka and ra
+» སྐྲ
 
-## Mixed Bidirectional Text (BiDi algorithm test)
-Hello עברית world اللغة test
-# Should render: LTR English, then RTL Hebrew, then LTR English, then RTL Arabic
-# Cursor navigation must follow LOGICAL order, not visual order
+## Mongolian
+# Letters are spacing: one cluster each. FVS selectors combine.
+# 6 clusters, 6 cells: word: mongol
+» ᠮᠣᠩᠭᠣᠯ
+# 5 clusters, 5 cells: word: bichig
+» ᠪᠢᠬᠢᠭ
+# 1 cluster, 1 cell: lone free variation selector
+» ᠍
 
-## Combining Diacriticals (stacking test)
-e̷̢̗͙̲̫̠̎͊̆̈̀ͅ ̴̡͓̝͖̈́͌̎̿Z̴̰̘̈́̍̕a̷̰̓̈́l̶̰̈́ģ̶̣̈o̷̦̐̌ ̸̰̈́̈t̵̰̐e̷̡͙͊x̷̣̌t̷͙̐
-# Should render: Base characters with multiple combining marks
-# Width: 1 cell per base, marks stack vertically
+## Khmer coeng stacks
+# The coeng sign is an Indic conjunct linker: consonant-linker runs
+# hold as one cluster under rule GB9c, matching the visual stack.
+# 1 cluster, 1 cell: ka with coeng ka
+» ក្ក
+# 2 clusters, 2 cells: khmer with vowel
+» ខ្មែរ
+# 1 cluster, 1 cell: deep coeng stack
+» ក្ក្ក
 
-## Control Characters and Whitespace
-Tab:	<- Should advance to next tab stop (default 8 spaces)
-NBSP: <--> should not break
-ZWSP:​<-invisible width joiner
+## Thai
+# Preposed vowels are spacing letters: they stand as own clusters,
+# ahead of the consonant they logically follow.
+# 2 clusters, 2 cells: sara e before ko kai
+» เก
+# 1 cluster, 1 cell: ko kai with mai ek
+» ก่
+# 3 clusters, 3 cells: sara e, ko, sara aa, mai tho
+» เกา่
 
-## Performance Stress Test (100 chars of mixed scripts)
-ABCDEFGHIJאבגדهويきくけこ한글தமிழ்ខ្មែรไทยABCDEFGHIJאבגדهويきくけこ한글தமிழ்ខ្មែរไทยABCDEFGHIJאבגדهويきくけこ한글தமிழ்ខ្មែរไทย
+## Arabic shaping
+# Lam-alef is a rendering ligature of two clusters, not one.
+# Tatweel is a spacing letter: each one is its own cluster.
+# 2 clusters, 2 cells: lam-alef pair
+» لا
+# 1 cluster, 1 cell: allah ligature, single char
+» ﷲ
+# 4 clusters, 4 cells: allah spelled out
+» الله
+# 4 clusters, 4 cells: alef, tatweels, lam
+» اــل
+# 1 cluster, 1 cell: alef with madda, precomposed
+» آ
+# 1 cluster, 1 cell: alef with madda, decomposed
+» آ
 
-## Expected Behavior Summary:
-1. Ligatures: Multi-char sequences render as single glyphs in monospace fonts
-2. Box drawing: Perfect alignment, zero gaps between characters
-3. Brahmi: Ancient script with combining marks, rare font required
-4. Khmer: Complex subscript stacking, advanced shaping needed
-5. Arabic: RTL, cursive joining, contextual forms
-6. Tamil: Rounded script with vowel marks
-7. Hebrew: RTL, block letters
-8. Thai: No word spaces, tone marks above/below
-9. CJK: EXACTLY 2 cells wide, full-width characters
-10. Emoji: 2 cells wide, ZWJ sequences combine multiple emoji
-11. BiDi: Mixed LTR/RTL text, cursor follows logical not visual order
-12. Combining marks: Stack above/below base character
-13. Control chars: Tab stops, non-breaking spaces, zero-width joiners
+## Hebrew with nikkud
+# Vowel points and the shin dot are combining marks on the letter.
+# 4 clusters, 4 cells: shalom with points
+» שָׁלוֹם
+# 3 clusters, 3 cells: plain alef bet gimel
+» אבג
+
+## Bidirectional runs
+# From BidiCharacterTest.txt. The visual order in each note is the
+# expected on-screen order; the model counts clusters left to right.
+# Override and isolate controls are invisible but load-bearing.
+# 5 clusters, 5 cells: para 2, LRE with Hebrew+Arabic+Arabic-Indic digits; visual order 4 3 2 1
+» ‪١(א)
+# 5 clusters, 5 cells: para 2, LRE with Arabic+Arabic-Indic digits; visual order 4 3 2 1
+» ‪١(٢)
+# 5 clusters, 5 cells: para 2, PDF with Arabic+Arabic-Indic digits; visual order 4 3 2 1
+» ‬١(٢)
+# 6 clusters, 6 cells: para 0, PDI with Hebrew+European digits; visual order 5 4 3 2 1 0
+» א(]⁩1)
+# 8 clusters, 8 cells: para 0, LRE+PDF with Hebrew+European digits; visual order 2 0 4 5 6 7
+» א‪b‬ 1 2
+# 8 clusters, 8 cells: para 0, RLE+PDF with Hebrew+European digits; visual order 7 6 5 4 2 0
+» א‫b‬ 1 2
+
+## Variation selectors
+# Selectors combine onto the base: one cluster either way.
+# Text versus emoji presentation is a rendering choice.
+# 1 cluster, 1 cell: heart with text presentation
+» ❤︎
+# 1 cluster, 1 cell: heart with emoji presentation
+» ❤️
+# 1 cluster, 1 cell: lone variation selector 16
+» ️
+# 1 cluster, 2 cells: wavy dash with emoji presentation
+» 〰️
+
+## Tag characters
+# Tags are Extend, so a subdivision flag is one long cluster.
+# The model counts it as one cluster; the width is the base's.
+# 1 cluster, 2 cells: england subdivision flag
+» 🏴󠁧󠁢󠁥󠁮󠁧󠁿
+# 1 cluster, 2 cells: waving black flag alone
+» 🏴
+
+## Keycap sequences
+# Digit or sign plus selectors: one cluster, narrow base.
+# Sequences sourced from emoji-sequences.txt.
+# 1 cluster, 1 cell: keycap digit one
+» 1️⃣
+# 1 cluster, 1 cell: keycap digit nine
+» 9️⃣
+# 1 cluster, 1 cell: keycap asterisk
+» *️⃣
+# 1 cluster, 1 cell: keycap number sign
+» #️⃣
+
+## Emoji skin-tone modifiers
+# Base plus modifier is one cluster; the lone modifier is its own.
+# Watch the lone modifier: narrow base under the model.
+# 1 cluster, 2 cells: thumbs up, medium skin tone
+» 👍🏽
+# 1 cluster, 2 cells: thumbs up, light skin tone
+» 👍🏻
+# 1 cluster, 2 cells: raised hand, dark skin tone
+» ✋🏿
+# 1 cluster, 2 cells: lone medium skin tone modifier
+» 🏽
+
+## Emoji ZWJ sequences
+# ZWJ joins pictographs into one cluster per GB11.
+# Sequences sourced from emoji-zwj-sequences.txt.
+# 1 cluster, 2 cells: family
+» 👨‍👩‍👧‍👦
+# 1 cluster, 2 cells: woman health worker
+» 👩‍⚕️
+# 1 cluster, 1 cell: rainbow flag
+» 🏳️‍🌈
+# 1 cluster, 2 cells: pirate flag
+» 🏴‍☠️
+# 1 cluster, 1 cell: eye in speech bubble
+» 👁️‍🗨️
+
+## Regional indicator flags
+# Pairs join one cluster; an odd trailing indicator stands alone.
+# The base is Narrow, so each flag cluster is one cell.
+# 1 cluster, 1 cell: united states
+» 🇺🇸
+# 1 cluster, 1 cell: germany
+» 🇩🇪
+# 1 cluster, 1 cell: japan
+» 🇯🇵
+# 2 clusters, 2 cells: odd indicator count
+» 🇺🇸🇺
+# 1 cluster, 1 cell: lone regional indicator
+» 🇦
+
+## Combining mark ladder
+# Bounded stacking stress: every rung is one cluster, one cell.
+# 1 cluster, 1 cell: e with 1 acute marks
+» é
+# 1 cluster, 1 cell: e with 2 acute marks
+» é́
+# 1 cluster, 1 cell: e with 4 acute marks
+» é́́́
+# 1 cluster, 1 cell: e with 8 acute marks
+» é́́́́́́́
+# 1 cluster, 1 cell: e with 16 acute marks
+» é́́́́́́́́́́́́́́́
+# 1 cluster, 1 cell: e with 32 acute marks
+» é́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́
+
+## Zero-width and space variants
+# ZWSP, word joiner, and soft hyphen are Control: they break
+# clusters and contribute zero cells. ZWJ does not break.
+# 3 clusters, 3 cells: a, zero width space, b
+» a​b
+# 2 clusters, 2 cells: a, zero width joiner, b
+» a‍b
+# 3 clusters, 3 cells: a, word joiner, b
+» a⁠b
+# 3 clusters, 3 cells: a, soft hyphen, b
+» a­b
+# 3 clusters, 3 cells: a, no-break space, b
+» a b
+# 3 clusters, 3 cells: a, narrow no-break space, b
+» a b
+# 3 clusters, 4 cells: a, ideographic space, b
+» a　b
+
+## Control pictures
+# Symbols for the C0 controls, U+2400..U+2426, in order.
+# 16 clusters, 16 cells: U+2400..U+240F
+» ␀␁␂␃␄␅␆␇␈␉␊␋␌␍␎␏
+# 16 clusters, 16 cells: U+2410..U+241F
+» ␐␑␒␓␔␕␖␗␘␙␚␛␜␝␞␟
+# 7 clusters, 7 cells: U+2420..U+2426
+» ␠␡␢␣␤␥␦
+
+## Noncharacters, private use, unassigned
+# Unassigned codepoints default to Neutral width: one cell.
+# The unassigned picks below were verified absent from UnicodeData.
+# 2 clusters, 2 cells: noncharacters FFFE FFFF
+» ￾￿
+# 1 cluster, 1 cell: noncharacter FDD0
+» ﷐
+# 1 cluster, 1 cell: noncharacter 10FFFF
+» 􏿿
+# 1 cluster, 1 cell: private use E000
+» 
+# 1 cluster, 1 cell: private use F8FF
+» 
+# 1 cluster, 1 cell: unassigned U+0378
+» ͸
+# 1 cluster, 1 cell: unassigned U+0379
+» ͹
+# 1 cluster, 1 cell: unassigned U+3100
+» ㄀
+
+## Astral plane and historic scripts
+# CJK Extension B is Wide; historic alphabets are Narrow.
+# 1 cluster, 2 cells: CJK Extension B
+» 𠀋
+# 1 cluster, 1 cell: Old Italic
+» 𐌀
+# 1 cluster, 1 cell: Egyptian hieroglyph
+» 𓀀
+# 1 cluster, 1 cell: Linear B
+» 𐀀
+# 1 cluster, 1 cell: Brahmi
+» 𑀩
