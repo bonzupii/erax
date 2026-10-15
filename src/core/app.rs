@@ -1,6 +1,5 @@
-//! This module defines the central `EditorApp` structure, which manages the entire state
-//! of the erax editor, including all open buffers, visible windows, and global configurations.
-
+//! Central editor state: buffers, windows, and global configuration.
+//!
 use crate::core::buffer::Buffer;
 use crate::core::focus::FocusManager;
 use crate::core::id::{BufferId, WindowId};
@@ -23,6 +22,13 @@ pub struct EditorApp {
     pub active_window: WindowId,
     /// Global kill ring (clipboard)
     pub kill_ring: KillRing,
+    /// Vim modal engine state (N-268). Only active when INPUT_MODEL is Modal;
+    /// the struct is inert otherwise.
+    pub modal_engine: crate::core::modal::ModalEngine,
+    /// Standard-mode clipboard register, distinct from the emacs kill-ring.
+    /// Vim registers are likewise separate; each input model's clipboard
+    /// semantics live here, not in the kill-ring.
+    pub clipboard: Option<String>,
     /// Next buffer ID to allocate
     pub next_buffer_id: usize,
     /// Next window ID to allocate
@@ -36,8 +42,10 @@ pub struct EditorApp {
 
     // Macro Recording
     pub is_recording_macro: bool,
-    pub current_macro: Vec<(String, usize)>, // (command, count)
-    pub last_macro: Vec<(String, usize)>,
+    pub current_macro: Vec<(crate::core::dispatcher::MacroStep, usize)>, // (step, count)
+    pub last_macro: Vec<(crate::core::dispatcher::MacroStep, usize)>,
+    /// True while a macro is being replayed; nested execute-macro is rejected.
+    pub executing_macro: bool,
     // Search History for "Hunt" commands
     pub last_search_query: Option<String>,
     /// Default tab width for new windows
@@ -50,8 +58,6 @@ pub struct EditorApp {
     pub calculator: crate::core::calculator::Calculator,
     /// Buffer-local word completer
     pub word_completer: crate::core::completion::WordCompleter,
-    /// Registry of commands implementing the Command pattern
-    pub command_registry: std::collections::HashMap<String, Box<dyn crate::core::command::Command>>,
     /// Snippet manager
     pub snippet_manager: crate::core::snippets::SnippetManager,
     /// Universal argument (C-u prefix) - Some(n) means next command runs n times
@@ -59,11 +65,9 @@ pub struct EditorApp {
     /// Status/error message to display to user
     pub message: Option<String>,
     /// Active diff session
-    pub diff_state: Option<crate::sed::diff::DiffState>,
+    pub diff_state: Option<crate::core::commands::diff::DiffNavState>,
     /// Terminal host session
     pub terminal_host: Option<TerminalHost>,
-    /// Dispatch depth counter for macro recursion prevention
-    pub dispatch_depth: usize,
     /// Last yank byte position (for yank-pop)
     pub last_yank_pos: Option<usize>,
     /// Last yank length in bytes (for yank-pop)
@@ -99,6 +103,8 @@ impl EditorApp {
             windows,
             active_window: window_id,
             kill_ring: KillRing::new(),
+            modal_engine: crate::core::modal::ModalEngine::new(),
+            clipboard: None,
             next_buffer_id: 1,
             next_window_id: 1,
             last_command_was_kill: false,
@@ -107,54 +113,70 @@ impl EditorApp {
             is_recording_macro: false,
             current_macro: Vec::new(),
             last_macro: Vec::new(),
+            executing_macro: false,
             last_search_query: None,
             default_tab_width: initial_tab_width,
             completion_request_timer: None,
             active_completion_request_id: None,
             calculator: crate::core::calculator::Calculator::new(),
             word_completer: crate::core::completion::WordCompleter::new(),
-            command_registry: std::collections::HashMap::new(),
             snippet_manager: crate::core::snippets::SnippetManager::new(),
             universal_argument: None,
             message: None,
             diff_state: None,
             terminal_host: None,
-            dispatch_depth: 0,
             last_yank_pos: None,
             last_yank_len: 0,
             last_command_was_yank: false,
         }
     }
 
-    /// Initialize an EditorApp with config settings and initial files.
+    /// Initialize an EditorApp with the compile-time config and initial files.
     ///
     /// This consolidates the duplicated setup code from run_terminal_mode
-    /// and run_gui_mode: applying tab width, registering commands, and
-    /// loading the initial file.
-    pub fn initialize_with_config(
-        config: &crate::config::Config,
-        files: &[std::path::PathBuf],
-    ) -> Self {
-        use crate::config::ConfigValue;
-
+    /// and run_gui_mode: applying tab width from the typed config and loading
+    /// the initial files.
+    pub fn initialize(files: &[std::path::PathBuf]) -> Self {
         let mut app = Self::new();
 
-        // Apply tab width from config
-        if let Some(ConfigValue::Int(tab_width)) = config.settings.get("tab_width") {
-            app.default_tab_width = *tab_width as usize;
-            if let Some(window) = app.windows.get_mut(&WindowId(0)) {
-                window.tab_width = *tab_width as usize;
-            }
+        // Apply tab width from the typed config.
+        app.default_tab_width = crate::config::editor::TAB_WIDTH;
+        if let Some(window) = app.windows.get_mut(&WindowId(0)) {
+            window.tab_width = crate::config::editor::TAB_WIDTH;
         }
 
-        // Register all commands
-        crate::core::commands::register_all(&mut app);
-
-        // Load initial file if provided
-        if let Some(file_path) = files.first() {
-            if let Ok(buffer_id) = app.load_file(file_path) {
-                if let Some(window) = app.windows.get_mut(&WindowId(0)) {
-                    window.buffer_id = buffer_id;
+        // Load initial files. A file that fails to open never becomes a
+        // silent empty buffer: undecodable bytes are opened through
+        // encoding detection (the detection report lands in the message
+        // line), and hard failures (IO, invalid path) are reported in the
+        // message line. The backend is shared by the TUI, the GUI, and the
+        // web server, so all three behave identically.
+        for file_path in files.iter().take(1) {
+            match crate::core::encoding::load_file_with_encoding(file_path) {
+                Ok(loaded) => {
+                    let buffer_id = app.alloc_buffer_id();
+                    app.buffers.insert(buffer_id, loaded.buffer);
+                    if let Some(window) = app.windows.get_mut(&WindowId(0)) {
+                        window.buffer_id = buffer_id;
+                    }
+                    if loaded.had_errors || loaded.byte_exact {
+                        let detected = loaded.detected;
+                        app.message = Some(format!(
+                            "Opened {} as {} ({:?}, {:?} confidence){}; original bytes preserved, saving unmodified writes them back verbatim",
+                            file_path.display(),
+                            detected.encoding.label(),
+                            detected.method,
+                            detected.confidence,
+                            if loaded.had_errors {
+                                "; malformed sequences replaced with U+FFFD"
+                            } else {
+                                ""
+                            },
+                        ));
+                    }
+                }
+                Err(e) => {
+                    app.message = Some(format!("{}: {e}", file_path.display()));
                 }
             }
         }
@@ -176,15 +198,34 @@ impl EditorApp {
         id
     }
 
-    /// Load a file into a new buffer
+    /// Load a file into a new buffer, byte-safe.
+    ///
+    /// Valid UTF-8 loads exactly as before. Anything else goes through
+    /// encoding detection: the buffer holds the decoded text for display and
+    /// editing, keeps the original bytes for byte-exact save while
+    /// unmodified, and the user is told what happened via the message line
+    /// (reported, never silent). I/O and path failures surface as typed
+    /// [`LoadError`]s.
     pub fn load_file(
         &mut self,
         path: impl AsRef<Path>,
-    ) -> Result<BufferId, Box<dyn std::error::Error>> {
-        let buffer = Buffer::from_file(path)?;
+    ) -> Result<BufferId, crate::core::buffer::LoadError> {
+        let loaded = crate::core::encoding::load_file_with_encoding(path.as_ref())?;
+        if loaded.had_errors || loaded.detected.encoding != crate::core::encoding::Encoding::Utf8
+        {
+            self.message = Some(format!(
+                "{}: opened as {}{}",
+                path.as_ref().display(),
+                loaded.detected.encoding.label(),
+                if loaded.had_errors {
+                    "; invalid sequences shown as U+FFFD, original bytes kept for byte-exact save"
+                } else {
+                    ""
+                },
+            ));
+        }
         let buffer_id = self.alloc_buffer_id();
-
-        self.buffers.insert(buffer_id, buffer);
+        self.buffers.insert(buffer_id, loaded.buffer);
 
         Ok(buffer_id)
     }
@@ -325,8 +366,8 @@ impl EditorApp {
 
     /// Move cursor to specific byte offset
     pub fn goto_byte(&mut self, byte_offset: usize) {
-        if let Some(window) = self.windows.get_mut(&self.active_window) {
-            if let Some(buffer) = self.buffers.get(&window.buffer_id) {
+        if let Some(window) = self.windows.get_mut(&self.active_window)
+            && let Some(buffer) = self.buffers.get(&window.buffer_id) {
                 let line_idx = buffer.byte_to_line(byte_offset);
                 if let Some(line_start_byte) = buffer.line_to_byte(line_idx) {
                     let col_byte_offset = byte_offset.saturating_sub(line_start_byte);
@@ -354,7 +395,6 @@ impl EditorApp {
                     }
                 }
             }
-        }
     }
 
     /// Get the word under the cursor in the active buffer.
@@ -422,5 +462,43 @@ mod tests {
         let window_id = app.create_window(buffer_id);
         assert_eq!(app.windows.len(), 2);
         assert!(app.windows.contains_key(&window_id));
+    }
+
+    #[test]
+    fn initialize_opens_torture_test_with_decoding_report() {
+        let app = EditorApp::initialize(&[std::path::PathBuf::from(
+            "demos/UTF-8-test.txt",
+        )]);
+        let buffer = app.active_buffer().expect("a buffer is open");
+        assert!(
+            buffer.filename.is_some(),
+            "the torture-test file must open, not fall back to an unnamed buffer"
+        );
+        let msg = app.message.as_deref().unwrap_or("");
+        assert!(
+            msg.contains("windows-1252"),
+            "decoding must be reported, got: {msg:?}"
+        );
+    }
+
+    #[test]
+    fn initialize_reports_unopenable_file() {
+        let app = EditorApp::initialize(&[std::path::PathBuf::from(
+            "demos/does-not-exist-erax-probe.txt",
+        )]);
+        let msg = app.message.as_deref().unwrap_or("");
+        assert!(
+            msg.contains("does-not-exist-erax-probe.txt"),
+            "the failure must name the file, got: {msg:?}"
+        );
+    }
+
+    #[test]
+    fn initialize_clean_utf8_opens_silently() {
+        let app =
+            EditorApp::initialize(&[std::path::PathBuf::from("demos/UTF-8-demo.txt")]);
+        let buffer = app.active_buffer().expect("a buffer is open");
+        assert!(buffer.filename.is_some());
+        assert_eq!(app.message, None);
     }
 }

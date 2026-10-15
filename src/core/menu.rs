@@ -1,4 +1,4 @@
-//! Menu System
+//! Menu system data model.
 //!
 //! Menu data model used by both TUI and GUI modes.
 //! Rendering is handled by terminal/renderers/menu_renderer.rs.
@@ -9,10 +9,10 @@ pub const MENU_BAR_HEIGHT_CELLS: usize = 1;
 /// A single menu item (action or separator)
 #[derive(Clone, Debug)]
 pub enum MenuItem {
-    /// Action item with label, command name, and optional hotkey hint
+    /// Action item with label, typed command, and optional hotkey hint
     Action {
         label: &'static str,
-        command: &'static str,
+        command: crate::core::command::Command,
         hotkey: Option<&'static str>,
     },
     /// Separator line
@@ -23,7 +23,7 @@ impl MenuItem {
     /// Create an action item
     pub const fn action(
         label: &'static str,
-        command: &'static str,
+        command: crate::core::command::Command,
         hotkey: Option<&'static str>,
     ) -> Self {
         MenuItem::Action {
@@ -60,48 +60,56 @@ impl Menu {
         }
     }
 
-    /// Move selection down
+    /// Move selection down.
+    ///
+    /// If every item is a separator the selection is left unchanged rather
+    /// than spinning forever (L-001).
     pub fn select_next(&mut self) {
         let max = self.items.len();
         if max == 0 {
             return;
         }
 
-        let mut idx = match self.selected {
-            Some(i) => i,
-            None => 0,
-        };
+        let start = self.selected.unwrap_or(0) % max;
+        let mut idx = start;
         loop {
             idx = (idx + 1) % max;
             if !matches!(self.items.get(idx), Some(MenuItem::Separator)) {
-                break;
+                self.selected = Some(idx);
+                return;
+            }
+            if idx == start {
+                return;
             }
         }
-        self.selected = Some(idx);
     }
 
-    /// Move selection up
+    /// Move selection up.
+    ///
+    /// If every item is a separator the selection is left unchanged rather
+    /// than spinning forever (L-001).
     pub fn select_prev(&mut self) {
         let max = self.items.len();
         if max == 0 {
             return;
         }
 
-        let mut idx = match self.selected {
-            Some(i) => i,
-            None => 0,
-        };
+        let start = self.selected.unwrap_or(0) % max;
+        let mut idx = start;
         loop {
             idx = if idx == 0 { max - 1 } else { idx - 1 };
             if !matches!(self.items.get(idx), Some(MenuItem::Separator)) {
-                break;
+                self.selected = Some(idx);
+                return;
+            }
+            if idx == start {
+                return;
             }
         }
-        self.selected = Some(idx);
     }
 
     /// Get the currently selected item's command (if any)
-    pub fn selected_command(&self) -> Option<&'static str> {
+    pub fn selected_command(&self) -> Option<crate::core::command::Command> {
         let result = self.selected.and_then(|idx| {
             #[cfg(debug_assertions)]
             eprintln!(
@@ -147,10 +155,7 @@ impl Menu {
             })
             .max();
 
-        let max_label = match max_label {
-            Some(v) => v,
-            None => 10,
-        };
+        let max_label = max_label.unwrap_or(10);
 
         max_label + 4 // padding
     }
@@ -185,15 +190,15 @@ impl MenuBar {
         Menu::new(
             "File",
             vec![
-                MenuItem::action("Find File...", "find-file", Some("^X^F")),
-                MenuItem::action("Read File...", "read-file", Some("^X^R")),
+                MenuItem::action("Find File...", crate::core::command::Command::FindFile, Some("^X^F")),
+                MenuItem::action("Read File...", crate::core::command::Command::ReadFile, Some("^X^R")),
                 MenuItem::separator(),
-                MenuItem::action("Save", "save-buffer", Some("^X^S")),
-                MenuItem::action("Write File...", "write-file", Some("^X^W")),
+                MenuItem::action("Save", crate::core::command::Command::SaveBuffer, Some("^X^S")),
+                MenuItem::action("Write File...", crate::core::command::Command::WriteFile, Some("^X^W")),
                 MenuItem::separator(),
-                MenuItem::action("Print Buffer", "print-buffer", None),
+                MenuItem::action("Print Buffer", crate::core::command::Command::PrintBuffer, None),
                 MenuItem::separator(),
-                MenuItem::action("Exit", "exit-erax", Some("^X^C")),
+                MenuItem::action("Exit", crate::core::command::Command::ExitErax, Some("^X^C")),
             ],
         )
     }
@@ -202,23 +207,23 @@ impl MenuBar {
         Menu::new(
             "Edit",
             vec![
-                MenuItem::action("Set Mark", "set-mark", Some("M-Space")),
+                MenuItem::action("Set Mark", crate::core::command::Command::SetMark, Some("M-Space")),
                 MenuItem::action(
                     "Exchange Point/Mark",
-                    "exchange-point-and-mark",
+                    crate::core::command::Command::ExchangePointAndMark,
                     Some("^X^X"),
                 ),
                 MenuItem::separator(),
-                MenuItem::action("Kill Region", "kill-region", Some("^W")),
-                MenuItem::action("Copy Region", "copy-region", Some("M-W")),
-                MenuItem::action("Yank", "yank", Some("^Y")),
+                MenuItem::action("Kill Region", crate::core::command::Command::KillRegion, Some("^W")),
+                MenuItem::action("Copy Region", crate::core::command::Command::CopyRegion, Some("M-W")),
+                MenuItem::action("Yank", crate::core::command::Command::Yank, Some("^Y")),
                 MenuItem::separator(),
-                MenuItem::action("Kill Line", "kill-to-end-of-line", Some("^K")),
-                MenuItem::action("Delete Blank Lines", "delete-blank-lines", Some("^X^O")),
+                MenuItem::action("Kill Line", crate::core::command::Command::KillToEndOfLine, Some("^K")),
+                MenuItem::action("Delete Blank Lines", crate::core::command::Command::DeleteBlankLines, Some("^X^O")),
                 MenuItem::separator(),
-                MenuItem::action("Search Forward", "search-forward", Some("^S")),
-                MenuItem::action("Search Backward", "search-backward", Some("^R")),
-                MenuItem::action("Query Replace", "query-replace", Some("M-^R")),
+                MenuItem::action("Search Forward", crate::core::command::Command::SearchForward, Some("^S")),
+                MenuItem::action("Search Backward", crate::core::command::Command::SearchReverse, Some("^R")),
+                MenuItem::action("Query Replace", crate::core::command::Command::QueryReplace, Some("M-^R")),
             ],
         )
     }
@@ -227,11 +232,11 @@ impl MenuBar {
         Menu::new(
             "View",
             vec![
-                MenuItem::action("Toggle Diagnostics", "toggle-diagnostics", None),
-                MenuItem::action("Jump to Diagnostic", "diagnostics-jump", None),
+                MenuItem::action("Toggle Diagnostics", crate::core::command::Command::ToggleDiagnostics, None),
+                MenuItem::action("Jump to Diagnostic", crate::core::command::Command::DiagnosticsJump, None),
                 MenuItem::separator(),
-                MenuItem::action("Buffer Info", "buffer-info", None),
-                MenuItem::action("What Cursor Position", "what-cursor-position", Some("^X =")),
+                MenuItem::action("Buffer Info", crate::core::command::Command::BufferInfo, None),
+                MenuItem::action("What Cursor Position", crate::core::command::Command::WhatCursorPosition, Some("^X =")),
             ],
         )
     }
@@ -240,12 +245,12 @@ impl MenuBar {
         Menu::new(
             "Buf",
             vec![
-                MenuItem::action("Next Buffer", "next-buffer", Some("^X X")),
-                MenuItem::action("Previous Buffer", "previous-buffer", None),
-                MenuItem::action("Select Buffer...", "select-buffer", Some("^X B")),
-                MenuItem::action("List Buffers", "list-buffers", Some("^X^B")),
+                MenuItem::action("Next Buffer", crate::core::command::Command::NextBuffer, Some("^X X")),
+                MenuItem::action("Previous Buffer", crate::core::command::Command::PreviousBuffer, None),
+                MenuItem::action("Select Buffer...", crate::core::command::Command::SelectBuffer, Some("^X B")),
+                MenuItem::action("List Buffers", crate::core::command::Command::ListBuffers, Some("^X^B")),
                 MenuItem::separator(),
-                MenuItem::action("Kill Buffer", "delete-buffer", Some("^X K")),
+                MenuItem::action("Kill Buffer", crate::core::command::Command::DeleteBuffer, Some("^X K")),
             ],
         )
     }
@@ -254,22 +259,22 @@ impl MenuBar {
         Menu::new(
             "Win",
             vec![
-                MenuItem::action("Split Vertical", "split-current-window", Some("^X 2")),
+                MenuItem::action("Split Vertical", crate::core::command::Command::SplitCurrentWindow, Some("^X 2")),
                 MenuItem::action(
                     "Split Horizontal",
-                    "split-window-horizontally",
+                    crate::core::command::Command::SplitWindowHorizontally,
                     Some("^X 3"),
                 ),
                 MenuItem::separator(),
-                MenuItem::action("Delete Window", "delete-window", None),
-                MenuItem::action("Delete Other Windows", "delete-other-windows", Some("^X 1")),
-                MenuItem::action("Minimize Window", "minimize-window", Some("^X 0")),
-                MenuItem::action("Window Picker", "window-picker", Some("^X 9")),
+                MenuItem::action("Delete Window", crate::core::command::Command::DeleteWindow, None),
+                MenuItem::action("Delete Other Windows", crate::core::command::Command::DeleteOtherWindows, Some("^X 1")),
+                MenuItem::action("Minimize Window", crate::core::command::Command::MinimizeWindow, Some("^X 0")),
+                MenuItem::action("Window Picker", crate::core::command::Command::WindowPicker, Some("^X 9")),
                 MenuItem::separator(),
-                MenuItem::action("Next Window", "next-window", Some("^X O")),
+                MenuItem::action("Next Window", crate::core::command::Command::NextWindow, Some("^X O")),
                 MenuItem::separator(),
-                MenuItem::action("Grow Window", "grow-window", Some("^X Z")),
-                MenuItem::action("Shrink Window", "shrink-window", Some("^X^Z")),
+                MenuItem::action("Grow Window", crate::core::command::Command::GrowWindow, Some("^X Z")),
+                MenuItem::action("Shrink Window", crate::core::command::Command::ShrinkWindow, Some("^X^Z")),
             ],
         )
     }
@@ -278,9 +283,9 @@ impl MenuBar {
         Menu::new(
             "Help",
             vec![
-                MenuItem::action("Describe Key...", "describe-key", Some("^X ?")),
-                MenuItem::action("Count Words", "count-words", None),
-                MenuItem::action("Show Position", "show-position", None),
+                MenuItem::action("Describe Key...", crate::core::command::Command::DescribeKey, Some("^X ?")),
+                MenuItem::action("Count Words", crate::core::command::Command::CountWords, None),
+                MenuItem::action("Show Position", crate::core::command::Command::ShowPosition, None),
             ],
         )
     }
@@ -331,7 +336,7 @@ impl MenuBar {
     }
 
     /// Execute the selected command (returns command name)
-    pub fn execute_selected(&mut self) -> Option<&'static str> {
+    pub fn execute_selected(&mut self) -> Option<crate::core::command::Command> {
         let cmd = self
             .active_menu
             .and_then(|idx| self.menus[idx].selected_command());
@@ -366,6 +371,49 @@ impl Default for MenuBar {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_select_next_skips_separators() {
+        let mut menu = Menu::new(
+            "t",
+            vec![
+                MenuItem::action("a", crate::core::command::Command::Undo, None),
+                MenuItem::Separator,
+                MenuItem::action("b", crate::core::command::Command::Redo, None),
+            ],
+        );
+        menu.select_next();
+        assert_eq!(menu.selected, Some(2));
+        menu.select_next();
+        assert_eq!(menu.selected, Some(0));
+    }
+
+    #[test]
+    fn test_select_prev_skips_separators() {
+        let mut menu = Menu::new(
+            "t",
+            vec![
+                MenuItem::action("a", crate::core::command::Command::Undo, None),
+                MenuItem::Separator,
+                MenuItem::action("b", crate::core::command::Command::Redo, None),
+            ],
+        );
+        menu.select_prev();
+        assert_eq!(menu.selected, Some(2));
+    }
+
+    /// L-001: an all-separator menu must not hang `select_next`/`select_prev`.
+    #[test]
+    fn test_all_separator_menu_does_not_hang() {
+        let mut menu = Menu::new(
+            "t",
+            vec![MenuItem::Separator, MenuItem::Separator, MenuItem::Separator],
+        );
+        menu.select_next();
+        assert_eq!(menu.selected, None);
+        menu.select_prev();
+        assert_eq!(menu.selected, None);
+    }
 
     #[test]
     fn test_menu_navigation() {

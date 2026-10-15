@@ -1,3 +1,4 @@
+//! Window layout: tiling geometry for splits.
 use crate::core::id::WindowId;
 
 /// Direction of a window split
@@ -131,24 +132,22 @@ impl LayoutNode {
         match self {
             Self::Leaf(_) => None, // Cannot remove leaf directly without parent context
             Self::HSplit { left, right, .. } => {
-                if let Self::Leaf(id) = **left {
-                    if id == target_id {
+                if let Self::Leaf(id) = **left
+                    && id == target_id {
                         // Remove left, replace self with right
                         let right_ids = right.window_ids();
                         let next_focus = right_ids.first().copied();
                         *self = *right.clone();
                         return next_focus;
                     }
-                }
-                if let Self::Leaf(id) = **right {
-                    if id == target_id {
+                if let Self::Leaf(id) = **right
+                    && id == target_id {
                         // Remove right, replace self with left
                         let left_ids = left.window_ids();
                         let next_focus = left_ids.last().copied();
                         *self = *left.clone();
                         return next_focus;
                     }
-                }
 
                 // Recurse
                 if let Some(focus) = left.remove_window_recursive(target_id) {
@@ -157,24 +156,22 @@ impl LayoutNode {
                 right.remove_window_recursive(target_id)
             }
             Self::VSplit { top, bottom, .. } => {
-                if let Self::Leaf(id) = **top {
-                    if id == target_id {
+                if let Self::Leaf(id) = **top
+                    && id == target_id {
                         // Remove top, replace self with bottom
                         let bottom_ids = bottom.window_ids();
                         let next_focus = bottom_ids.first().copied();
                         *self = *bottom.clone();
                         return next_focus;
                     }
-                }
-                if let Self::Leaf(id) = **bottom {
-                    if id == target_id {
+                if let Self::Leaf(id) = **bottom
+                    && id == target_id {
                         // Remove bottom, replace self with top
                         let top_ids = top.window_ids();
                         let next_focus = top_ids.last().copied();
                         *self = *top.clone();
                         return next_focus;
                     }
-                }
 
                 // Recurse
                 if let Some(focus) = top.remove_window_recursive(target_id) {

@@ -1,4 +1,4 @@
-//! Selection Model
+//! Selection model (point, mark, region).
 //!
 //! Represents text selections in the editor with support for:
 //! - Point selections (cursor position)
@@ -253,21 +253,12 @@ impl SelectionManager {
 
                     if raw_cursor >= anchor {
                         // Dragging forward: include full line (end including newline)
-                        let start_pos = match buffer.line_to_byte(line_idx) {
-                            Some(b) => b,
-                            None => 0,
-                        };
-                        let len = match buffer.line_len(line_idx) {
-                            Some(l) => l,
-                            None => 0,
-                        };
+                        let start_pos = buffer.line_to_byte(line_idx).unwrap_or_default();
+                        let len = buffer.line_len(line_idx).unwrap_or_default();
                         start_pos + len
                     } else {
                         // Dragging backward: include start of line
-                        match buffer.line_to_byte(line_idx) {
-                            Some(b) => b,
-                            None => 0,
-                        }
+                        buffer.line_to_byte(line_idx).unwrap_or_default()
                     }
                 }
             }
@@ -314,11 +305,10 @@ impl SelectionManager {
         if let Some(ref mut sel) = self.primary {
             sel.adjust_for_insert(insert_pos, insert_len);
         }
-        if let Some(ref mut mark) = self.mark {
-            if insert_pos <= *mark {
+        if let Some(ref mut mark) = self.mark
+            && insert_pos <= *mark {
                 *mark += insert_len;
             }
-        }
     }
 
     /// Adjust selection after text deletion
@@ -340,10 +330,7 @@ impl SelectionManager {
     fn find_word_boundaries(buffer: &crate::core::buffer::Buffer, pos: usize) -> (usize, usize) {
         let line_idx = buffer.byte_to_line(pos);
         if let Some(line) = buffer.line(line_idx) {
-            let line_start_byte = match buffer.line_to_byte(line_idx) {
-                Some(b) => b,
-                None => 0,
-            };
+            let line_start_byte = buffer.line_to_byte(line_idx).unwrap_or_default();
             // pos relative to line
             let rel_pos = pos.saturating_sub(line_start_byte);
 

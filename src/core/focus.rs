@@ -1,4 +1,4 @@
-//! Focus Target State Machine
+//! Focus-target state machine for input routing.
 //!
 //! Manages input focus routing between different editor components.
 //! Enables the minibuffer, completion menu, calculator, and other
@@ -160,12 +160,18 @@ impl FocusState {
         }
     }
 
-    /// Process a key event in the focused component
-    pub fn handle_key(&mut self, event: &crate::core::input::InputEvent) -> FocusResult {
+    /// Process a key event in the focused component.
+    ///
+    /// Matches on the typed [`KeyPress`]: base key plus modifiers (N-056).
+    /// Ctrl combinations are `ctrl: true` with a base `Key::Char`, not a
+    /// separate key variant.
+    pub fn handle_key(&mut self, event: &crate::core::input::KeyPress) -> FocusResult {
         use crate::core::input::Key;
+        let ctrl = |c: char| event.key == Key::Char(c) && event.ctrl && !event.alt;
         match &event.key {
             Key::Enter => FocusResult::Confirmed(self.input.clone()),
-            Key::Esc | Key::Ctrl('g') => FocusResult::Cancelled,
+            Key::Esc => FocusResult::Cancelled,
+            _ if ctrl('g') => FocusResult::Cancelled,
             Key::Backspace => {
                 self.delete_backward();
                 FocusResult::Continue
@@ -182,19 +188,35 @@ impl FocusState {
                 self.cursor_right();
                 FocusResult::Continue
             }
-            Key::Home | Key::Ctrl('a') => {
+            Key::Home => {
                 self.cursor_home();
                 FocusResult::Continue
             }
-            Key::End | Key::Ctrl('e') => {
+            _ if ctrl('a') => {
+                self.cursor_home();
+                FocusResult::Continue
+            }
+            Key::End => {
                 self.cursor_end();
                 FocusResult::Continue
             }
-            Key::Up | Key::Ctrl('p') => {
+            _ if ctrl('e') => {
+                self.cursor_end();
+                FocusResult::Continue
+            }
+            Key::Up => {
                 self.history_prev();
                 FocusResult::Continue
             }
-            Key::Down | Key::Ctrl('n') => {
+            _ if ctrl('p') => {
+                self.history_prev();
+                FocusResult::Continue
+            }
+            Key::Down => {
+                self.history_next();
+                FocusResult::Continue
+            }
+            _ if ctrl('n') => {
                 self.history_next();
                 FocusResult::Continue
             }
@@ -214,12 +236,11 @@ impl FocusState {
 
     /// Delete character before cursor (backspace)
     pub fn delete_backward(&mut self) {
-        if self.cursor > 0 {
-            if let Some(prev_char) = self.input[..self.cursor].chars().last() {
+        if self.cursor > 0
+            && let Some(prev_char) = self.input[..self.cursor].chars().last() {
                 self.cursor -= prev_char.len_utf8();
                 self.input.remove(self.cursor);
             }
-        }
     }
 
     /// Delete character at cursor (delete)
@@ -231,20 +252,18 @@ impl FocusState {
 
     /// Move cursor left
     pub fn cursor_left(&mut self) {
-        if self.cursor > 0 {
-            if let Some(prev_char) = self.input[..self.cursor].chars().last() {
+        if self.cursor > 0
+            && let Some(prev_char) = self.input[..self.cursor].chars().last() {
                 self.cursor -= prev_char.len_utf8();
             }
-        }
     }
 
     /// Move cursor right
     pub fn cursor_right(&mut self) {
-        if self.cursor < self.input.len() {
-            if let Some(next_char) = self.input[self.cursor..].chars().next() {
+        if self.cursor < self.input.len()
+            && let Some(next_char) = self.input[self.cursor..].chars().next() {
                 self.cursor += next_char.len_utf8();
             }
-        }
     }
 
     /// Move cursor to start

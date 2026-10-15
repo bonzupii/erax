@@ -1,3 +1,4 @@
+//! ID-based handle system for safe ownership management.
 /// ID-based handle system for safe ownership management
 /// Replaces pointer-based linked lists with Rust-idiomatic handles
 use std::fmt;

@@ -1,4 +1,4 @@
-//! Unified grid geometry utilities
+//! Unified grid-geometry utilities.
 //!
 //! This module provides a single source of truth for grid↔pixel coordinate math,
 //! used by both the GUI renderer and TUI input handling.

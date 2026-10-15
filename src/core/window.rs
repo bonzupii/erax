@@ -1,3 +1,4 @@
+//! Window: a viewport onto a buffer with scroll state.
 use crate::core::buffer::Buffer;
 use crate::core::id::{BufferId, WindowId};
 use crate::core::selection::SelectionManager;
@@ -139,6 +140,27 @@ impl Window {
         self.ensure_cursor_visible(buffer);
     }
 
+    /// Smart Home (VS Code behavior): move to first non-whitespace character;
+    /// if already there, move to column 0.
+    pub fn smart_home(&mut self, buffer: &Buffer) {
+        if let Some(line_text) = buffer.line(self.cursor_y) {
+            let first_non_ws = line_text
+                .char_indices()
+                .find(|(_, c)| !c.is_whitespace())
+                .map(|(i, _)| crate::core::utf8::byte_to_grapheme_col(&line_text, i))
+                .unwrap_or(0);
+            if self.cursor_x == first_non_ws {
+                self.cursor_x = 0;
+            } else {
+                self.cursor_x = first_non_ws;
+            }
+        } else {
+            self.cursor_x = 0;
+        }
+        self.update_visual_cursor(buffer);
+        self.ensure_cursor_visible(buffer);
+    }
+
     /// Move cursor to end of line
     pub fn end_of_line(&mut self, buffer: &Buffer) {
         if let Some(line_text) = buffer.line(self.cursor_y) {
@@ -180,7 +202,7 @@ impl Window {
             let mut in_word = self.cursor_x < grapheme_count
                 && !graphemes
                     .get(self.cursor_x)
-                    .map_or(true, |g| g.chars().all(|c| c.is_whitespace()));
+                    .is_none_or(|g| g.chars().all(|c| c.is_whitespace()));
 
             while self.cursor_x < grapheme_count {
                 let grapheme = graphemes[self.cursor_x];
@@ -236,7 +258,7 @@ impl Window {
             while self.cursor_x > 0
                 && graphemes
                     .get(self.cursor_x.saturating_sub(1))
-                    .map_or(false, |g| g.chars().all(|c| c.is_whitespace()))
+                    .is_some_and(|g| g.chars().all(|c| c.is_whitespace()))
             {
                 self.cursor_x -= 1;
             }
@@ -245,7 +267,7 @@ impl Window {
             while self.cursor_x > 0
                 && !graphemes
                     .get(self.cursor_x.saturating_sub(1))
-                    .map_or(true, |g| g.chars().all(|c| c.is_whitespace()))
+                    .is_none_or(|g| g.chars().all(|c| c.is_whitespace()))
             {
                 self.cursor_x -= 1;
             }
@@ -382,10 +404,7 @@ impl Window {
             }
         }
 
-        let absolute_pos = match self.get_byte_offset(buffer) {
-            Some(pos) => pos,
-            None => 0,
-        };
+        let absolute_pos = self.get_byte_offset(buffer).unwrap_or_default();
 
         // Use stack buffer to avoid heap allocation
         let mut char_buf = [0u8; 4];
@@ -422,20 +441,14 @@ impl Window {
                         self.cursor_x = 0;
                     }
                     // Now delete the newline character at cursor position
-                    let absolute_pos = match self.get_byte_offset(buffer) {
-                        Some(pos) => pos,
-                        None => 0,
-                    };
+                    let absolute_pos = self.get_byte_offset(buffer).unwrap_or_default();
                     buffer.delete(absolute_pos, 1);
                 }
                 // Else: at beginning of buffer, nothing to delete
             } else {
                 // Delete character before cursor
                 self.cursor_x -= 1;
-                let absolute_pos = match self.get_byte_offset(buffer) {
-                    Some(pos) => pos,
-                    None => 0,
-                };
+                let absolute_pos = self.get_byte_offset(buffer).unwrap_or_default();
 
                 // Get the byte length of the grapheme at cursor position
                 if let Some(ref text) = line_text {
@@ -449,10 +462,7 @@ impl Window {
             }
         } else {
             // Delete forward
-            let absolute_pos = match self.get_byte_offset(buffer) {
-                Some(pos) => pos,
-                None => 0,
-            };
+            let absolute_pos = self.get_byte_offset(buffer).unwrap_or_default();
 
             if let Some(ref text) = line_text {
                 let graphemes: Vec<&str> = crate::core::utf8::GraphemeIterator::new(text).collect();

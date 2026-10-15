@@ -1,7 +1,8 @@
-//! Shared prompt action handling for all editor modes (TUI/GUI)
+//! Shared prompt-action handling for all editor modes.
 
 use crate::core::app::EditorApp;
 use crate::core::buffer::Buffer;
+use crate::core::command::Command;
 use crate::core::dispatcher::{DispatchResult, InputAction, dispatch};
 
 /// Handle a completed prompt action at the core level
@@ -15,17 +16,21 @@ pub fn handle_prompt_action(
         InputAction::OpenFile => {
             if !input.is_empty() {
                 let path = std::path::PathBuf::from(&input);
-                match Buffer::from_file(&path) {
-                    Ok(buffer) => {
-                        let buffer_id = app.alloc_buffer_id();
-                        app.buffers.insert(buffer_id, buffer);
+                // Byte-safe open, shared with startup and diagnostics: the
+                // loader reports encoding replacements via `app.message`
+                // itself, so only set the plain confirmation when it stayed
+                // quiet.
+                match app.load_file(&path) {
+                    Ok(buffer_id) => {
                         if let Some(window) = app.windows.get_mut(&app.active_window) {
                             window.buffer_id = buffer_id;
                             window.cursor_x = 0;
                             window.cursor_y = 0;
                             window.scroll_offset = 0;
                         }
-                        app.message = Some(format!("Opened {}", input));
+                        if app.message.is_none() {
+                            app.message = Some(format!("Opened {}", input));
+                        }
                     }
                     Err(e) => {
                         app.message = Some(format!("Error: {}", e));
@@ -37,8 +42,8 @@ pub fn handle_prompt_action(
             if !input.is_empty() {
                 let path = std::path::PathBuf::from(&input);
                 let bid = app.windows.get(&app.active_window).map(|w| w.buffer_id);
-                if let Some(bid) = bid {
-                    if let Some(buffer) = app.buffers.get_mut(&bid) {
+                if let Some(bid) = bid
+                    && let Some(buffer) = app.buffers.get_mut(&bid) {
                         buffer.filename = Some(path);
                         if let Err(e) = buffer.save() {
                             app.message = Some(format!("Error: {}", e));
@@ -46,12 +51,11 @@ pub fn handle_prompt_action(
                             app.message = Some(format!("Wrote {}", input));
                         }
                     }
-                }
             }
         }
         InputAction::SearchForward => {
-            if !input.is_empty() {
-                if let Some(window) = app.windows.get_mut(&app.active_window) {
+            if !input.is_empty()
+                && let Some(window) = app.windows.get_mut(&app.active_window) {
                     let bid = window.buffer_id;
                     if let Some(buffer) = app.buffers.get(&bid) {
                         let start_pos = match window.get_byte_offset(buffer) {
@@ -60,12 +64,9 @@ pub fn handle_prompt_action(
                         };
                         if let Some(pos) = buffer.find_forward(&input, start_pos) {
                             let line = buffer.byte_to_line(pos);
-                            let line_start = match buffer.line_to_byte(line) {
-                                Some(b) => b,
-                                None => 0,
-                            };
+                            let line_start = buffer.line_to_byte(line).unwrap_or_default();
                             let col = crate::core::utf8::grapheme_count(
-                                &buffer.to_string()[line_start..pos],
+                                &buffer.content_string()[line_start..pos],
                             );
                             window.cursor_y = line;
                             window.cursor_x = col;
@@ -75,23 +76,16 @@ pub fn handle_prompt_action(
                         app.message = Some(format!("Search: {}", input));
                     }
                 }
-            }
         }
         InputAction::SearchBackward => {
-            if !input.is_empty() {
-                if let Some(window) = app.windows.get_mut(&app.active_window) {
+            if !input.is_empty()
+                && let Some(window) = app.windows.get_mut(&app.active_window) {
                     let bid = window.buffer_id;
                     if let Some(buffer) = app.buffers.get(&bid) {
-                        let cursor_pos = match window.get_byte_offset(buffer) {
-                            Some(p) => p,
-                            None => 0,
-                        };
+                        let cursor_pos = window.get_byte_offset(buffer).unwrap_or_default();
                         if let Some(found_pos) = buffer.find_backward(&input, cursor_pos) {
                             let line = buffer.byte_to_line(found_pos);
-                            let line_start = match buffer.line_to_byte(line) {
-                                Some(b) => b,
-                                None => 0,
-                            };
+                            let line_start = buffer.line_to_byte(line).unwrap_or_default();
                             let slice =
                                 buffer.get_range_as_string(line_start, found_pos - line_start);
                             let col = crate::core::utf8::grapheme_count(&slice);
@@ -103,12 +97,11 @@ pub fn handle_prompt_action(
                         app.message = Some(format!("Search backward: {}", input));
                     }
                 }
-            }
         }
         InputAction::GotoLine => {
-            if let Ok(line) = input.parse::<usize>() {
-                if line > 0 {
-                    if let Some(window) = app.windows.get_mut(&app.active_window) {
+            if let Ok(line) = input.parse::<usize>()
+                && line > 0
+                    && let Some(window) = app.windows.get_mut(&app.active_window) {
                         let bid = window.buffer_id;
                         if let Some(buffer) = app.buffers.get(&bid) {
                             let target_line = (line - 1).min(buffer.line_count().saturating_sub(1));
@@ -118,20 +111,17 @@ pub fn handle_prompt_action(
                             window.ensure_cursor_visible(buffer);
                         }
                     }
-                }
-            }
         }
         InputAction::QueryReplace => {
             if let Some((old, new)) = input.split_once('|') {
                 if !old.is_empty() {
                     let bid = app.windows.get(&app.active_window).map(|w| w.buffer_id);
-                    if let Some(bid) = bid {
-                        if let Some(buffer) = app.buffers.get_mut(&bid) {
+                    if let Some(bid) = bid
+                        && let Some(buffer) = app.buffers.get_mut(&bid) {
                             let count = buffer.replace_all(old, new);
                             buffer.modified = true;
                             app.message = Some(format!("Replaced {} occurrences", count));
                         }
-                    }
                 }
             } else {
                 app.message = Some("Format: old|new (use | as separator)".to_string());
@@ -147,10 +137,7 @@ pub fn handle_prompt_action(
                     let name = filename
                         .file_name()
                         .map(|n| n.to_string_lossy().to_string());
-                    let name = match name {
-                        Some(n) => n,
-                        None => String::new(),
-                    };
+                    let name = name.unwrap_or_default();
                     if name == input || filename.to_string_lossy().contains(&input) {
                         target_id = Some(buffer_id);
                         target_name = name;
@@ -160,15 +147,14 @@ pub fn handle_prompt_action(
                 }
             }
             if found {
-                if let Some(window) = app.windows.get_mut(&app.active_window) {
-                    if let Some(bid) = target_id {
+                if let Some(window) = app.windows.get_mut(&app.active_window)
+                    && let Some(bid) = target_id {
                         window.buffer_id = bid;
                         window.cursor_x = 0;
                         window.cursor_y = 0;
                         window.scroll_offset = 0;
                         app.message = Some(format!("Switched to {}", target_name));
                     }
-                }
             } else {
                 app.message = Some(format!("Buffer not found: {}", input));
             }
@@ -182,12 +168,11 @@ pub fn handle_prompt_action(
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     if let Some(window) = app.windows.get_mut(&app.active_window) {
                         let bid = window.buffer_id;
-                        if let Some(buffer) = app.buffers.get_mut(&bid) {
-                            if let Some(pos) = window.get_byte_offset(buffer) {
+                        if let Some(buffer) = app.buffers.get_mut(&bid)
+                            && let Some(pos) = window.get_byte_offset(buffer) {
                                 buffer.insert(pos, &content);
                                 buffer.modified = true;
                             }
-                        }
                     }
                     app.message = Some(format!("Read {}", input));
                 } else {
@@ -281,15 +266,17 @@ pub fn handle_prompt_action(
             }
         }
         InputAction::SedPreview => {
-            if !input.is_empty() {
-                if let Err(e) = crate::core::commands::diff::start_sed_diff(app, &input) {
+            if !input.is_empty()
+                && let Err(e) = crate::core::commands::diff::start_sed_diff(app, &input) {
                     app.message = Some(format!("Sed Error: {}", e));
                 }
-            }
         }
         InputAction::ExecuteNamedCommand => {
             if !input.is_empty() {
-                let result = dispatch(app, Some(&input), None, 1);
+                let result = match Command::from_name(&input) {
+                    Some(cmd) => dispatch(app, cmd, 1),
+                    None => DispatchResult::NotHandled,
+                };
                 match result {
                     DispatchResult::Success => {}
                     DispatchResult::NotHandled => {
