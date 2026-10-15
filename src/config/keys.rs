@@ -179,6 +179,8 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
     // -- terminal --
     KeyBinding { keys: &[ctrl('x'), plain(Key::Char('t')), plain(Key::Char('2'))], command: Command::SplitSpawnTerminalVertical, policy: PrefixPolicy::ExecuteLeaf },
     KeyBinding { keys: &[ctrl('x'), plain(Key::Char('t')), plain(Key::Char('3'))], command: Command::SplitSpawnTerminalHorizontal, policy: PrefixPolicy::ExecuteLeaf },
+    // C-c C-t: send the region (or current line) to the terminal.
+    KeyBinding { keys: &[ctrl('c'), ctrl('t')], command: Command::TerminalSendInput, policy: PrefixPolicy::ExecuteLeaf },
     // -- misc editing --
     KeyBinding { keys: &[ctrl('x'), ctrl('o')], command: Command::DeleteBlankLines, policy: PrefixPolicy::ExecuteLeaf },
     KeyBinding { keys: &[alt('s')], command: Command::SedPreview, policy: PrefixPolicy::ExecuteLeaf },
@@ -429,6 +431,8 @@ pub const MODAL_BINDINGS: &[ModalBinding] = &[
     ModalBinding { mode: ModalMode::Normal, key: plain(Key::Char('/')), action: ModalAction::Command(Command::SearchForward) },
     ModalBinding { mode: ModalMode::Normal, key: plain(Key::Char('?')), action: ModalAction::Command(Command::SearchReverse) },
     ModalBinding { mode: ModalMode::Normal, key: plain(Key::Char(':')), action: ModalAction::EnterMode(ModalMode::CommandLine) },
+    // F5: run the line or selection in the terminal.
+    ModalBinding { mode: ModalMode::Normal, key: plain(Key::F(5)), action: ModalAction::Command(Command::TerminalSendInput) },
     // -- visual --
     ModalBinding { mode: ModalMode::Normal, key: plain(Key::Char('v')), action: ModalAction::EnterMode(ModalMode::Visual) },
     ModalBinding { mode: ModalMode::Normal, key: plain(Key::Char('V')), action: ModalAction::VisualLine },
@@ -654,6 +658,8 @@ pub const STANDARD_BINDINGS: &[KeyBinding] = &[
     KeyBinding { keys: &[plain(Key::F(10))], command: Command::ToggleMenu, policy: PrefixPolicy::ExecuteLeaf },
     // -- terminal: the VS Code Ctrl+` idiom --
     KeyBinding { keys: &[ctrl('`')], command: Command::SpawnTerminal, policy: PrefixPolicy::ExecuteLeaf },
+    // F5: the universal run key — send the line or selection to the terminal.
+    KeyBinding { keys: &[plain(Key::F(5))], command: Command::TerminalSendInput, policy: PrefixPolicy::ExecuteLeaf },
     // -- spelling --
     KeyBinding { keys: &[plain(Key::F(7))], command: Command::SpellSuggest, policy: PrefixPolicy::ExecuteLeaf },
 ];

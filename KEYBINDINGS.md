@@ -99,6 +99,7 @@ Classic uemacs chords and prefix sequences. Unlisted printable keys insert thems
 | `C-x` `p` | `calculator` |
 | `C-x` `t` `2` | `split-spawn-terminal-vertical` |
 | `C-x` `t` `3` | `split-spawn-terminal-horizontal` |
+| `C-c` `C-t` | `terminal-send-input` |
 | `C-x` `C-o` | `delete-blank-lines` |
 | `M-s` | `sed-preview` |
 | `M-=` | `count-words` |
@@ -178,6 +179,7 @@ Counts compose (`3dw`, `d3w`); operators `d`/`y`/`c` take motions; `"` selects r
 | `:` | enter CommandLine mode |
 | `v` | enter Visual mode |
 | `V` | enter Visual-Line mode (`V`) |
+| `F5` | `terminal-send-input` |
 | `i` | enter Insert mode |
 | `I` | insert at first non-blank (`I`) |
 | `a` | append after cursor (`a`) |
@@ -330,6 +332,7 @@ Modeless: typing inserts, CUA clipboard, selection-first editing.
 | `Ins` | `toggle-overwrite-mode` |
 | `F10` | `toggle-menu` |
 | `C-`` | `spawn-terminal` |
+| `F5` | `terminal-send-input` |
 | `F7` | `spell-suggest` |
 
 ## Context keys (special buffers)

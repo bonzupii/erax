@@ -378,15 +378,7 @@ fn allowlist_covers_every_config_table_consumer() {
 /// Variants of the `Command` enum exempt from the config inventory, each
 /// with the reason recorded. Keep this empty by default: a command is a
 /// promise of behavior, and the promise belongs in config.
-const INVENTORY_EXCEPTIONS: &[(&str, &str)] = &[
-    (
-        "TerminalSendInput",
-        "placeholder: dispatches to a message saying forwarding is \
-         unimplemented, with no real behavior and no caller outside the \
-         dispatcher; remove it or implement it, but do not list it as a \
-         binding until it does something",
-    ),
-];
+const INVENTORY_EXCEPTIONS: &[(&str, &str)] = &[];
 
 /// Every `Command` variant is named in `src/config/keys.rs` — bound in a
 /// model table, recorded as a named-facility binding, or listed by name
