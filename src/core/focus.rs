@@ -22,6 +22,18 @@ pub fn focus_target_for_action(action: crate::core::dispatcher::InputAction) -> 
     }
 }
 
+/// Map a [`DispatchResult::AwaitKey`](crate::core::dispatcher::DispatchResult::AwaitKey)
+/// action to its focus target: the single rule for the one-more-keypress
+/// state, used by the TUI event loop, the modal engine, and the prompt
+/// handler alike so the three cannot drift.
+pub fn focus_target_for_await_key(action: crate::core::dispatcher::InputAction) -> FocusTarget {
+    use crate::core::dispatcher::InputAction;
+    match action {
+        InputAction::DescribeKey => FocusTarget::DescribeKey,
+        _ => FocusTarget::Editor,
+    }
+}
+
 // =============================================================================
 // FOCUS TARGET ENUM
 // =============================================================================

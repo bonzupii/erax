@@ -469,6 +469,22 @@ impl ModalEngine {
                 app.focus_manager.push(FocusState::new(target, &prompt));
                 ModalOutcome::Consumed
             }
+            DispatchResult::AwaitKey(action) => {
+                // describe-key through the modal engine: the same one-more-
+                // keypress focus the TUI event loop pushes. Dropping it
+                // left describe-key silently dead in vim mode.
+                use crate::core::focus::{FocusState, focus_target_for_await_key};
+                let target = focus_target_for_await_key(action);
+                app.focus_manager
+                    .push(FocusState::new(target, "Describe Key: "));
+                ModalOutcome::Consumed
+            }
+            DispatchResult::FileModified => {
+                app.message = Some(
+                    crate::core::dispatcher::FILE_MODIFIED_MESSAGE.to_string(),
+                );
+                ModalOutcome::Consumed
+            }
             _ => ModalOutcome::Consumed,
         }
     }
@@ -3839,6 +3855,169 @@ mod tests {
             "{} corpus mismatches (vim is the oracle):\n{}",
             failures.len(),
             failures.join("\n")
+        );
+    }
+}
+
+/// End-to-end parity for the modal input model.
+///
+/// Production reaches the engine through [`ModalEngine::handle_key`],
+/// which passes the compile-time `INPUT_MODEL` gate in Modal builds and
+/// delegates to `handle_key_inner`. Test builds compile `INPUT_MODEL` as
+/// KeyTrie, so these tests drive `handle_key_inner` directly — the real
+/// engine path, modulo the one-line gate (covered by inspection, as the
+/// existing engine tests do).
+///
+/// The contract mirrors `tests/parity.rs`: the expectation for each
+/// command is derived from one real dispatch on a fresh app, and the
+/// engine path must produce the matching observable — `ExitRequested`
+/// for `Exit`, a pushed prompt for `NeedsInput`, the describe-key focus
+/// for `AwaitKey`, the message for `Info`, consumption otherwise.
+#[cfg(test)]
+mod parity_end_to_end {
+    use super::*;
+    use crate::core::dispatcher::dispatch;
+
+    enum Expect {
+        Exit,
+        Prompt,
+        AwaitKey,
+        Message(String),
+        Consumed,
+    }
+
+    fn expect(cmd: Command) -> Expect {
+        let mut app = EditorApp::new();
+        match dispatch(&mut app, cmd, 1) {
+            DispatchResult::Exit => Expect::Exit,
+            DispatchResult::NeedsInput { .. } => Expect::Prompt,
+            DispatchResult::AwaitKey(_) => Expect::AwaitKey,
+            DispatchResult::Info(m) => Expect::Message(m),
+            _ => Expect::Consumed,
+        }
+    }
+
+    fn fresh_engine_app() -> (ModalEngine, EditorApp) {
+        (ModalEngine::new(), EditorApp::new())
+    }
+
+    fn feed(engine: &mut ModalEngine, app: &mut EditorApp, keys: &[KeyPress]) -> ModalOutcome {
+        let mut outcome = ModalOutcome::Consumed;
+        for key in keys {
+            outcome = engine.handle_key_inner(app, key);
+            if outcome == ModalOutcome::ExitRequested {
+                break;
+            }
+        }
+        outcome
+    }
+
+    fn assert_observation(app: &EditorApp, cmd: Command, outcome: ModalOutcome, path: &str) {
+        let name = cmd.name();
+        match expect(cmd) {
+            Expect::Exit => assert_eq!(
+                outcome,
+                ModalOutcome::ExitRequested,
+                "{path}: {name} must surface ExitRequested"
+            ),
+            Expect::Prompt => assert!(
+                app.focus_manager.current_state().is_some(),
+                "{path}: {name} must push a prompt on the focus manager"
+            ),
+            Expect::AwaitKey => assert_eq!(
+                app.focus_manager.current_target(),
+                crate::core::focus::FocusTarget::DescribeKey,
+                "{path}: {name} must push the describe-key focus"
+            ),
+            Expect::Message(m) => assert_eq!(
+                app.message.as_deref(),
+                Some(m.as_str()),
+                "{path}: {name} must surface its message"
+            ),
+            Expect::Consumed => assert_ne!(
+                outcome,
+                ModalOutcome::ExitRequested,
+                "{path}: {name} must not raise the exit signal"
+            ),
+        }
+    }
+
+    fn cmdline_entry_key() -> KeyPress {
+        MODAL_BINDINGS
+            .iter()
+            .find(|b| b.action == ModalAction::EnterMode(ModalMode::CommandLine))
+            .expect("modal table must bind a command-line entry")
+            .key
+    }
+
+    #[test]
+    fn modal_bindings_drive_real_dispatch() {
+        let mut failures = Vec::new();
+        for binding in MODAL_BINDINGS
+            .iter()
+            .filter(|b| b.mode == ModalMode::Normal)
+        {
+            let ModalAction::Command(cmd) = binding.action else {
+                continue;
+            };
+            let (mut engine, mut app) = fresh_engine_app();
+            let outcome = feed(&mut engine, &mut app, &[binding.key]);
+            // A tabled Normal-mode binding must be claimed by the engine,
+            // never passed through to the trie underneath.
+            if outcome == ModalOutcome::PassThrough {
+                failures.push((cmd.name(), "passed through"));
+                continue;
+            }
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                assert_observation(&app, cmd, outcome, "modal");
+            }));
+            if result.is_err() {
+                failures.push((cmd.name(), "distorted"));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "modal: invocation path failed for: {failures:?}"
+        );
+    }
+
+    #[test]
+    fn cmdline_reaches_every_command_end_to_end() {
+        let entry = cmdline_entry_key();
+        let mut failures = Vec::new();
+        for cmd in Command::all() {
+            // toggle-menu is intercepted by the event loop before dispatch;
+            // the modal engine owns no display state, so the `:` line
+            // reports the display-bound key instead. It stays reachable
+            // through F10.
+            if *cmd == Command::ToggleMenu {
+                let (mut engine, mut app) = fresh_engine_app();
+                let mut keys = vec![entry];
+                keys.extend(cmd.name().chars().map(|c| KeyPress::plain(Key::Char(c))));
+                keys.push(KeyPress::plain(Key::Enter));
+                let outcome = feed(&mut engine, &mut app, &keys);
+                assert_eq!(outcome, ModalOutcome::Consumed);
+                assert!(
+                    app.message.is_some(),
+                    "cmdline: toggle-menu must explain the display-bound key"
+                );
+                continue;
+            }
+            let (mut engine, mut app) = fresh_engine_app();
+            let mut keys = vec![entry];
+            keys.extend(cmd.name().chars().map(|c| KeyPress::plain(Key::Char(c))));
+            keys.push(KeyPress::plain(Key::Enter));
+            let outcome = feed(&mut engine, &mut app, &keys);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                assert_observation(&app, *cmd, outcome, "cmdline");
+            }));
+            if result.is_err() {
+                failures.push(cmd.name());
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "cmdline: invocation path distorted the dispatch result for: {failures:?}"
         );
     }
 }

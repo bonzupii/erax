@@ -291,6 +291,18 @@ pub fn handle_prompt_action(
                             &prompt,
                         ));
                     }
+                    DispatchResult::AwaitKey(action) => {
+                        let target = crate::core::focus::focus_target_for_await_key(action);
+                        app.focus_manager.push(crate::core::focus::FocusState::new(
+                            target,
+                            "Describe Key: ",
+                        ));
+                    }
+                    DispatchResult::FileModified => {
+                        app.message = Some(
+                            crate::core::dispatcher::FILE_MODIFIED_MESSAGE.to_string(),
+                        );
+                    }
                     DispatchResult::Exit => {
                         return Ok(true);
                     }

@@ -28,6 +28,19 @@ fn handle_dispatch_result(
             display.dirty = true;
             Ok(false)
         }
+        DispatchResult::Info(msg) => {
+            // A command carrying its own message (list-buffers,
+            // exit-and-save refusing on save errors, yank-pop): the
+            // message is the result. Dropping it left bound keys that
+            // ran fine but said nothing.
+            app.message = Some(msg);
+            display.dirty = true;
+            Ok(false)
+        }
+        DispatchResult::Redraw => {
+            display.dirty = true;
+            Ok(false)
+        }
         DispatchResult::NeedsInput { prompt, action } => {
             // Enter prompt mode via focus manager
             use crate::core::focus::{FocusState, focus_target_for_action};
@@ -37,22 +50,18 @@ fn handle_dispatch_result(
             Ok(false)
         }
         DispatchResult::AwaitKey(action) => {
-            use crate::core::focus::{FocusState, FocusTarget};
-            let target = match action {
-                InputAction::DescribeKey => FocusTarget::DescribeKey,
-                _ => FocusTarget::Editor, // Should not happen
-            };
+            use crate::core::focus::{FocusState, focus_target_for_await_key};
+            let target = focus_target_for_await_key(action);
             app.focus_manager
                 .push(FocusState::new(target, "Describe Key: "));
             display.dirty = true;
             Ok(false)
         }
         DispatchResult::FileModified => {
-            display.set_message("File changed on disk. Reload? (y/n)".into());
+            display.set_message(crate::core::dispatcher::FILE_MODIFIED_MESSAGE.into());
             display.dirty = true;
             Ok(false)
         }
-        _ => Ok(false),
     }
 }
 
@@ -498,8 +507,18 @@ fn handle_focus_input(
 
                 app.focus_manager.pop();
 
-                if let Err(e) = crate::core::prompt::handle_prompt_action(app, action, input) {
-                    app.message = Some(format!("Error: {}", e));
+                // The prompt handler reports exit through Ok(true)
+                // (M-x exit-erax, palette quit, vim `:` ex commands that
+                // dispatch Exit). Checking only Err discarded it, so those
+                // commands ran, requested exit, and the editor stayed open.
+                match crate::core::prompt::handle_prompt_action(app, action, input) {
+                    Ok(should_exit) => {
+                        display.dirty = true;
+                        return Ok(should_exit);
+                    }
+                    Err(e) => {
+                        app.message = Some(format!("Error: {}", e));
+                    }
                 }
 
                 display.dirty = true;

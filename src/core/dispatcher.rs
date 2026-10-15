@@ -59,6 +59,11 @@ pub enum DispatchResult {
     AwaitKey(InputAction), // The action expecting the key (e.g., DescribeKey)
 }
 
+/// The user-facing text for [`DispatchResult::FileModified`], shared by
+/// every consumer (TUI event loop, modal engine, prompt handler) so the
+/// three report the external-modification stop identically.
+pub const FILE_MODIFIED_MESSAGE: &str = "File changed on disk. Reload? (y/n)";
+
 /// A recorded macro step: a typed command or a character insertion (N-157,
 /// N-229). No string sentinels, no `"__insert:"` prefix encoding; insertion
 /// replays the recorded character in full.
