@@ -129,6 +129,21 @@ fn mapped_slice_at<'a>(base: *const u8, offset: usize, len: usize) -> &'a [u8] {
 /// - Under Miri there are no real signals: installation is skipped and the
 ///   guard degrades to a pass-through (documented; fault-injection tests are
 ///   `#[cfg(not(miri))]`).
+/// - `__sigsetjmp` carries no `returns_twice` metadata: the attribute is
+///   unstable and unavailable on the pinned stable toolchain, so the
+///   soundness argument is structural and must be re-checked if `guarded`
+///   changes. What LLVM's single-return assumption could break is a local
+///   that is *modified* between `sigsetjmp` and `siglongjmp` and then read
+///   — the classic setjmp hazard. Audit of `guarded`: `base`, `end`, `env`,
+///   and the closure `f` are all set before the call and never modified
+///   after it; the fault path (`jmp_val != 0`) reads only the thread-local
+///   slot (re-read, not a stale register) and drops `f` without calling
+///   it. An opaque `extern "C"` call already forces LLVM to spill
+///   caller-saved state around it per the platform ABI, and `siglongjmp`
+///   restores callee-saved registers to their call-time values, so the
+///   fault path observes the same stack memory the first pass left.
+///   Rule for future edits: no new local may be assigned between the
+///   `__sigsetjmp` call and the end of `guarded`.
 mod guard {
     use std::cell::Cell;
     #[cfg(not(miri))]
@@ -687,12 +702,9 @@ impl MmapRegion {
     /// *after* the deref is precise: if mtime is unchanged, no replacement
     /// happened before we finished reading, so the bytes are the pinned
     /// snapshot; if it changed, we discard them. One fstat per read.
-    pub fn read_guarded<T>(
-        &self,
-        offset: u64,
-        len: usize,
-        f: impl FnOnce(&[u8]) -> T,
-    ) -> Result<T, PagerError> {
+    /// Validate `[offset, offset+len)` against the open length and the
+    /// shrink cache. Shared by the guarded read primitives below.
+    fn check_range(&self, offset: u64, len: usize) -> Result<(), PagerError> {
         let end = offset
             .checked_add(len as u64)
             .ok_or(PagerError::OutOfRange {
@@ -707,10 +719,6 @@ impl MmapRegion {
                 file_len: self.len,
             });
         }
-        if len == 0 {
-            // No deref needed; run `f` on the empty slice for uniformity.
-            return Ok(f(&[]));
-        }
         // Fast path: a previous read observed a shrink covering this
         // offset — return `Truncated` without faulting (avoids a signal
         // storm of repeated SIGBUS deliveries). `cached_len` may be
@@ -722,11 +730,49 @@ impl MmapRegion {
         // which case `Truncated` is correct anyway (the file really did
         // shrink; if it regrew, the post-read fstat below refreshes the
         // cache and the next read proceeds).
-        if offset >= self.cached_len.get() {
+        if len > 0 && offset >= self.cached_len.get() {
             return Err(PagerError::Truncated {
                 offset,
                 wanted: len as u64,
             });
+        }
+        Ok(())
+    }
+
+    /// Post-read snapshot validation (one fstat): same length + different
+    /// mtime means the content was replaced (truncate+regrow or in-place
+    /// rewrite) — the bytes just read cannot be trusted, discard them.
+    /// A changed length is fine: shrinks are caught by the guard above,
+    /// and appends are invisible by design (semantic 1). The cache is
+    /// refreshed as a side effect.
+    ///
+    /// Residuals (documented): a replacement preserving mtime, or one
+    /// racing this fstat itself, is not detected — same as the pager.
+    fn post_read_check(&self, offset: u64) -> Result<(), PagerError> {
+        if let Ok(meta) = self._file.metadata() {
+            let cur_len = meta.len();
+            self.cached_len.set(cur_len);
+            if cur_len == self.len
+                && let Some(cur_mtime) = meta.modified().ok()
+                && let Some(open_mtime) = self.open_mtime
+                && cur_mtime != open_mtime
+            {
+                return Err(PagerError::FileChanged { offset });
+            }
+        }
+        Ok(())
+    }
+
+    pub fn read_guarded<T>(
+        &self,
+        offset: u64,
+        len: usize,
+        f: impl FnOnce(&[u8]) -> T,
+    ) -> Result<T, PagerError> {
+        self.check_range(offset, len)?;
+        if len == 0 {
+            // No deref needed; run `f` on the empty slice for uniformity.
+            return Ok(f(&[]));
         }
         // `ptr` is non-null: `len > 0` and `end <= self.len` imply the file
         // was non-empty at open, the only path that sets a null `ptr`.
@@ -752,27 +798,67 @@ impl MmapRegion {
                 });
             }
         };
-        // Post-read snapshot validation (one fstat): same length + different
-        // mtime means the content was replaced (truncate+regrow or in-place
-        // rewrite) — the bytes just read cannot be trusted, discard them.
-        // A changed length is fine: shrinks are caught by the guard above,
-        // and appends are invisible by design (semantic 1). The cache is
-        // refreshed as a side effect.
-        //
-        // Residuals (documented): a replacement preserving mtime, or one
-        // racing this fstat itself, is not detected — same as the pager.
-        if let Ok(meta) = self._file.metadata() {
-            let cur_len = meta.len();
-            self.cached_len.set(cur_len);
-            if cur_len == self.len
-                && let Some(cur_mtime) = meta.modified().ok()
-                && let Some(open_mtime) = self.open_mtime
-                && cur_mtime != open_mtime
-            {
-                return Err(PagerError::FileChanged { offset });
+        self.post_read_check(offset)?;
+        Ok(out)
+    }
+
+    /// Copy `[offset, offset+len)` into `out` under the SIGBUS guard.
+    ///
+    /// This is the allocation-safe bulk-read primitive. `out` is
+    /// caller-owned: the reserve happens *before* the guard is armed, and
+    /// the in-window work is a plain slice copy whose length commit is
+    /// skipped if a fault longjmps out — so `out` keeps length 0 and no
+    /// allocation owned by the window is stranded. On `Err`, `out` is left
+    /// empty (the post-read check may also reject just-read bytes).
+    ///
+    /// Prefer this over `read_guarded(offset, len, |s| s.to_vec())` for
+    /// copies: the `to_vec` closure allocates *inside* the guarded window,
+    /// and a fault during the copy `siglongjmp`s out, skipping that
+    /// allocation's destructor — a bounded leak per faulted read. No new
+    /// `unsafe` is needed here: `extend_from_slice` is safe code, and the
+    /// guard only ever skips frames below the caller's ownership of `out`.
+    pub fn read_guarded_into(
+        &self,
+        offset: u64,
+        len: usize,
+        out: &mut Vec<u8>,
+    ) -> Result<(), PagerError> {
+        // Cleared up front so the "empty on Err" contract is uniform across
+        // every error path (validation, fault, post-read rejection).
+        out.clear();
+        self.check_range(offset, len)?;
+        if len == 0 {
+            return Ok(());
+        }
+        debug_assert!(!self.ptr.is_null());
+        let base = self.ptr as usize;
+        let slice = mapped_slice_at(self.ptr, offset as usize, len);
+        // Reserved before arming: no allocation can occur inside the window
+        // whose owner would be skipped by a fault.
+        out.reserve(len);
+        let copied: Result<(), ()> = guard::guarded(base, base + self.map_len, || {
+            out.extend_from_slice(slice);
+        });
+        match copied {
+            Ok(()) => {}
+            Err(()) => {
+                // Fault mid-copy: `extend_from_slice`'s length commit was
+                // skipped, so `out` still has length 0. Refresh the cache
+                // so the fast path short-circuits subsequent reads.
+                if let Ok(meta) = self._file.metadata() {
+                    self.cached_len.set(meta.len());
+                }
+                return Err(PagerError::Truncated {
+                    offset,
+                    wanted: len as u64,
+                });
             }
         }
-        Ok(out)
+        if let Err(e) = self.post_read_check(offset) {
+            out.clear();
+            return Err(e);
+        }
+        Ok(())
     }
 
     /// Validated length.
@@ -852,6 +938,36 @@ mod region_tests {
             .read_guarded(0, 65536, |s| s.iter().filter(|&&b| b == b'\n').count())
             .expect("scan");
         assert_eq!(nls, content.iter().filter(|&&b| b == b'\n').count());
+    }
+
+    #[test]
+    fn read_guarded_into_roundtrip() {
+        let content: Vec<u8> = (0..65536u32).map(|i| (i & 0xff) as u8).collect();
+        let (_g, file) = tmp_file("into-roundtrip", &content);
+        let region = MmapRegion::new(file).expect("map failed");
+        let mut out = Vec::new();
+        // Whole range, sub-range, single byte, empty read — each must match
+        // the `read_guarded` copy path byte for byte.
+        region.read_guarded_into(0, 65536, &mut out).expect("read all");
+        assert_eq!(out, content);
+        region.read_guarded_into(1000, 5000, &mut out).expect("read sub");
+        assert_eq!(out, &content[1000..6000]);
+        region.read_guarded_into(65535, 1, &mut out).expect("read one");
+        assert_eq!(out, &[content[65535]]);
+        region.read_guarded_into(0, 0, &mut out).expect("read empty");
+        assert!(out.is_empty());
+        // Pre-filled buffer: stale contents are replaced, not appended to.
+        out.extend_from_slice(b"stale");
+        region.read_guarded_into(0, 4, &mut out).expect("overwrite");
+        assert_eq!(out, &content[0..4]);
+        // Out-of-range behaves like the generic primitive.
+        match region.read_guarded_into(3, 70000, &mut out) {
+            Err(PagerError::OutOfRange { offset, len, file_len }) => {
+                assert_eq!((offset, len, file_len), (3, 70000, 65536));
+            }
+            other => panic!("expected OutOfRange, got {other:?}"),
+        }
+        assert!(out.is_empty(), "out must be empty after a failed read");
     }
 
     #[test]

@@ -372,11 +372,17 @@ impl Backend {
     fn read(&mut self, offset: u64, len: usize) -> Result<Vec<u8>, PagerError> {
         match self {
             Backend::Pager(p) => p.read(offset, len),
-            // The copy happens INSIDE the SIGBUS guard: `to_vec`'s
-            // allocation completes before the first mapping deref, so no
-            // lock is held across the fault window (see `guard::guarded`).
+            // The copy happens INSIDE the SIGBUS guard but into
+            // caller-owned storage: `read_guarded_into` reserves before
+            // arming, so a fault mid-copy cannot strand an allocation
+            // (the old `|s| s.to_vec()` shape allocated inside the window
+            // and leaked it on the fault path — see mmap.rs).
             #[cfg(unix)]
-            Backend::Mmap(m) => m.read_guarded(offset, len, |s| s.to_vec()),
+            Backend::Mmap(m) => {
+                let mut out = Vec::new();
+                m.read_guarded_into(offset, len, &mut out)?;
+                Ok(out)
+            }
         }
     }
 

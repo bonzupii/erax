@@ -148,6 +148,50 @@ fn sigbus_handler_converts_truncation_fault_to_typed_error() {
     eprintln!("deterministic fault injection: faulted read -> typed Truncated, process alive, region reusable");
 }
 
+/// The allocation-safe copy primitive under fault injection: a fault
+/// mid-copy must yield `Truncated` with the caller's buffer left empty
+/// (no stranded allocation, no partial bytes observable).
+#[test]
+fn read_guarded_into_fault_leaves_caller_buffer_empty() {
+    let path = tmp_path("into-fault");
+    let _guard = TempGuard { paths: vec![path.clone()] };
+    const SIZE: usize = 16 * 1024 * 1024;
+    fill_file(&path, SIZE, 0x2);
+
+    let file = fs::File::open(&path).expect("open mapped file");
+    let region = MmapRegion::new(file).expect("mmap failed");
+
+    // Baseline copy through the new primitive.
+    let mut out = Vec::new();
+    region.read_guarded_into(0, 4096, &mut out).expect("baseline copy");
+    assert_eq!(out.len(), 4096);
+
+    // Truncate to zero; read at an offset never faulted in.
+    truncate_to(&path, 0);
+    let mut faulted = vec![0xAAu8; 8];
+    match region.read_guarded_into(8 * 1024 * 1024, 4096, &mut faulted) {
+        Err(PagerError::Truncated { offset, wanted }) => {
+            assert_eq!(offset, 8 * 1024 * 1024);
+            assert_eq!(wanted, 4096);
+        }
+        other => panic!("expected Truncated from faulted copy, got {other:?}"),
+    }
+    assert!(
+        faulted.is_empty(),
+        "caller buffer must be empty after a faulted copy (got {} bytes)",
+        faulted.len()
+    );
+
+    // The region stays usable; the old `to_vec`-in-window shape is gone
+    // from production, but the generic primitive still works.
+    let again = region.read_guarded(0, 16, |s| s.len());
+    assert!(
+        matches!(again, Err(PagerError::Truncated { .. })),
+        "expected Truncated after cache refresh, got {again:?}"
+    );
+    eprintln!("faulted read_guarded_into -> typed Truncated, caller buffer empty, region reusable");
+}
+
 /// Same-length content replacement must become `FileChanged`, never silent
 /// substitution.
 ///
