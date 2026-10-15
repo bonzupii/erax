@@ -7,7 +7,7 @@ invalid configuration is a compile error. Default model: KeyTrie (Emacs/uemacs).
 
 Command names are the typed `Command` enum variants rendered kebab-case.
 
-## Model 1 — KeyTrie (Emacs/uemacs, default)
+## Model 1 - KeyTrie (Emacs/uemacs, default)
 
 Classic uemacs chords and prefix sequences. Unlisted printable keys insert themselves.
 
@@ -83,6 +83,7 @@ Classic uemacs chords and prefix sequences. Unlisted printable keys insert thems
 | `C-g` | `keyboard-quit` |
 | `C-x` `B` | `select-buffer` |
 | `C-x` `K` | `delete-buffer` |
+| `C-x` `C-b` | `list-buffers` |
 | `C-x` `d` | `toggle-diagnostics` |
 | `C-x` `=` | `show-position` |
 | `C-x` `?` | `describe-key` |
@@ -101,6 +102,8 @@ Classic uemacs chords and prefix sequences. Unlisted printable keys insert thems
 | `C-x` `C-o` | `delete-blank-lines` |
 | `M-s` | `sed-preview` |
 | `M-=` | `count-words` |
+| `M-$` | `spell-suggest` |
+| `M-|` | `filter-buffer` |
 | `C-@` | `set-mark` |
 | `M-.` | `set-mark` |
 | `C-x` `C-x` | `exchange-point-and-mark` |
@@ -119,7 +122,7 @@ Classic uemacs chords and prefix sequences. Unlisted printable keys insert thems
 | `M-p` | `diagnostics-previous` |
 | `F10` | `toggle-menu` |
 
-## Model 2 — Modal (Vim)
+## Model 2 - Modal (Vim)
 
 Real modal editing: Normal / Insert / Visual / Operator-pending / Command-line.
 Counts compose (`3dw`, `d3w`); operators `d`/`y`/`c` take motions; `"` selects registers; `.` repeats.
@@ -134,18 +137,24 @@ Counts compose (`3dw`, `d3w`); operators `d`/`y`/`c` take motions; `"` selects r
 | `l` | `forward-character` |
 | `w` | word forward (`w`) |
 | `b` | word backward (`b`) |
+| `e` | word end forward (`e`) |
+| `W` | WORD forward (`W`) |
+| `B` | WORD backward (`B`) |
+| `E` | WORD end forward (`E`) |
+| `(` | `backward-sentence` |
+| `)` | `forward-sentence` |
 | `0` | `beginning-of-line` |
 | `$` | `end-of-line` |
 | `^` | `smart-home` |
 | `g` | `g` prefix |
 | `G` | `end-of-file` |
-| `{` | `backward-paragraph` |
-| `}` | `forward-paragraph` |
+| `{` | paragraph backward (`{`) |
+| `}` | paragraph forward (`}`) |
 | `%` | `goto-matching-fence` |
 | `f` | find char forward (`f`) |
 | `F` | find char backward (`F`) |
-| `t` | till char forward (`t`) |
-| `T` | till char backward (`T`) |
+| `t` | find char forward (`t`) |
+| `T` | find char backward (`T`) |
 | `;` | repeat find forward (`;`) |
 | `,` | repeat find backward (`,`) |
 | `d` | operator: delete |
@@ -161,6 +170,7 @@ Counts compose (`3dw`, `d3w`); operators `d`/`y`/`c` take motions; `"` selects r
 | `p` | put after cursor (`p`) |
 | `P` | put before cursor (`P`) |
 | `u` | `undo` |
+| `C-r` | `redo` |
 | `"` | select register (`"x`) |
 | `.` | repeat last change (`.`) |
 | `/` | `search-forward` |
@@ -191,14 +201,25 @@ Counts compose (`3dw`, `d3w`); operators `d`/`y`/`c` take motions; `"` selects r
 | `l` | `forward-character` |
 | `w` | word forward (`w`) |
 | `b` | word backward (`b`) |
+| `e` | word end forward (`e`) |
+| `W` | WORD forward (`W`) |
+| `B` | WORD backward (`B`) |
+| `E` | WORD end forward (`E`) |
+| `(` | `backward-sentence` |
+| `)` | `forward-sentence` |
+| `g` | `g` prefix |
+| `i` | text object inner (`i`) |
+| `a` | text object around (`a`) |
 | `0` | `beginning-of-line` |
 | `$` | `end-of-line` |
+| `{` | paragraph backward (`{`) |
+| `}` | paragraph forward (`}`) |
 | `G` | `end-of-file` |
 | `f` | find char forward (`f`) |
 | `F` | find char backward (`F`) |
-| `t` | till char forward (`t`) |
-| `T` | till char backward (`T`) |
 | `?` | `search-reverse` |
+| `t` | find char forward (`t`) |
+| `T` | find char backward (`T`) |
 | `d` | `kill-region` |
 | `x` | `kill-region` |
 | `y` | `copy-region` |
@@ -213,9 +234,57 @@ Counts compose (`3dw`, `d3w`); operators `d`/`y`/`c` take motions; `"` selects r
 
 (`:` enters CommandLine; `/` starts search; `v`/`V` enter Visual; `i`/`a`/`o` etc. enter Insert; `Esc` returns to Normal.)
 
-## Model 3 — Standard (Notepad / VS Code feel)
+### Ex commands (`:` line)
+
+| Command | Action |
+|---------|--------|
+| `:w` | `save-buffer` |
+| `:q` | quit unless a buffer is modified |
+| `:q!` | `exit-without-save` |
+| `:wq` | `save-buffer`, then `exit-erax` |
+| `:x` | `save-buffer`, then `exit-erax` |
+| `:terminal` | `spawn-terminal` |
+| `:ls` | `list-buffers` |
+| `:buffers` | `list-buffers` |
+| `:file` | `buffer-info` |
+| `:hardcopy` | `print-buffer` |
+| `:w <path>` | save under the given path |
+| `:e <path>` | open the given path |
+
+Names not listed here resolve through the typed command table,
+so `:buffer-info` works like any other named command.
+
+### `g`-prefix continuations
+
+| Keys | Selects |
+|------|---------|
+| `g` `g` | first line (`gg`) |
+| `g` `e` | previous word end (`ge`) |
+| `g` `E` | previous WORD end (`gE`) |
+| `g` `C-g` | cursor position (`g C-g`) |
+
+### Text-object continuations (`i`/`a` then the key)
+
+| Key | Object |
+|-----|--------|
+| `w` | word |
+| `W` | WORD |
+| `(` | parentheses |
+| `)` | parentheses |
+| `b` | parentheses |
+| `[` | brackets |
+| `]` | brackets |
+| `{` | braces |
+| `}` | braces |
+| `<` | angle brackets |
+| `>` | angle brackets |
+| `"` | double-quoted string |
+| `'` | single-quoted string |
+
+## Model 3 - Standard (Notepad / VS Code feel)
 
 Modeless: typing inserts, CUA clipboard, selection-first editing.
+`C-S-p` opens the command palette (the named-command facility).
 
 | Keys | Command |
 |------|---------|
@@ -232,7 +301,7 @@ Modeless: typing inserts, CUA clipboard, selection-first editing.
 | `C-S-z` | `redo` |
 | `C-f` | `search-forward` |
 | `C-h` | `query-replace` |
-| `C-S-p` | `execute-named-command` (command palette) |
+| `C-S-p` | `execute-named-command` |
 | `C-a` | `mark-whole-buffer` |
 | `C-TAB` | `next-buffer` |
 | `C-S-TAB` | `previous-buffer` |
@@ -260,6 +329,34 @@ Modeless: typing inserts, CUA clipboard, selection-first editing.
 | `TAB` | `insert-tab` |
 | `Ins` | `toggle-overwrite-mode` |
 | `F10` | `toggle-menu` |
+| `C-`` | `spawn-terminal` |
+| `F7` | `spell-suggest` |
+
+## Context keys (special buffers)
+
+Single-key maps active in diagnostics and diff views, from the config tables.
+
+### Diagnostics buffer
+
+| Key | Command |
+|-----|---------|
+| `j` | `next-line` |
+| `Down` | `next-line` |
+| `k` | `previous-line` |
+| `Up` | `previous-line` |
+| `RET` | `diagnostics-jump` |
+| `q` | `delete-window` |
+| `ESC` | `delete-window` |
+
+### Diff view
+
+| Key | Command |
+|-----|---------|
+| `j` | `diff-next-hunk` |
+| `n` | `diff-next-hunk` |
+| `k` | `diff-previous-hunk` |
+| `y` | `diff-accept-hunk` |
+| `q` | `diff-quit` |
 
 ## WebUI notes
 
@@ -298,14 +395,16 @@ The tables above are generated, not hand-written. To regenerate after changing
 `src/config/keys.rs`:
 
 1. Create `examples/dump_keymaps.rs` (temporary, not committed) that imports
-   `erax::config::keys::{KEYBINDINGS, MODAL_BINDINGS, STANDARD_BINDINGS}`,
-   `erax::core::input::KeyPress`, and prints Markdown rows using
+   the keymap tables from `erax::config::keys` and prints Markdown rows using
    `KeyPress`'s `Display` (`C-`/`M-`/`S-` prefixes) and `Command::name()`
-   (kebab-case). Modal actions are rendered per `ModalAction` variant.
+   (kebab-case). Modal actions are rendered per `ModalAction` variant; the
+   ex-command, context-key, g-prefix, and text-object tables get their own
+   sections.
 2. Run `cargo run --example dump_keymaps > /tmp/keymaps.md`, prepend the
-   GENERATED comment header, and write the result to `KEYBINDINGS.md`.
+   GENERATED comment header, append the WebUI notes section below, and write
+   the result to `KEYBINDINGS.md`.
 3. Delete the example (`rm -rf examples/`).
 
-This keeps the document byte-accurate with the compiled keymaps (L-003:
-the old hand-maintained tables documented commands deleted in N-205 and
-contradicted the binary on `^X^C`).
+This keeps the document byte-accurate with the compiled keymaps (the old
+hand-maintained tables once documented commands deleted in an earlier
+refactor and contradicted the binary on `^X^C`).
