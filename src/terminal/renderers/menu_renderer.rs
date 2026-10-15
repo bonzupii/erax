@@ -73,33 +73,6 @@ impl MenuRenderer {
             }
         }
 
-        // Calculate where menu titles end
-        let menu_end = layout.last().map(|(_, _, end)| *end).unwrap_or_default();
-
-        // Reserve space for X button (2 chars: space + X)
-        let x_button_start = width.saturating_sub(2);
-
-        // Draw horizontal scrollbar indicator between menu and X button
-        // This shows a progress bar for horizontal scroll position
-        let scrollbar_start = menu_end + 1;
-        let scrollbar_end = x_button_start.saturating_sub(1);
-        let scrollbar_width = scrollbar_end.saturating_sub(scrollbar_start);
-
-        if scrollbar_width >= 3 {
-            let scrollbar_fg: Color = theme.scrollbar_thumb;
-            // Draw scrollbar track
-            for x in scrollbar_start..scrollbar_end {
-                buffer.set(x as u16, 0, Cell::with_role('─', scrollbar_fg, menu_bg, CellRole::MenuBar));
-            }
-        }
-
-        // Draw X close button at far right with padding
-        if width > 3 {
-            let x_fg: Color = theme.error;
-            buffer.set((width - 2) as u16, 0, Cell::with_role(' ', menu_fg, menu_bg, CellRole::MenuBar)); // padding
-            buffer.set((width - 1) as u16, 0, Cell::with_role('✕', x_fg, menu_bg, CellRole::MenuBar));
-        }
-
         // Draw dropdown menu if open
         if let Some(active_idx) = menu_bar.active_menu {
             let menu = &menu_bar.menus[active_idx];
