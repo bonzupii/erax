@@ -33,3 +33,8 @@ gdb.txt
 debug_editor
 debug_rope
 flamegraph.svg
+
+# Generator garbage (test fixture scripts, editor caches)
+__pycache__/
+*.pyc
+*.pyo
