@@ -1,3 +1,4 @@
+//! Raw-mode terminal setup and restoration.
 use crossterm;
 use std::sync::atomic::{AtomicBool, Ordering}; // explicit dependency check
 
@@ -5,11 +6,14 @@ use std::sync::atomic::{AtomicBool, Ordering}; // explicit dependency check
 
 static TERMINAL_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
+/// Panic hook type for the raw-mode guard.
+type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static>;
+
 /// RAII wrapper for raw mode and alternate screen.
 /// Enables raw mode and enters alternate screen on creation.
 /// Restores terminal state on drop.
 pub struct RawMode {
-    original_hook: Option<Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static>>,
+    original_hook: Option<PanicHook>,
     _initialized: bool,
 }
 
@@ -76,6 +80,11 @@ fn restore_terminal() -> Result<(), Box<dyn std::error::Error>> {
         );
 
         let _ = crossterm::terminal::disable_raw_mode();
+
+        // Belt-and-braces cursor-style reset alongside Display's Drop impl:
+        // if a modal/standard session published a non-default DECSCUSR style,
+        // restore the terminal default on exit.
+        let _ = std::io::Write::write_all(&mut stdout, b"\x1b[0 q");
 
         TERMINAL_INITIALIZED.store(false, Ordering::SeqCst);
     }

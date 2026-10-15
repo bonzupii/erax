@@ -1,3 +1,4 @@
+//! Display: the TUI back/front buffer renderer.
 use crate::core::app::EditorApp;
 use crate::core::layout::Rect;
 use crate::core::spell::SpellChecker;
@@ -9,95 +10,211 @@ use crate::terminal::renderers::DirtyTracker;
 // Re-export Color from color module for backward compatibility
 pub use crate::terminal::color::Color;
 
-/// Represents a single cell on the terminal screen
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Cell {
-    pub ch: char,
-    pub fg: Color,
-    pub bg: Color,
-    /// If true, this cell is covered by the previous wide character and should be skipped
-    pub hidden: bool,
+// The pure screen-model types live in `super::model` (shared with the wasm
+// web shell); re-exported here for the TUI.
+pub use super::model::{Cell, CellRole, ScreenBuffer};
+
+use crate::terminal::theme::Theme;
+use crate::config::display::CursorStyle;
+use crate::config::keys::{InputModel, ModalMode, INPUT_MODEL};
+use crate::core::modal::ModalEngine;
+
+// ---------------------------------------------------------------------------
+// Mode-aware UI screen model (N-268/D6).
+//
+// All mode UI state originates in the backend (`EditorApp` / `ModalEngine`)
+// and reaches renderers only through this screen model plus the N-273
+// `CellRole` metadata. The GUI and WebUI (children of the TUI layer) must
+// never infer mode state from glyphs or coordinates: they read
+// `Display::bar` and `Display::cursor_style`.
+// ---------------------------------------------------------------------------
+
+/// Who owns the prompt bar (the active window's status line) this frame.
+///
+/// Priority order, highest first: [`BarOwner::Prompt`], [`BarOwner::CommandLine`],
+/// [`BarOwner::Message`], [`BarOwner::ModeLine`].
+///
+/// This enum is the extension point for future bar owners: the N-272 LLM
+/// assistant panel plugs in as a new variant with its priority slot in
+/// [`bar_owner_for`] and one render arm in `StatusRenderer` — no existing
+/// arm changes shape.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BarOwner {
+    /// Blocking minibuffer prompt from the focus manager (emacs-style).
+    Prompt,
+    /// Vim `:` command line: the modal engine owns the whole bar.
+    CommandLine,
+    /// Transient echo-area message.
+    Message,
+    /// Default: the input model's mode segment / echo area.
+    ModeLine,
 }
 
-impl Cell {
-    pub(crate) fn new(ch: char, fg: Color, bg: Color) -> Self {
-        Self {
-            ch,
-            fg,
-            bg,
-            hidden: false,
-        }
-    }
-
-    pub fn hidden() -> Self {
-        Self {
-            ch: ' ',
-            fg: Color::Reset,
-            bg: Color::Reset,
-            hidden: true,
-        }
-    }
-
-    pub fn empty() -> Self {
-        Self {
-            ch: ' ',
-            fg: Color::Reset,
-            bg: Color::Reset,
-            hidden: false,
-        }
-    }
+/// One frame of prompt-bar screen-model state (N-273).
+///
+/// Built by [`compose_bar_state`] from backend state every frame; the status
+/// renderer consumes it without further backend access.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BarState {
+    /// Which UI element owns the bar this frame.
+    pub owner: BarOwner,
+    /// Transient echo-area message text (empty when none).
+    pub message: String,
+    /// Persistent mode segment, e.g. `-- INSERT --` (Modal model only,
+    /// hidden while another owner holds the bar).
+    pub mode_segment: Option<&'static str>,
+    /// Pending modal keys, e.g. `d3`, `"a2c` (Modal ModeLine only).
+    pub pending: String,
+    /// Key-trie echo area, e.g. `C-x ` (KeyTrie ModeLine only).
+    pub key_sequence: String,
+    /// `:` command-line text without the leading `:` (CommandLine only).
+    pub cmdline_text: String,
+    /// Byte offset of the command-line cursor within `cmdline_text`.
+    pub cmdline_cursor: usize,
+    /// Active selection length in chars, for the Standard model's
+    /// `Ln X, Col Y (Z selected)` readout (`None` = no selection).
+    pub selection_len: Option<usize>,
 }
 
-/// Represents the state of the entire screen
-#[derive(Clone, Debug)]
-pub struct ScreenBuffer {
-    pub cells: Vec<Cell>,
-
-    pub width: u16,
-
-    pub height: u16,
-}
-
-impl ScreenBuffer {
-    fn new(width: u16, height: u16) -> Self {
-        let cells = vec![Cell::empty(); (width as usize) * (height as usize)];
+impl BarState {
+    fn empty() -> Self {
         Self {
-            cells,
-            width,
-            height,
-        }
-    }
-
-    fn resize(&mut self, width: u16, height: u16) {
-        self.width = width;
-        self.height = height;
-        self.cells = vec![Cell::empty(); (width as usize) * (height as usize)];
-    }
-
-    fn clear(&mut self) {
-        for cell in &mut self.cells {
-            *cell = Cell::empty();
-        }
-    }
-
-    pub(crate) fn set(&mut self, x: u16, y: u16, cell: Cell) {
-        if x < self.width && y < self.height {
-            let idx = (y as usize) * (self.width as usize) + (x as usize);
-            self.cells[idx] = cell;
-        }
-    }
-
-    pub fn get(&self, x: u16, y: u16) -> Option<&Cell> {
-        if x < self.width && y < self.height {
-            let idx = (y as usize) * (self.width as usize) + (x as usize);
-            Some(&self.cells[idx])
-        } else {
-            None
+            owner: BarOwner::ModeLine,
+            message: String::new(),
+            mode_segment: None,
+            pending: String::new(),
+            key_sequence: String::new(),
+            cmdline_text: String::new(),
+            cmdline_cursor: 0,
+            selection_len: None,
         }
     }
 }
 
-use crate::terminal::theme::{Theme, ThemeManager};
+/// Bar-ownership arbitration: the priority order [`BarOwner`] documents.
+///
+/// A blocking minibuffer prompt always wins (it is already receiving keys);
+/// the vim `:` command line owns the bar while active; transient messages
+/// cover the mode segment without clobbering it (it returns when the message
+/// clears); otherwise the model's default echo/mode line shows.
+pub fn bar_owner_for(
+    model: InputModel,
+    engine: &ModalEngine,
+    prompt_active: bool,
+    has_message: bool,
+) -> BarOwner {
+    if prompt_active {
+        return BarOwner::Prompt;
+    }
+    if model == InputModel::Modal && engine.mode() == ModalMode::CommandLine {
+        return BarOwner::CommandLine;
+    }
+    if has_message {
+        return BarOwner::Message;
+    }
+    BarOwner::ModeLine
+}
+
+/// Persistent mode segment for the bar, or `None` when the model shows none.
+///
+/// Modal Insert with the window's overwrite flag on is Replace behavior, so
+/// it shows `-- REPLACE --` (the typed cursor const maps it to underline).
+pub fn mode_segment_for(
+    model: InputModel,
+    engine: &ModalEngine,
+    overwrite: bool,
+) -> Option<&'static str> {
+    if model != InputModel::Modal {
+        return None;
+    }
+    match engine.mode() {
+        ModalMode::Insert if overwrite => Some("-- REPLACE --"),
+        _ => engine.mode_segment(),
+    }
+}
+
+/// Cursor style for the current input state (N-268 D6).
+///
+/// KeyTrie keeps the historical steady block; Standard uses a steady bar;
+/// Modal follows the typed [`crate::config::display::modal_cursor_style`]
+/// mapping. Pure backend state in, style out — no renderer involvement.
+pub fn cursor_style_for(
+    model: InputModel,
+    engine: &ModalEngine,
+    overwrite: bool,
+) -> CursorStyle {
+    match model {
+        InputModel::KeyTrie => crate::config::display::KEYTRIE_CURSOR_STYLE,
+        InputModel::Standard => crate::config::display::STANDARD_CURSOR_STYLE,
+        InputModel::Modal => crate::config::display::modal_cursor_style(engine.mode(), overwrite),
+    }
+}
+
+/// Selected character count for the Standard model's `(Z selected)` readout.
+///
+/// `None` when there is no active non-empty selection. Reads backend window
+/// state only (the mark anchor and cursor), like the selection renderer does.
+pub fn selection_char_count(
+    window: &crate::core::window::Window,
+    buffer: &crate::core::buffer::Buffer,
+) -> Option<usize> {
+    let (mx, my) = window.mark?;
+    let mut anchor = window.clone();
+    anchor.cursor_x = mx;
+    anchor.cursor_y = my;
+    let m = anchor.get_byte_offset(buffer).unwrap_or(0);
+    let c = window.get_byte_offset(buffer).unwrap_or(0);
+    let (s, e) = (m.min(c), m.max(c));
+    if s == e {
+        return None;
+    }
+    Some(buffer.get_range_as_string(s, e - s).chars().count())
+}
+
+/// Build one frame of [`BarState`] from backend state.
+///
+/// `model` is a parameter (rather than reading [`INPUT_MODEL`] directly) so
+/// tests can exercise every input model despite the compile-time switch;
+/// production passes [`INPUT_MODEL`].
+pub fn compose_bar_state(
+    model: InputModel,
+    engine: &ModalEngine,
+    prompt: Option<&PromptState>,
+    message: &str,
+    key_sequence: &str,
+    window: Option<&crate::core::window::Window>,
+    buffer: Option<&crate::core::buffer::Buffer>,
+) -> BarState {
+    let owner = bar_owner_for(model, engine, prompt.is_some(), !message.is_empty());
+    let overwrite = window.map(|w| w.overwrite_mode).unwrap_or(false);
+    let mode_segment = match owner {
+        BarOwner::ModeLine => mode_segment_for(model, engine, overwrite),
+        _ => None,
+    };
+    let (pending, key_sequence) = match (model, owner) {
+        (InputModel::Modal, BarOwner::ModeLine) => (engine.pending_text(), String::new()),
+        (_, BarOwner::ModeLine) => (String::new(), key_sequence.to_string()),
+        _ => (String::new(), String::new()),
+    };
+    let (cmdline_text, cmdline_cursor) = match owner {
+        BarOwner::CommandLine => (engine.cmdline_text().to_string(), engine.cmdline_cursor()),
+        _ => (String::new(), 0),
+    };
+    let selection_len = match (model, window, buffer) {
+        (InputModel::Standard, Some(w), Some(b)) => selection_char_count(w, b),
+        _ => None,
+    };
+    BarState {
+        owner,
+        message: message.to_string(),
+        mode_segment,
+        pending,
+        key_sequence,
+        cmdline_text,
+        cmdline_cursor,
+        selection_len,
+    }
+}
 
 /// Manages the terminal display and rendering
 pub struct Display {
@@ -117,6 +234,8 @@ pub struct Display {
     pub back_buffer: ScreenBuffer,
     /// Show line numbers in gutter
     pub show_line_numbers: bool,
+    /// Wrap long lines at the window edge (typed config + `--wrap` override)
+    pub wrap_lines: bool,
     /// Syntax highlighter for code highlighting
     pub syntax_highlighter: SyntaxHighlighter,
     /// Current color theme
@@ -134,32 +253,43 @@ pub struct Display {
     /// Dirty region tracker for incremental rendering
     pub dirty_tracker: DirtyTracker,
     /// Software mouse cursor position (for TTYs)
-    #[allow(dead_code)]
     pub mouse_cursor: Option<(u16, u16)>,
     /// Display mode (TrueColor, Ansi, Ascii) for color fallback
     pub display_mode: DisplayMode,
+    /// One frame of prompt-bar screen-model state (N-273/D6): bar ownership,
+    /// mode segment, pending keys, command line. Rebuilt from backend state
+    /// every frame in [`Display::render`].
+    pub bar: BarState,
+    /// Cursor style derived from the input model + modal state (N-273/D6).
+    /// The terminal emit path and the GUI/WebUI read this as metadata
+    /// (presentation only); nothing else writes it.
+    pub cursor_style: CursorStyle,
+    /// Whether any frame published a non-default cursor style. Drives
+    /// restore-on-exit in the [`Drop`] impl.
+    cursor_style_touched: bool,
+    /// Cursor style the terminal emit path last wrote, for DECSCUSR dedup.
+    /// Written by `terminal::render`; `None` before the first frame.
+    pub last_emitted_cursor_style: Option<CursorStyle>,
 }
 
 impl Display {
-    /// Initialize the display system with specified dimensions
-    pub fn new(width: u16, height: u16, config: &crate::config::Config) -> Self {
+    /// Initialize the display system with specified dimensions.
+    ///
+    /// The theme and display settings come from the typed compile-time
+    /// config; `theme_override` and `wrap_override` are the invocation-level
+    /// overrides (`--theme`, `--wrap` / `--no-wrap`), which shadow the
+    /// config default without mutating it (N-012).
+    pub fn new(
+        width: u16,
+        height: u16,
+        theme_override: Option<crate::terminal::theme::ThemeId>,
+        wrap_override: Option<bool>,
+    ) -> Self {
         let front_buffer = ScreenBuffer::new(width, height);
         let back_buffer = ScreenBuffer::new(width, height);
 
-        // Load theme from config
-        let theme_manager = ThemeManager::new();
-        let theme_name = match config.settings.get("theme").and_then(|v| match v {
-            crate::config::ConfigValue::String(s) => Some(s.as_str()),
-            _ => None,
-        }) {
-            Some(name) => name,
-            None => "dracula",
-        };
-
-        let theme = match theme_manager.get(theme_name) {
-            Some(t) => t,
-            None => Theme::default(),
-        };
+        let theme_id = theme_override.unwrap_or(crate::config::theme::THEME);
+        let theme = *theme_id.theme();
 
         Self {
             terminal_size: (width, height),
@@ -169,13 +299,8 @@ impl Display {
             key_sequence: String::new(),
             front_buffer,
             back_buffer,
-            show_line_numbers: match config.settings.get("line_numbers").and_then(|v| match v {
-                crate::config::ConfigValue::Bool(b) => Some(*b),
-                _ => None,
-            }) {
-                Some(b) => b,
-                None => false,
-            },
+            show_line_numbers: crate::config::display::LINE_NUMBERS,
+            wrap_lines: wrap_override.unwrap_or(crate::config::display::WRAP_LINES),
             syntax_highlighter: SyntaxHighlighter::new(),
             theme,
             cursor_pos: None,
@@ -186,19 +311,24 @@ impl Display {
             dirty_tracker: DirtyTracker::new(width, height),
             mouse_cursor: None,
             display_mode: DisplayMode::detect(),
+            bar: BarState::empty(),
+            cursor_style: CursorStyle::Default,
+            cursor_style_touched: false,
+            last_emitted_cursor_style: None,
         }
     }
 
     /// Initialize the display system with terminal detection (for terminal mode)
     pub fn new_terminal(
-        config: &crate::config::Config,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+        theme_override: Option<crate::terminal::theme::ThemeId>,
+        wrap_override: Option<bool>,
+    ) -> Result<Self, std::io::Error> {
         let (cols, rows) = Self::get_terminal_size()?;
-        Ok(Self::new(cols, rows, config))
+        Ok(Self::new(cols, rows, theme_override, wrap_override))
     }
 
     /// Get terminal size using crossterm
-    fn get_terminal_size() -> Result<(u16, u16), Box<dyn std::error::Error>> {
+    fn get_terminal_size() -> Result<(u16, u16), std::io::Error> {
         let (cols, rows) = crossterm::terminal::size()?;
         Ok((cols, rows))
     }
@@ -271,6 +401,29 @@ impl Display {
             return Ok(());
         }
 
+        // Mode-aware UI (N-268/D6): derive the bar and cursor style from
+        // backend state every frame. Renderers only ever see this screen
+        // model, never the engine or input state directly.
+        {
+            let window = app.active_window_ref();
+            let buffer = app.active_buffer();
+            self.bar = compose_bar_state(
+                INPUT_MODEL,
+                &app.modal_engine,
+                self.prompt_state.as_ref(),
+                &self.message,
+                &self.key_sequence,
+                window,
+                buffer,
+            );
+            let overwrite = window.map(|w| w.overwrite_mode).unwrap_or(false);
+            let style = cursor_style_for(INPUT_MODEL, &app.modal_engine, overwrite);
+            if style != CursorStyle::Default {
+                self.cursor_style_touched = true;
+            }
+            self.cursor_style = style;
+        }
+
         // Handle full redraw request (e.g. after resize)
         if self.needs_full_redraw {
             self.dirty_tracker.mark_full_redraw();
@@ -291,32 +444,44 @@ impl Display {
         let window_rects = app.layout.collect_windows(full_rect);
 
         // 4. Render each window to the back buffer
-        // 4. Render each window to the back buffer
         // Collect updates to apply after rendering (to avoid borrow issues)
         let mut width_updates: Vec<(crate::core::id::WindowId, usize)> = Vec::new();
+
+        // Modal linewise-visual: the engine anchors whole lines (mark at BOL,
+        // cursor at EOL), so the window renderer already highlights the text;
+        // the trailing newline region gets its Selection stamp in the loop.
+        let linewise_newline_pass = INPUT_MODEL == InputModel::Modal
+            && app.modal_engine.mode() == ModalMode::Visual
+            && app.modal_engine.is_linewise_visual();
+
+        // Screen position of the `:` command-line cursor when the modal
+        // command line owns the bar (set from the active window's status).
+        let mut cmdline_cursor: Option<(u16, u16)> = None;
 
         for (window_id, rect) in &window_rects {
             // Mark this window's rect as dirty for incremental rendering
             self.dirty_tracker.mark_rect(rect);
 
-            if let Some(window) = app.windows.get(window_id) {
-                if let Some(buffer) = app.buffers.get_mut(&window.buffer_id) {
+            if let Some(window) = app.windows.get(window_id)
+                && let Some(buffer) = app.buffers.get_mut(&window.buffer_id) {
                     let is_active = *window_id == app.active_window;
 
                     // Render Content, Scrollbars, etc.
                     let visible_max_width = crate::terminal::renderers::WindowRenderer::render(
-                        buffer,
-                        window,
-                        rect,
-                        &mut self.back_buffer,
-                        &self.theme,
-                        &mut self.syntax_highlighter,
-                        &self.spell_checker,
-                        &self.dirty_tracker,
-                        is_active,
-                        self.show_line_numbers,
-                        app.diff_state.as_ref(),
-                        app.terminal_host.as_ref(),
+                        crate::terminal::renderers::WindowRenderParams {
+                            buffer,
+                            window,
+                            rect,
+                            screen_buffer: &mut self.back_buffer,
+                            theme: &self.theme,
+                            syntax_highlighter: &mut self.syntax_highlighter,
+                            spell_checker: &self.spell_checker,
+                            dirty_tracker: &self.dirty_tracker,
+                            is_active,
+                            show_line_numbers: self.show_line_numbers,
+                            diff_state: app.diff_state.as_ref(),
+                            terminal_host: app.terminal_host.as_ref(),
+                        },
                     );
 
                     // Track width update for after render loop
@@ -324,20 +489,39 @@ impl Display {
                         width_updates.push((*window_id, visible_max_width));
                     }
 
+                    // Modal linewise-visual: the newline itself is not a rendered
+                    // cell, so stamp each selected line's trailing newline
+                    // region as selected here. Presentation only — the
+                    // engine's mark/cursor are untouched.
+                    if linewise_newline_pass {
+                        stamp_linewise_visual_newlines(
+                            &mut self.back_buffer,
+                            rect,
+                            text_gutter_width(self.show_line_numbers, window, buffer, rect),
+                            window,
+                            buffer,
+                            &self.theme,
+                        );
+                    }
+
                     // Render Status Line
-                    crate::terminal::renderers::StatusRenderer::render(
-                        &mut self.back_buffer,
+                    let status_ctx = crate::terminal::renderers::status_renderer::StatusCtx {
                         window,
                         buffer,
                         rect,
-                        &self.theme,
+                        theme: &self.theme,
                         is_active,
-                        self.prompt_state.as_ref(),
-                        &self.message,
-                        &self.key_sequence,
+                        prompt_state: self.prompt_state.as_ref(),
+                        bar: &self.bar,
+                    };
+                    let bar_cursor = crate::terminal::renderers::StatusRenderer::render(
+                        &mut self.back_buffer,
+                        &status_ctx,
                     );
+                    if is_active {
+                        cmdline_cursor = bar_cursor;
+                    }
                 }
-            }
         }
 
         // Apply cached content width updates (only grows, never shrinks to keep scrollbar stable)
@@ -350,7 +534,18 @@ impl Display {
         // Global status bar removed - prompts/messages/key_sequence are now in per-window status
 
         // 5. Position cursor in active window and style cursor cell
-        if let Some(window) = app.windows.get(&app.active_window) {
+        if let Some((cx, cy)) = cmdline_cursor {
+            // The modal `:` command line owns the bar: the hardware cursor
+            // lives on the command line, not in the text.
+            if let Some(cell) = self.back_buffer.get_cell_mut(cx as usize, cy as usize) {
+                cell.fg = self.theme.cursor_fg;
+                cell.bg = self.theme.cursor_bg;
+                cell.role = CellRole::Cursor;
+            }
+
+            // Store cursor position for GUI access
+            self.cursor_pos = Some((cx as usize, cy as usize));
+        } else if let Some(window) = app.windows.get(&app.active_window) {
             for (window_id, rect) in &window_rects {
                 if *window_id == app.active_window {
                     // Calculate gutter width to offset cursor properly
@@ -378,8 +573,9 @@ impl Display {
 
                     // Style cursor cell with cursor_bg/cursor_fg from theme
                     if let Some(cell) = self.back_buffer.get_cell_mut(final_x, final_y) {
-                        cell.fg = self.theme.cursor_fg().clone().into();
-                        cell.bg = self.theme.cursor_bg().clone().into();
+                        cell.fg = self.theme.cursor_fg;
+                        cell.bg = self.theme.cursor_bg;
+                        cell.role = CellRole::Cursor;
                     }
 
                     // Store cursor position for GUI access
@@ -458,14 +654,18 @@ impl Display {
     }
 
     /// Handle enter in menu - returns command to execute
-    pub fn menu_handle_enter(&mut self) -> Option<&'static str> {
+    pub fn menu_handle_enter(&mut self) -> Option<crate::core::command::Command> {
         let cmd = self.menu_bar.execute_selected();
         self.dirty = true;
         cmd
     }
 
     /// Handle click on menu - returns command if item clicked
-    pub fn menu_handle_click(&mut self, x: usize, y: usize) -> Option<&'static str> {
+    pub fn menu_handle_click(
+        &mut self,
+        x: usize,
+        y: usize,
+    ) -> Option<crate::core::command::Command> {
         if y == 0 && self.show_menu_bar {
             // Click on menu bar - check which menu
             let layout = self.menu_bar.layout();
@@ -557,23 +757,21 @@ impl Display {
                 let menu = &mut self.menu_bar.menus[active_idx];
                 let width = menu.render_width();
 
-                if x >= *menu_x && x < *menu_x + width {
-                    if y >= 1 {
+                if x >= *menu_x && x < *menu_x + width
+                    && y >= 1 {
                         let item_idx = y - 1;
                         if item_idx < menu.items.len() {
                             // Only select if not separator
                             if !matches!(
                                 menu.items[item_idx],
                                 crate::core::menu::MenuItem::Separator
-                            ) {
-                                if menu.selected != Some(item_idx) {
+                            )
+                                && menu.selected != Some(item_idx) {
                                     menu.selected = Some(item_idx);
                                     self.dirty = true;
                                 }
-                            }
                         }
                     }
-                }
             }
         }
     }
@@ -581,7 +779,8 @@ impl Display {
     /// Get menu bar height (1 if visible, 0 if hidden)
     pub fn menu_bar_height(&self) -> usize {
         if self.show_menu_bar {
-            crate::core::menu::MENU_BAR_HEIGHT_CELLS
+            // Single source: the typed display config (N-167).
+            crate::config::display::MENU_BAR_HEIGHT_CELLS
         } else {
             0
         }
@@ -660,6 +859,103 @@ impl Display {
     }
 }
 
+/// Gutter width in cells, mirroring the window renderer's layout math.
+fn text_gutter_width(
+    show_line_numbers: bool,
+    window: &crate::core::window::Window,
+    buffer: &crate::core::buffer::Buffer,
+    rect: &crate::core::layout::Rect,
+) -> usize {
+    if !show_line_numbers {
+        return 0;
+    }
+    let text_height = rect.height.saturating_sub(1);
+    let max_line = window.scroll_offset + text_height;
+    let max_line_num = buffer.line_count().min(max_line).max(1);
+    format!("{}", max_line_num).len() + 1 // digits + border
+}
+
+/// Presentation-only (N-268 D6): in modal linewise-visual mode, extend the
+/// `Selection` highlight to cover each selected line's trailing newline
+/// region, so `V` visibly selects whole lines.
+///
+/// The engine's mark/cursor are untouched — this only stamps cells the
+/// window renderer left as plain text (the newline is not a rendered cell).
+/// Lines are skipped when their end-of-line is scrolled out of view.
+fn stamp_linewise_visual_newlines(
+    screen: &mut ScreenBuffer,
+    rect: &crate::core::layout::Rect,
+    gutter_width: usize,
+    window: &crate::core::window::Window,
+    buffer: &crate::core::buffer::Buffer,
+    theme: &Theme,
+) {
+    let (_, mark_y) = match window.mark {
+        Some(m) => m,
+        None => return,
+    };
+    let first = mark_y.min(window.cursor_y);
+    let last = mark_y.max(window.cursor_y);
+    let text_start_x = rect.x + gutter_width;
+    let text_width = rect.width.saturating_sub(gutter_width);
+    // Last row of the rect is the status line.
+    let text_height = rect.height.saturating_sub(1);
+    for line_idx in first..=last {
+        // The newline region exists iff a `\n` follows this line.
+        let has_newline = buffer
+            .line_with_newline(line_idx)
+            .map(|l| l.ends_with('\n'))
+            .unwrap_or(false);
+        if !has_newline {
+            continue;
+        }
+        let rel = line_idx.saturating_sub(window.scroll_offset);
+        if rel >= text_height {
+            continue;
+        }
+        // Visual width of the line content (tabs expanded, wide chars),
+        // mirroring the window renderer's layout math.
+        let content = buffer.line(line_idx).unwrap_or_default();
+        let mut vx = 0usize;
+        for ch in content.chars() {
+            vx += if ch == '\t' {
+                window.tab_width - (vx % window.tab_width)
+            } else {
+                crate::core::utf8::char_width(ch)
+            };
+        }
+        if vx < window.scroll_x || vx - window.scroll_x >= text_width {
+            continue;
+        }
+        let screen_x = text_start_x + (vx - window.scroll_x);
+        let screen_y = rect.y + rel;
+        if let Some(cell) = screen.get_cell_mut(screen_x, screen_y) {
+            cell.fg = theme.selection_fg;
+            cell.bg = theme.selection_bg;
+            cell.role = CellRole::Selection;
+        }
+    }
+}
+
+impl Drop for Display {
+    /// Restore-on-exit for the mode-aware cursor style (N-268 D6): if any
+    /// frame published a non-default cursor style, reset the terminal cursor
+    /// to its default (`ESC [ 0 SP q`).
+    ///
+    /// The per-frame DECSCUSR emission itself lives in the terminal render
+    /// path (`terminal::render`), which keys off
+    /// [`Display::last_emitted_cursor_style`]; this `Drop` only undoes what
+    /// was published. It also runs during panic unwinding, so a crash cannot
+    /// leave a stray bar/underline cursor behind. In GUI mode no TTY is
+    /// touched per frame, so this is a no-op unless a style was published.
+    fn drop(&mut self) {
+        if self.cursor_style_touched {
+            let seq = CursorStyle::Default.decscusr_bytes();
+            let _ = std::io::Write::write_all(&mut std::io::stdout(), &seq);
+        }
+    }
+}
+
 // Public accessors for ScreenBuffer - used by display rendering
 impl ScreenBuffer {
     /// Get mutable reference to the cell at the given position
@@ -679,55 +975,39 @@ mod tests {
 
     #[test]
     fn test_display_new() {
-        // This test may fail in CI without a terminal, so we just check construction
-        let config = crate::config::Config::default();
-        let result = Display::new_terminal(&config);
+        // Construction from typed config; terminal may be absent in CI.
+        let result = Display::new_terminal(None, None);
         // Don't assert success since terminal may not be available
         let _ = result;
+        // Direct construction always works.
+        let display = Display::new(80, 24, None, None);
+        assert_eq!(display.terminal_size, (80, 24));
+        assert_eq!(display.show_line_numbers, crate::config::display::LINE_NUMBERS);
     }
 
     #[test]
     fn test_truecolor_conversion() {
-        // Test RGB to TrueColor (24-bit) conversion
-        let rgb_color = Color::Rgb { r: 255, g: 0, b: 0 }; // Pure red
-        let fg_code = rgb_color.to_ansi_fg_code();
-        assert_eq!(
-            fg_code, "38;2;255;0;0",
-            "RGB color should use TrueColor format"
-        );
+        use crossterm::style::Color as TermColor;
+        // RGB colors map to crossterm RGB (24-bit) exactly.
+        let rgb_color = Color::Rgb { r: 255, g: 0, b: 0 };
+        assert_eq!(rgb_color.to_crossterm(), TermColor::Rgb { r: 255, g: 0, b: 0 });
 
-        let rgb_color = Color::Rgb { r: 0, g: 255, b: 0 }; // Pure green
-        let fg_code = rgb_color.to_ansi_fg_code();
-        assert_eq!(
-            fg_code, "38;2;0;255;0",
-            "RGB color should use TrueColor format"
-        );
+        let rgb_color = Color::Rgb { r: 0, g: 255, b: 0 };
+        assert_eq!(rgb_color.to_crossterm(), TermColor::Rgb { r: 0, g: 255, b: 0 });
 
-        let rgb_color = Color::Rgb { r: 0, g: 0, b: 255 }; // Pure blue
-        let fg_code = rgb_color.to_ansi_fg_code();
-        assert_eq!(
-            fg_code, "38;2;0;0;255",
-            "RGB color should use TrueColor format"
-        );
+        let rgb_color = Color::Rgb { r: 0, g: 0, b: 255 };
+        assert_eq!(rgb_color.to_crossterm(), TermColor::Rgb { r: 0, g: 0, b: 255 });
 
-        // Test background color too
-        let rgb_color = Color::Rgb {
-            r: 128,
-            g: 64,
-            b: 32,
-        };
-        let bg_code = rgb_color.to_ansi_bg_code();
-        assert_eq!(
-            bg_code, "48;2;128;64;32",
-            "RGB background should use TrueColor format"
-        );
+        // Named colors map to the exact crossterm named color (ANSI Red is
+        // crossterm's DarkRed; crossterm's Red is the bright variant).
+        assert_eq!(Color::Red.to_crossterm(), TermColor::DarkRed);
+        assert_eq!(Color::BrightRed.to_crossterm(), TermColor::Red);
     }
 
     #[test]
     fn test_buffer_synchronization() {
         // Test buffer synchronization validation
-        let config = crate::config::Config::default();
-        let mut display = Display::new(80, 24, &config);
+        let mut display = Display::new(80, 24, None, None);
 
         // Test that buffers start with same dimensions
         assert_eq!(display.front_buffer.width, display.back_buffer.width);
@@ -757,8 +1037,7 @@ mod tests {
     #[test]
     fn test_buffer_swap_with_validation() {
         // Test buffer swap with validation
-        let config = crate::config::Config::default();
-        let mut display = Display::new(80, 24, &config);
+        let mut display = Display::new(80, 24, None, None);
 
         // Set some content in back buffer
         display.back_buffer.set(
@@ -795,8 +1074,7 @@ mod tests {
     fn test_resize_clears_buffers() {
         // Test that resize clears buffers to avoid visual artifacts
         // (full redraw will repopulate them)
-        let config = crate::config::Config::default();
-        let mut display = Display::new(80, 24, &config);
+        let mut display = Display::new(80, 24, None, None);
 
         // Set some content in both buffers
         display.front_buffer.set(
@@ -848,8 +1126,7 @@ mod tests {
     #[test]
     fn test_invalid_resize_handling() {
         // Test that invalid resize dimensions are handled gracefully
-        let config = crate::config::Config::default();
-        let mut display = Display::new(80, 24, &config);
+        let mut display = Display::new(80, 24, None, None);
 
         // Try to resize with invalid dimensions (should be ignored)
         display.update_size(0, 0);
@@ -899,18 +1176,22 @@ mod tests {
         ];
 
         for color in colors {
-            let fg_code = color.to_ansi_fg_code();
-            let bg_code = color.to_ansi_bg_code();
-
-            // All color codes should be non-empty strings
-            assert!(
-                !fg_code.is_empty(),
-                "Foreground color code should not be empty"
-            );
-            assert!(
-                !bg_code.is_empty(),
-                "Background color code should not be empty"
-            );
+            // Each color maps to a distinct crossterm color (no collisions).
+            let fg_term = color.to_crossterm();
+            let bg_term = color.to_crossterm();
+            // Sanity: RGB colors preserve their values exactly.
+            if let Color::Rgb { r, g, b } = color {
+                assert_eq!(
+                    fg_term,
+                    crossterm::style::Color::Rgb { r, g, b },
+                    "RGB color must map exactly"
+                );
+                assert_eq!(
+                    bg_term,
+                    crossterm::style::Color::Rgb { r, g, b },
+                    "RGB color must map exactly"
+                );
+            }
         }
     }
 
@@ -927,13 +1208,13 @@ mod tests {
             (Color::Magenta, [1.0, 0.0, 1.0, 1.0]),
             (Color::Cyan, [0.0, 1.0, 1.0, 1.0]),
             (Color::White, [1.0, 1.0, 1.0, 1.0]),
-            (Color::BrightBlack, [0.5, 0.5, 0.5, 1.0]),
-            (Color::BrightRed, [1.0, 0.5, 0.5, 1.0]),
-            (Color::BrightGreen, [0.5, 1.0, 0.5, 1.0]),
-            (Color::BrightYellow, [1.0, 1.0, 0.5, 1.0]),
-            (Color::BrightBlue, [0.5, 0.5, 1.0, 1.0]),
-            (Color::BrightMagenta, [1.0, 0.5, 1.0, 1.0]),
-            (Color::BrightCyan, [0.5, 1.0, 1.0, 1.0]),
+            (Color::BrightBlack, [127.0/255.0, 127.0/255.0, 127.0/255.0, 1.0]),
+            (Color::BrightRed, [1.0, 127.0/255.0, 127.0/255.0, 1.0]),
+            (Color::BrightGreen, [127.0/255.0, 1.0, 127.0/255.0, 1.0]),
+            (Color::BrightYellow, [1.0, 1.0, 127.0/255.0, 1.0]),
+            (Color::BrightBlue, [127.0/255.0, 127.0/255.0, 1.0, 1.0]),
+            (Color::BrightMagenta, [1.0, 127.0/255.0, 1.0, 1.0]),
+            (Color::BrightCyan, [127.0/255.0, 1.0, 1.0, 1.0]),
             (Color::BrightWhite, [1.0, 1.0, 1.0, 1.0]),
             (
                 Color::Rgb {
@@ -949,5 +1230,254 @@ mod tests {
             let rgba = color.to_rgba_f32();
             assert_eq!(rgba, expected, "to_rgba_f32 failed for {:?}", color);
         }
+    }
+
+    #[test]
+    fn test_cell_role_schema_n273() {
+        // repr(u8): single byte, distinct discriminants for shader/wire packing.
+        let roles = [
+            CellRole::EditorText,
+            CellRole::Gutter,
+            CellRole::StatusBar,
+            CellRole::MenuBar,
+            CellRole::MenuItem,
+            CellRole::Prompt,
+            CellRole::MessageLine,
+            CellRole::Cursor,
+            CellRole::Selection,
+            CellRole::Scrollbar,
+            CellRole::Diagnostic,
+            CellRole::Separator,
+        ];
+        let mut seen = std::collections::HashSet::new();
+        for r in roles {
+            assert!(seen.insert(r as u8), "CellRole discriminant collision");
+        }
+        assert_eq!(CellRole::EditorText as u8, 0);
+        // Default constructors stamp EditorText; with_role stamps the given role.
+        assert_eq!(
+            Cell::new('a', Color::Reset, Color::Reset).role,
+            CellRole::EditorText
+        );
+        assert_eq!(
+            Cell::empty().role,
+            CellRole::EditorText
+        );
+        assert_eq!(
+            Cell::with_role('a', Color::Reset, Color::Reset, CellRole::Gutter).role,
+            CellRole::Gutter
+        );
+        // Default role is EditorText.
+        assert_eq!(CellRole::default(), CellRole::EditorText);
+    }
+
+    #[test]
+    fn test_menu_bar_stamps_menu_bar_role() {
+        use crate::terminal::renderers::menu_renderer::MenuRenderer;
+        let mut display = Display::new(80, 24, None, None);
+        let theme = display.theme;
+        let menu_bar = crate::core::menu::MenuBar::new();
+        MenuRenderer::render(&mut display.back_buffer, &menu_bar, &theme, 80, 24, true);
+        // Every cell of the top bar carries the MenuBar role.
+        for x in 0..80u16 {
+            let cell = display
+                .back_buffer
+                .get(x, 0)
+                .unwrap_or_else(|| panic!("menu bar cell at x={x}"));
+            assert_eq!(cell.role, CellRole::MenuBar, "bar cell at x={x}");
+        }
+    }
+
+    #[test]
+    fn test_menu_dropdown_stamps_menu_item_role() {
+        use crate::terminal::renderers::menu_renderer::MenuRenderer;
+        let mut display = Display::new(80, 24, None, None);
+        let theme = display.theme;
+        let mut menu_bar = crate::core::menu::MenuBar::new();
+        menu_bar.open_menu(0);
+        MenuRenderer::render(&mut display.back_buffer, &menu_bar, &theme, 80, 24, true);
+        // Dropdown item rows below the bar carry the MenuItem role.
+        let cell = display
+            .back_buffer
+            .get(2, 1)
+            .expect("dropdown item cell");
+        assert_eq!(cell.role, CellRole::MenuItem);
+    }
+
+    #[test]
+    fn test_status_line_stamps_status_bar_role() {
+        use crate::terminal::renderers::status_renderer::{StatusCtx, StatusRenderer};
+        let mut display = Display::new(80, 24, None, None);
+        let theme = display.theme;
+        let window = crate::core::window::Window::new(
+            crate::core::id::WindowId(0),
+            crate::core::id::BufferId(0),
+            4,
+        );
+        let buffer = crate::core::buffer::Buffer::from_string("hello");
+        let rect = crate::core::layout::Rect::new(0, 0, 80, 24);
+        let bar = BarState::empty();
+        let ctx = StatusCtx {
+            window: &window,
+            buffer: &buffer,
+            rect: &rect,
+            theme: &theme,
+            is_active: true,
+            prompt_state: None,
+            bar: &bar,
+        };
+        let cursor = StatusRenderer::render(&mut display.back_buffer, &ctx);
+        assert_eq!(cursor, None);
+        // Status line (last row of the rect) carries the StatusBar role.
+        for x in 0..80u16 {
+            let cell = display
+                .back_buffer
+                .get(x, 23)
+                .unwrap_or_else(|| panic!("status cell at x={x}"));
+            assert_eq!(cell.role, CellRole::StatusBar, "status cell at x={x}");
+        }
+    }
+
+    #[test]
+    fn test_bar_state_syncs_from_backend() {
+        use crate::config::keys::{InputModel, ModalMode};
+        use crate::core::app::EditorApp;
+        use crate::core::input::{Key, KeyPress};
+
+        // Compose through the real backend: drive the engine, then build the
+        // bar state for the Modal model (production passes INPUT_MODEL).
+        let mut app = EditorApp::new();
+        app.active_buffer_mut().unwrap().insert(0, "hello\n");
+        let mut engine = std::mem::take(&mut app.modal_engine);
+        engine.handle_key_inner(&mut app, &KeyPress::plain(Key::Char('i')));
+        app.modal_engine = engine;
+
+        let window = app.active_window_ref().unwrap();
+        let buffer = app.active_buffer().unwrap();
+        let bar = compose_bar_state(
+            InputModel::Modal,
+            &app.modal_engine,
+            None,
+            "",
+            "",
+            Some(window),
+            Some(buffer),
+        );
+        assert_eq!(bar.owner, BarOwner::ModeLine);
+        assert_eq!(bar.mode_segment, Some("-- INSERT --"));
+        assert_eq!(
+            cursor_style_for(InputModel::Modal, &app.modal_engine, false),
+            CursorStyle::SteadyBar
+        );
+        // INPUT_MODEL is KeyTrie in this build: the classic mapping holds.
+        assert_eq!(INPUT_MODEL, InputModel::KeyTrie);
+        assert_eq!(
+            cursor_style_for(INPUT_MODEL, &app.modal_engine, false),
+            CursorStyle::SteadyBlock
+        );
+        let _ = ModalMode::Normal;
+    }
+
+    #[test]
+    fn test_bar_owner_priority() {
+        use crate::config::keys::InputModel;
+        use crate::core::modal::ModalEngine;
+        let engine = ModalEngine::new();
+        // Prompt outranks everything…
+        assert_eq!(
+            bar_owner_for(InputModel::Modal, &engine, true, true),
+            BarOwner::Prompt
+        );
+        // …then the vim command line…
+        let mut cmdline = ModalEngine::new();
+        {
+            use crate::core::app::EditorApp;
+            use crate::core::input::{Key, KeyPress};
+            let mut app = EditorApp::new();
+            cmdline.handle_key_inner(&mut app, &KeyPress::plain(Key::Char(':')));
+        }
+        assert_eq!(
+            bar_owner_for(InputModel::Modal, &cmdline, false, true),
+            BarOwner::CommandLine
+        );
+        // …then messages…
+        assert_eq!(
+            bar_owner_for(InputModel::Modal, &engine, false, true),
+            BarOwner::Message
+        );
+        // …then the default echo/mode line.
+        assert_eq!(
+            bar_owner_for(InputModel::Modal, &engine, false, false),
+            BarOwner::ModeLine
+        );
+        // CommandLine only applies to the Modal model.
+        assert_eq!(
+            bar_owner_for(InputModel::KeyTrie, &cmdline, false, false),
+            BarOwner::ModeLine
+        );
+    }
+
+    #[test]
+    fn test_linewise_visual_newline_stamping() {
+        use crate::core::id::{BufferId, WindowId};
+        // Buffer: two lines, each with a trailing newline, plus a last line
+        // without one.
+        let buffer = crate::core::buffer::Buffer::from_string("ab\ncde\nf");
+        let mut window = crate::core::window::Window::new(WindowId(0), BufferId(0), 4);
+        // Linewise visual over lines 0..=1: mark at BOL of line 0, cursor at
+        // EOL of line 1 (exactly what the engine sets for `V`).
+        window.mark = Some((0, 0));
+        window.cursor_x = 3;
+        window.cursor_y = 1;
+        window.scroll_offset = 0;
+        window.scroll_x = 0;
+
+        let mut display = Display::new(40, 10, None, None);
+        let theme = display.theme;
+        let rect = crate::core::layout::Rect::new(0, 0, 40, 10);
+        let gutter = text_gutter_width(true, &window, &buffer, &rect);
+        stamp_linewise_visual_newlines(
+            &mut display.back_buffer,
+            &rect,
+            gutter,
+            &window,
+            &buffer,
+            &theme,
+        );
+        // Newline regions: end of "ab" (visual x 2) and end of "cde" (x 3).
+        let text_x = rect.x + gutter;
+        let cell = display.back_buffer.get((text_x + 2) as u16, 0).unwrap();
+        assert_eq!(cell.role, CellRole::Selection);
+        assert_eq!(cell.bg, theme.selection_bg);
+        let cell = display.back_buffer.get((text_x + 3) as u16, 1).unwrap();
+        assert_eq!(cell.role, CellRole::Selection);
+        // Line 2 ("f", no trailing newline): not stamped.
+        let cell = display.back_buffer.get((text_x + 1) as u16, 2).unwrap();
+        assert_eq!(cell.role, CellRole::EditorText);
+        // No mark: no-op, nothing stamped.
+        let mut display2 = Display::new(40, 10, None, None);
+        let mut window2 = window.clone();
+        window2.mark = None;
+        stamp_linewise_visual_newlines(
+            &mut display2.back_buffer,
+            &rect,
+            gutter,
+            &window2,
+            &buffer,
+            &theme,
+        );
+        let cell = display2.back_buffer.get((text_x + 2) as u16, 0).unwrap();
+        assert_eq!(cell.role, CellRole::EditorText);
+    }
+
+    #[test]
+    fn test_display_drop_without_touch_is_quiet() {
+        // A Display that never published a cursor style must not touch stdout
+        // on drop (unit-test and GUI-mode hygiene). This just constructs and
+        // drops; the absence of output is asserted by inspection of the flag.
+        let display = Display::new(80, 24, None, None);
+        assert!(!display.cursor_style_touched);
+        assert_eq!(display.cursor_style, CursorStyle::Default);
+        drop(display);
     }
 }

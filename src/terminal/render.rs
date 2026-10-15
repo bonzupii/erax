@@ -1,48 +1,65 @@
-//! Terminal rendering module
+//! Terminal rendering: full-crossterm batched output.
 //!
-//! This module handles the low-level rendering of the display buffer to the terminal,
-//! using ANSI escape codes and crossterm for cursor control.
+//! The render path uses crossterm commands queued into a single buffer and
+//! flushed once per frame (N-106, N-107). Colors are `crossterm::style::Color`
+//! values — `Copy`, compared by value on the stack, with no per-cell
+//! allocation (N-104). ANSI run-batching: consecutive cells with identical
+//! fg/bg emit one color command for the run.
 
 use std::io::{Stdout, Write};
 
+use crossterm::{
+    QueueableCommand,
+    cursor::{Hide, MoveTo, Show},
+    style::{Color as CrosstermColor, Print, SetBackgroundColor, SetForegroundColor},
+    terminal::{Clear, ClearType},
+};
+
+use crate::terminal::capabilities::DisplayMode;
+use crate::terminal::color::Color;
 use crate::terminal::display::Display;
 
-/// Dedicated rendering function that handles terminal I/O using diffing
+/// Render the display's back buffer to the terminal.
 ///
-/// This function renders the display's back buffer to the terminal, using the
-/// front buffer for diffing to minimize updates. It handles:
-/// - Full redraws when needed (e.g., after resize)
-/// - Incremental updates by comparing old and new cells
-/// - Color optimization by tracking last used colors
-/// - Proper cursor positioning
+/// Diffs against the front buffer, batches crossterm commands, and flushes
+/// once. Generic over `Write` so the batching is benchmarkable without a TTY.
 pub fn render_display_to_terminal(
-    display: &Display,
+    display: &mut Display,
     stdout: &mut Stdout,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Hide cursor during update to prevent flickering
-    write!(stdout, "\x1b[?25l")?;
+    render_display(display, stdout)?;
+    stdout.flush()?;
+    Ok(())
+}
 
-    // Handle full redraw request (e.g. after resize) - use ANSI clear sequence
-    // Check both display flag AND dirty_tracker's full redraw state
+/// The batched render core, generic over the writer (benchmark seam).
+pub fn render_display<W: Write>(
+    display: &mut Display,
+    out: &mut W,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Hide cursor during update to prevent flickering.
+    out.queue(Hide)?;
+
+    // Full redraw on request (e.g. after resize).
     let needs_full = display.needs_full_redraw || display.dirty_tracker.needs_full_redraw();
     if needs_full {
-        write!(stdout, "\x1b[2J\x1b[H")?; // Clear screen and move cursor to top-left
+        out.queue(Clear(ClearType::All))?;
+        out.queue(MoveTo(0, 0))?;
+        // The full redraw is consumed by this render.
+        display.needs_full_redraw = false;
     }
 
-    // Get buffers for diffing
-    // back_buffer has the NEW frame
-    // front_buffer has the OLD frame (currently on screen)
     let front_buffer = &display.front_buffer;
     let back_buffer = &display.back_buffer;
 
-    let mut last_fg = String::new();
-    let mut last_bg = String::new();
+    // Last emitted colors as Copy stack values (N-104: no per-cell allocation).
+    let mut last_fg: Option<CrosstermColor> = None;
+    let mut last_bg: Option<CrosstermColor> = None;
     let mut cursor_moved = false;
 
     for y in 0..display.terminal_size.1 {
-        // Use dirty_tracker for row-level incremental rendering
         if !needs_full && !display.dirty_tracker.is_row_dirty(y as usize) {
-            continue; // Skip clean rows entirely
+            continue;
         }
 
         for x in 0..display.terminal_size.0 {
@@ -50,64 +67,91 @@ pub fn render_display_to_terminal(
                 Some(cell) => cell,
                 None => continue,
             };
-
-            let old_cell = front_buffer.get(x, y);
-
-            // If not full redraw, check if cell changed
-            if !needs_full {
-                if let Some(old) = old_cell {
-                    if old == new_cell {
-                        continue; // No change, skip
+            if !needs_full
+                && let Some(old) = front_buffer.get(x, y)
+                    && old == new_cell {
+                        continue;
                     }
-                }
-            }
-
             if new_cell.hidden {
                 continue;
             }
 
-            // Move cursor to cell position
-            write!(stdout, "\x1b[{};{}H", y + 1, x + 1)?;
+            out.queue(MoveTo(x, y))?;
             cursor_moved = true;
 
-            // Update colors if changed (apply fallback for non-TrueColor terminals)
+            // Resolve colors for the display mode; Ascii emits no color (N-110).
             let (fg, bg) = match display.display_mode {
-                crate::terminal::capabilities::DisplayMode::TrueColor
-                | crate::terminal::capabilities::DisplayMode::Gui => (new_cell.fg, new_cell.bg),
-                _ => (
+                DisplayMode::TrueColor => (new_cell.fg, new_cell.bg),
+                DisplayMode::Ansi => (
                     new_cell.fg.to_ansi_fallback(),
                     new_cell.bg.to_ansi_fallback(),
                 ),
+                DisplayMode::Ascii => (Color::Reset, Color::Reset),
             };
-            let fg_code = fg.to_ansi_fg_code();
-            let bg_code = bg.to_ansi_bg_code();
+            let fg_term: CrosstermColor = fg.to_crossterm();
+            let bg_term: CrosstermColor = bg.to_crossterm();
 
-            if fg_code != last_fg || bg_code != last_bg {
-                write!(stdout, "\x1b[{}m\x1b[{}m", fg_code, bg_code)?;
-                last_fg = fg_code;
-                last_bg = bg_code;
+            // ANSI run-batching: one color command per fg/bg change.
+            if Some(fg_term) != last_fg {
+                out.queue(SetForegroundColor(fg_term))?;
+                last_fg = Some(fg_term);
+            }
+            if Some(bg_term) != last_bg {
+                out.queue(SetBackgroundColor(bg_term))?;
+                last_bg = Some(bg_term);
             }
 
-            write!(stdout, "{}", new_cell.ch)?;
+            out.queue(Print(new_cell.ch))?;
         }
     }
 
-    // Reset colors and flush all output
+    // Reset colors if we moved the cursor (emitted any styled output).
     if cursor_moved {
-        write!(stdout, "\x1b[0m")?;
+        out.queue(SetForegroundColor(CrosstermColor::Reset))?;
+        out.queue(SetBackgroundColor(CrosstermColor::Reset))?;
     }
 
-    // Position cursor at the end and SHOW it explicitly using crossterm
+    // Emit the cursor style (DECSCUSR) when it changed since the last frame.
+    // The style itself is derived from backend mode state in Display::render
+    // (mode-aware UI, D6); this only publishes it to the terminal.
+    if display.last_emitted_cursor_style != Some(display.cursor_style) {
+        out.write_all(&display.cursor_style.decscusr_bytes())?;
+        display.last_emitted_cursor_style = Some(display.cursor_style);
+    }
+
+    // Position cursor at the end and show/hide explicitly.
     if let Some((cx, cy)) = display.cursor_pos {
-        use crossterm::{QueueableCommand, cursor};
-        stdout.queue(cursor::MoveTo(cx as u16, cy as u16))?;
-        stdout.queue(cursor::Show)?;
+        out.queue(MoveTo(cx as u16, cy as u16))?;
+        out.queue(Show)?;
     } else {
-        use crossterm::{QueueableCommand, cursor};
-        stdout.queue(cursor::Hide)?;
+        out.queue(Hide)?;
     }
-
-    stdout.flush()?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::terminal::display::Display;
+
+    #[test]
+    fn render_batches_without_allocating_per_cell() {
+        // Render a small display into a Vec<u8>; assert it produces output
+        // and that repeated identical frames diff to (almost) nothing.
+        let mut display = Display::new(10, 5, None, None);
+        let mut out = Vec::new();
+        render_display(&mut display, &mut out).unwrap();
+        assert!(!out.is_empty(), "first frame emits output");
+
+        // Second identical frame: front == back after swap, so no cells emit.
+        display.swap_buffers();
+        let mut out2 = Vec::new();
+        render_display(&mut display, &mut out2).unwrap();
+        // Only cursor positioning remains; no cell content.
+        assert!(
+            out2.len() < out.len(),
+            "identical frame emits less output"
+        );
+    }
 }

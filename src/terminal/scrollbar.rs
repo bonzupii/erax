@@ -1,9 +1,9 @@
-//! Scrollbar rendering for TUI mode
+//! Scrollbar rendering for TUI mode.
 //!
 //! All scrollbar logic is consolidated here for vertical and horizontal scrollbars.
 
 use crate::core::layout::Rect;
-use crate::terminal::display::{Cell, Color, ScreenBuffer};
+use crate::terminal::display::{Cell, CellRole, Color, ScreenBuffer};
 
 /// Scrollbar character theme
 #[derive(Clone, Copy, Debug)]
@@ -68,7 +68,10 @@ pub fn thumb_range(
         0
     } else {
         let available_track = track_size.saturating_sub(thumb_size);
-        (scroll_offset * available_track / scrollable_range).min(available_track)
+        (scroll_offset * available_track)
+            .checked_div(scrollable_range)
+            .unwrap_or(0)
+            .min(available_track)
     };
 
     (thumb_start, thumb_size)
@@ -117,43 +120,49 @@ pub fn render_vertical(
                 (theme.track_v, track_fg, track_bg)
             }
         };
-        buffer.set(scrollbar_x, screen_y, Cell::new(ch, fg, bg));
+        buffer.set(scrollbar_x, screen_y, Cell::with_role(ch, fg, bg, CellRole::Scrollbar));
     }
 }
 
 /// Render a horizontal scrollbar at the bottom of a window with arrows
 /// Returns (scrollbar_y, scrollbar_start_x, scrollbar_width) for click detection
+/// Parameters for horizontal scrollbar rendering (bundled to avoid
+/// too-many-arguments).
+pub struct HorizontalScrollbarParams {
+    pub gutter_width: usize,
+    pub content_width: usize,
+    pub text_width: usize,
+    pub scroll_x: usize,
+    pub track_fg: Color,
+    pub thumb_fg: Color,
+    pub track_bg: Color,
+}
+
 pub fn render_horizontal(
     buffer: &mut ScreenBuffer,
     rect: &Rect,
-    gutter_width: usize,
-    content_width: usize,
-    text_width: usize,
-    scroll_x: usize,
-    track_fg: Color,
-    thumb_fg: Color,
-    track_bg: Color,
+    params: &HorizontalScrollbarParams,
 ) -> Option<(u16, u16, usize)> {
     // Only render if content is wider than viewport or we're scrolled
-    if content_width <= text_width && scroll_x == 0 {
+    if params.content_width <= params.text_width && params.scroll_x == 0 {
         return None;
     }
 
     let scrollbar_y = (rect.y + rect.height).saturating_sub(2) as u16;
-    let scrollbar_start_x = (rect.x + gutter_width) as u16;
-    let scrollbar_width = text_width.saturating_sub(1); // Full width minus vertical scrollbar column
+    let scrollbar_start_x = (rect.x + params.gutter_width) as u16;
+    let scrollbar_width = params.text_width.saturating_sub(1); // Full width minus vertical scrollbar column
 
     if scrollbar_width < 5 {
         // Need at least 5 chars: left arrow, track, thumb, track, right arrow
         return None;
     }
 
-    let content_width = content_width.max(scroll_x + text_width);
+    let content_width = params.content_width.max(params.scroll_x + params.text_width);
     let arrow_cols = 1;
     let track_width = scrollbar_width.saturating_sub(arrow_cols * 2);
 
     // Use unified thumb calculation for the track area (excluding arrows)
-    let (thumb_start, thumb_size) = thumb_range(text_width, content_width, scroll_x, track_width);
+    let (thumb_start, thumb_size) = thumb_range(params.text_width, content_width, params.scroll_x, track_width);
 
     let theme = ScrollbarTheme::HEAVY;
 
@@ -161,18 +170,18 @@ pub fn render_horizontal(
     for x in 0..scrollbar_width {
         let screen_x = scrollbar_start_x + x as u16;
         let (ch, fg, bg) = if x == 0 {
-            (theme.arrow_left, thumb_fg, track_bg)
+            (theme.arrow_left, params.thumb_fg, params.track_bg)
         } else if x == scrollbar_width - 1 {
-            (theme.arrow_right, thumb_fg, track_bg)
+            (theme.arrow_right, params.thumb_fg, params.track_bg)
         } else {
             let track_x = x - arrow_cols;
             if track_x >= thumb_start && track_x < thumb_start + thumb_size {
-                (theme.thumb, thumb_fg, track_bg)
+                (theme.thumb, params.thumb_fg, params.track_bg)
             } else {
-                (theme.track_h, track_fg, track_bg)
+                (theme.track_h, params.track_fg, params.track_bg)
             }
         };
-        buffer.set(screen_x, scrollbar_y, Cell::new(ch, fg, bg));
+        buffer.set(screen_x, scrollbar_y, Cell::with_role(ch, fg, bg, CellRole::Scrollbar));
     }
 
     Some((scrollbar_y, scrollbar_start_x, scrollbar_width))

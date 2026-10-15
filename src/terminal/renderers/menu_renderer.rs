@@ -1,9 +1,9 @@
-//! Menubar rendering for TUI mode
+//! Menubar rendering for TUI mode.
 //!
 //! All menubar logic consolidated here: menu titles, dropdowns, X close button.
 
 use crate::core::menu::MenuBar;
-use crate::terminal::display::{Cell, Color, ScreenBuffer};
+use crate::terminal::display::{Cell, CellRole, Color, ScreenBuffer};
 use crate::terminal::theme::Theme;
 
 /// Renders the menu bar
@@ -24,15 +24,11 @@ impl MenuRenderer {
         }
 
         // Calculate theme colors
-        let crate::terminal::theme::Color::Rgb {
-            r: bg_r,
-            g: bg_g,
-            b: bg_b,
-        } = theme.bg().clone();
+        let (bg_r, bg_g, bg_b) = theme.bg.rgb8();
         let is_light_theme = ((bg_r as u16 + bg_g as u16 + bg_b as u16) / 3) > 128;
 
         let menu_bg: Color = if is_light_theme {
-            theme.gray_dark().clone().into()
+            theme.comment
         } else {
             Color::Rgb {
                 r: bg_r.saturating_sub(15),
@@ -41,16 +37,16 @@ impl MenuRenderer {
             }
         };
         let menu_fg: Color = if is_light_theme {
-            theme.bg().clone().into()
+            theme.bg
         } else {
-            theme.fg().clone().into()
+            theme.fg
         };
-        let menu_active_bg: Color = theme.selection_bg().clone().into();
-        let menu_active_fg: Color = theme.selection_fg().clone().into();
+        let menu_active_bg: Color = theme.selection_bg;
+        let menu_active_fg: Color = theme.selection_fg;
 
         // Draw menu bar background
         for x in 0..width {
-            buffer.set(x as u16, 0, Cell::new(' ', menu_fg, menu_bg));
+            buffer.set(x as u16, 0, Cell::with_role(' ', menu_fg, menu_bg, CellRole::MenuBar));
         }
 
         // Draw menu titles
@@ -61,27 +57,24 @@ impl MenuRenderer {
             let bg = if is_active { menu_active_bg } else { menu_bg };
 
             // Padding before title
-            buffer.set(*start as u16, 0, Cell::new(' ', fg, bg));
+            buffer.set(*start as u16, 0, Cell::with_role(' ', fg, bg, CellRole::MenuBar));
 
             // Title chars
             for (j, ch) in title.chars().enumerate() {
                 let x = start + 1 + j;
                 if x < width {
-                    buffer.set(x as u16, 0, Cell::new(ch, fg, bg));
+                    buffer.set(x as u16, 0, Cell::with_role(ch, fg, bg, CellRole::MenuBar));
                 }
             }
 
             // Padding after title
             if *end < width {
-                buffer.set((*end - 1) as u16, 0, Cell::new(' ', fg, bg));
+                buffer.set((*end - 1) as u16, 0, Cell::with_role(' ', fg, bg, CellRole::MenuBar));
             }
         }
 
         // Calculate where menu titles end
-        let menu_end = match layout.last().map(|(_, _, end)| *end) {
-            Some(e) => e,
-            None => 0,
-        };
+        let menu_end = layout.last().map(|(_, _, end)| *end).unwrap_or_default();
 
         // Reserve space for X button (2 chars: space + X)
         let x_button_start = width.saturating_sub(2);
@@ -93,18 +86,18 @@ impl MenuRenderer {
         let scrollbar_width = scrollbar_end.saturating_sub(scrollbar_start);
 
         if scrollbar_width >= 3 {
-            let scrollbar_fg: Color = theme.gray_light().clone().into();
+            let scrollbar_fg: Color = theme.scrollbar_thumb;
             // Draw scrollbar track
             for x in scrollbar_start..scrollbar_end {
-                buffer.set(x as u16, 0, Cell::new('─', scrollbar_fg, menu_bg));
+                buffer.set(x as u16, 0, Cell::with_role('─', scrollbar_fg, menu_bg, CellRole::MenuBar));
             }
         }
 
         // Draw X close button at far right with padding
         if width > 3 {
-            let x_fg: Color = theme.error().clone().into();
-            buffer.set((width - 2) as u16, 0, Cell::new(' ', menu_fg, menu_bg)); // padding
-            buffer.set((width - 1) as u16, 0, Cell::new('✕', x_fg, menu_bg));
+            let x_fg: Color = theme.error;
+            buffer.set((width - 2) as u16, 0, Cell::with_role(' ', menu_fg, menu_bg, CellRole::MenuBar)); // padding
+            buffer.set((width - 1) as u16, 0, Cell::with_role('✕', x_fg, menu_bg, CellRole::MenuBar));
         }
 
         // Draw dropdown menu if open
@@ -126,19 +119,19 @@ impl MenuRenderer {
 
                     // Clear row
                     for x in *start_x..(*start_x + menu_width).min(width) {
-                        buffer.set(x as u16, y as u16, Cell::new(' ', fg, bg));
+                        buffer.set(x as u16, y as u16, Cell::with_role(' ', fg, bg, CellRole::MenuItem));
                     }
 
                     if *is_sep {
                         for x in *start_x..(*start_x + menu_width).min(width) {
-                            buffer.set(x as u16, y as u16, Cell::new('─', fg, bg));
+                            buffer.set(x as u16, y as u16, Cell::with_role('─', fg, bg, CellRole::MenuItem));
                         }
                     } else {
                         // Label
                         for (j, ch) in label.chars().enumerate() {
                             let x = start_x + 1 + j;
                             if x < width && x < start_x + menu_width {
-                                buffer.set(x as u16, y as u16, Cell::new(ch, fg, bg));
+                                buffer.set(x as u16, y as u16, Cell::with_role(ch, fg, bg, CellRole::MenuItem));
                             }
                         }
 
@@ -148,7 +141,7 @@ impl MenuRenderer {
                             for (j, ch) in hk.chars().enumerate() {
                                 let x = hk_start + j;
                                 if x < width && x >= *start_x {
-                                    buffer.set(x as u16, y as u16, Cell::new(ch, fg, bg));
+                                    buffer.set(x as u16, y as u16, Cell::with_role(ch, fg, bg, CellRole::MenuItem));
                                 }
                             }
                         }

@@ -1,4 +1,4 @@
-//! GPM (General Purpose Mouse) client for Linux console
+//! GPM (General Purpose Mouse) client for the Linux console.
 //!
 //! Implements the GPM client protocol by connecting to the GPM daemon
 //! via Unix socket at /dev/gpmctl. Based on libgpm source code from
@@ -60,26 +60,19 @@ impl GpmClient {
             return false;
         }
         // Must be linux or vt terminal type
-        match std::env::var("TERM").map(|t| t == "linux" || t.starts_with("vt")) {
-            Ok(v) => v,
-            Err(_) => false,
-        }
+        std::env::var("TERM").map(|t| t == "linux" || t.starts_with("vt")).unwrap_or_default()
     }
 
     /// Get current virtual console number from /sys
     fn get_vc() -> Option<i32> {
         // Try to get VC from tty name first
-        if let Ok(tty) = std::fs::read_link("/proc/self/fd/0") {
-            if let Some(name) = tty.to_str() {
-                if let Some(num) = name.strip_prefix("/dev/tty") {
-                    if let Ok(n) = num.parse::<i32>() {
-                        if n > 0 && n < 64 {
+        if let Ok(tty) = std::fs::read_link("/proc/self/fd/0")
+            && let Some(name) = tty.to_str()
+                && let Some(num) = name.strip_prefix("/dev/tty")
+                    && let Ok(n) = num.parse::<i32>()
+                        && n > 0 && n < 64 {
                             return Some(n);
                         }
-                    }
-                }
-            }
-        }
         // Fallback to active tty
         std::fs::read_to_string("/sys/class/tty/tty0/active")
             .ok()
@@ -96,10 +89,7 @@ impl GpmClient {
         let socket = UnixStream::connect("/dev/gpmctl")?;
 
         // Get current VC - required for GPM to send us events
-        let vc = match Self::get_vc() {
-            Some(v) => v,
-            None => 0,
-        };
+        let vc = Self::get_vc().unwrap_or_default();
         let pid = std::process::id() as i32;
 
         // Build Gpm_Connect struct (all fields little-endian on x86)
@@ -212,6 +202,7 @@ impl GpmClient {
             ctrl: modifiers & 4 != 0,
             alt: modifiers & 8 != 0,
             click_count,
+            scroll_amount: 0,
         }
     }
 

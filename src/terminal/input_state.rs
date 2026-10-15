@@ -1,4 +1,4 @@
-//! Input State Machine
+//! Input state machine for escape-sequence parsing.
 //!
 //! Centralizes input mode management for the terminal editor.
 //! Replaces scattered conditional checks with a clean state machine pattern.
@@ -88,14 +88,13 @@ impl InputStateMachine {
         // Priority order: Focus > Menu > SpecialBuffer > Normal
 
         // 1. Check focus state first (highest priority)
-        if let Some(focus) = focus_manager.current_state() {
-            if focus.target.uses_minibuffer() {
+        if let Some(focus) = focus_manager.current_state()
+            && focus.target.uses_minibuffer() {
                 self.mode = InputMode::Focus {
                     target: focus.target.into(),
                 };
                 return;
             }
-        }
 
         // 2. Check menu state
         if menu_open {

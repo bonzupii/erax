@@ -1,3 +1,4 @@
+//! Window-content rendering for TUI mode.
 use crate::core::buffer::{Buffer, BufferKind};
 use crate::core::layout::Rect;
 use crate::core::lexer::{Token, TokenKind};
@@ -5,32 +6,49 @@ use crate::core::spell::SpellChecker;
 use crate::core::syntax::{SyntaxHighlighter, TokenType};
 use crate::core::terminal_host::TerminalHost;
 use crate::core::window::Window;
-use crate::sed::diff::DiffState;
-use crate::terminal::display::{Cell, Color, ScreenBuffer};
+use crate::core::commands::diff::DiffNavState;
+use crate::terminal::display::{Cell, CellRole, Color, ScreenBuffer};
 use crate::terminal::renderers::DirtyTracker;
 use crate::terminal::theme::Theme;
 
 /// Renders a window's content to the screen buffer
 pub struct WindowRenderer;
 
+/// Parameters for [`WindowRenderer::render`]: one struct instead of twelve
+/// arguments.
+pub struct WindowRenderParams<'a> {
+    pub buffer: &'a mut Buffer,
+    pub window: &'a Window,
+    pub rect: &'a Rect,
+    pub screen_buffer: &'a mut ScreenBuffer,
+    pub theme: &'a Theme,
+    pub syntax_highlighter: &'a mut SyntaxHighlighter,
+    pub spell_checker: &'a SpellChecker,
+    pub dirty_tracker: &'a DirtyTracker,
+    pub is_active: bool,
+    pub show_line_numbers: bool,
+    pub diff_state: Option<&'a DiffNavState>,
+    pub terminal_host: Option<&'a TerminalHost>,
+}
+
 impl WindowRenderer {
     /// Draw a window to the back buffer
     /// Returns the maximum content width of visible lines (for caching)
-    #[allow(clippy::too_many_arguments)]
-    pub fn render(
-        buffer: &mut Buffer,
-        window: &Window,
-        rect: &Rect,
-        screen_buffer: &mut ScreenBuffer,
-        theme: &Theme,
-        syntax_highlighter: &mut SyntaxHighlighter,
-        spell_checker: &SpellChecker,
-        dirty_tracker: &DirtyTracker,
-        is_active: bool,
-        show_line_numbers: bool,
-        diff_state: Option<&DiffState>,
-        terminal_host: Option<&TerminalHost>,
-    ) -> usize {
+    pub fn render(p: WindowRenderParams<'_>) -> usize {
+        let WindowRenderParams {
+            buffer,
+            window,
+            rect,
+            screen_buffer,
+            theme,
+            syntax_highlighter,
+            spell_checker,
+            dirty_tracker,
+            is_active,
+            show_line_numbers,
+            diff_state,
+            terminal_host,
+        } = p;
         // Ensure the syntax state cache is the right size
         if buffer.syntax_state_cache.len() < buffer.line_count() {
             buffer.syntax_state_cache.resize(
@@ -69,10 +87,10 @@ impl WindowRenderer {
         let is_modified_diff = kind == BufferKind::DiffModified;
 
         // Special handling for Terminal buffers - render from TerminalHost grid
-        if kind == BufferKind::Terminal {
-            if let Some(host) = terminal_host {
-                let fg = theme.fg().clone().into();
-                let bg = theme.bg().clone().into();
+        if kind == BufferKind::Terminal
+            && let Some(host) = terminal_host {
+                let fg = theme.fg;
+                let bg = theme.bg;
                 let grid = host.grid();
 
                 for y in 0..text_height.min(host.rows as usize) {
@@ -93,7 +111,6 @@ impl WindowRenderer {
                 // Status line is handled by StatusRenderer (caller responsibility)
                 return 0; // Terminal buffers don't need horizontal scrollbar caching
             }
-        }
 
         // Calculate selection range if mark is set
         let selection = window.mark.map(|mark| {
@@ -111,10 +128,20 @@ impl WindowRenderer {
             0
         };
 
+        // Line count first: split_for_render holds a borrow of the buffer.
+        // (On a pager failure line_count records the error on the buffer and
+        // returns 0; the line iterator below then simply yields nothing.)
+        let len_lines = buffer.line_count();
+
         // Initialize references for rendering loop using split borrow
-        let (rope, diagnostics_vec, syntax_cache, filename) = buffer.split_for_render();
-        let mut line_iter = rope.lines_at(window.scroll_offset);
-        let len_lines = rope.len_lines();
+        let (text, diagnostics_vec, syntax_cache, filename) = buffer.split_for_render();
+        // Lines are byte-exact in the tree; the lossy view is only for
+        // display (invalid UTF-8 becomes U+FFFD without touching content).
+        // Unreadable lines (mapped files, pager failure) are skipped — never
+        // a panic in the render loop. (The line_count() probe above records
+        // the error on the buffer in the overwhelmingly common case, where a
+        // failed content read also fails the page-metrics read.)
+        let mut line_iter = text.lines_at(window.scroll_offset);
 
         for y in 0..text_height {
             let buffer_line_idx = window.scroll_offset + y;
@@ -142,29 +169,29 @@ impl WindowRenderer {
                     theme,
                     crate::core::diagnostics::DiagnosticSeverity::Error,
                 );
-                Self::mix_colors(theme.bg().clone().into(), error_color, 0.2)
+                Self::mix_colors(theme.bg, error_color, 0.2)
             } else if has_warning {
                 let warning_color = Self::diagnostic_severity_color(
                     theme,
                     crate::core::diagnostics::DiagnosticSeverity::Warning,
                 );
-                Self::mix_colors(theme.bg().clone().into(), warning_color, 0.2)
+                Self::mix_colors(theme.bg, warning_color, 0.2)
             } else {
-                theme.bg().clone().into()
+                theme.bg
             };
 
             // Diff highlighting
             if let Some(state) = diff_state {
-                for hunk in &state.hunks {
+                for (old_start, old_end, new_start, new_end, _) in &state.hunks {
+                    // Spans are 1-based, end exclusive; buffer_line_idx is 0-based.
                     if is_original_diff
-                        && buffer_line_idx >= hunk.start_line
-                        && buffer_line_idx <= hunk.end_line
+                        && buffer_line_idx + 1 >= *old_start
+                        && buffer_line_idx + 1 < *old_end
                     {
                         line_bg = Self::mix_colors(line_bg, Color::Red, 0.2);
                     } else if is_modified_diff
-                        && buffer_line_idx >= hunk.start_line
-                        && buffer_line_idx
-                            <= hunk.start_line + hunk.new_lines.len().saturating_sub(1)
+                        && buffer_line_idx + 1 >= *new_start
+                        && buffer_line_idx + 1 < *new_end
                     {
                         line_bg = Self::mix_colors(line_bg, Color::Green, 0.2);
                     }
@@ -184,10 +211,11 @@ impl WindowRenderer {
                         screen_buffer.set(
                             gx,
                             screen_y,
-                            Cell::new(
+                            Cell::with_role(
                                 ch,
-                                theme.gutter_fg().clone().into(),
-                                theme.gutter_bg().clone().into(),
+                                theme.gutter_fg,
+                                theme.gutter_bg,
+                                CellRole::Gutter,
                             ),
                         );
                     }
@@ -198,9 +226,9 @@ impl WindowRenderer {
             if (has_error || has_warning) && gutter_width > 0 {
                 let icon = if has_error { '!' } else { 'W' };
                 let icon_fg = if has_error {
-                    theme.error()
+                    theme.error
                 } else {
-                    theme.warning()
+                    theme.warning
                 };
                 let gx = rect.x as u16 + (gutter_width as u16).saturating_sub(1);
                 if gx < (rect.x + rect.width) as u16 {
@@ -209,8 +237,8 @@ impl WindowRenderer {
                         screen_y,
                         Cell::new(
                             icon,
-                            icon_fg.clone().into(),
-                            theme.gutter_bg().clone().into(),
+                            icon_fg,
+                            theme.gutter_bg,
                         ),
                     );
                 }
@@ -220,19 +248,30 @@ impl WindowRenderer {
             let text_width = rect.width.saturating_sub(gutter_width);
             let line_slice = line_iter.next();
 
-            if let Some(slice) = line_slice {
+            // `owned_line` extends the lifetime of mapped-region lines (which
+            // the pager materializes per read) to the end of this iteration;
+            // owned-region lines borrow straight from the tree — zero-copy,
+            // exactly like the old ropey `RopeSlice` path.
+            let owned_line: Vec<u8>;
+            let line_bytes: Option<&[u8]> = match line_slice {
+                Some(Ok(crate::core::btext::LineRef::Borrowed(b))) => Some(b),
+                Some(Ok(crate::core::btext::LineRef::Owned(v))) => {
+                    owned_line = v;
+                    Some(&owned_line)
+                }
+                _ => None,
+            };
+
+            if let Some(line_bytes) = line_bytes {
                 use std::borrow::Cow;
-                let line_content: Cow<'_, str> = slice.into();
+                let line_content: Cow<'_, str> = String::from_utf8_lossy(line_bytes);
                 let line_content: &str = &line_content;
 
                 let selection_range = if let Some(((start_y, start_x), (end_y, end_x))) = selection
                 {
                     if buffer_line_idx >= start_y && buffer_line_idx <= end_y {
                         let start_byte = if buffer_line_idx == start_y {
-                            match crate::core::utf8::grapheme_byte_index(line_content, start_x) {
-                                Some(b) => b,
-                                None => 0,
-                            }
+                            crate::core::utf8::grapheme_byte_index(line_content, start_x).unwrap_or_default()
                         } else {
                             0
                         };
@@ -258,14 +297,11 @@ impl WindowRenderer {
                     None
                 };
 
-                let extension = match filename
+                let extension = filename
                     .as_ref()
                     .and_then(|p| p.extension())
                     .and_then(|e| e.to_str())
-                {
-                    Some(e) => e,
-                    None => "",
-                };
+                    .unwrap_or_default();
 
                 let current_state = match syntax_cache.get(buffer_line_idx).copied() {
                     Some(s) => s,
@@ -309,7 +345,7 @@ impl WindowRenderer {
                 }
 
                 if is_active && buffer_line_idx == window.cursor_y {
-                    line_bg = theme.current_line_bg().clone().into();
+                    line_bg = theme.current_line_bg;
                 }
 
                 let scroll_x = window.scroll_x;
@@ -324,7 +360,7 @@ impl WindowRenderer {
                             return Self::token_type_to_color(span.token_type, theme);
                         }
                     }
-                    theme.fg().clone().into()
+                    theme.fg
                 };
 
                 for ch in &chars {
@@ -346,19 +382,19 @@ impl WindowRenderer {
                     if visual_x + char_width > scroll_x && visual_x < scroll_x + text_width {
                         let is_selected = selection_range
                             .as_ref()
-                            .map_or(false, |r| r.contains(&byte_offset));
+                            .is_some_and(|r| r.contains(&byte_offset));
 
                         let (token_color, bg_color) = if is_selected {
                             (
-                                theme.selection_fg().clone().into(),
-                                theme.selection_bg().clone().into(),
+                                theme.selection_fg,
+                                theme.selection_bg,
                             )
                         } else {
                             let mut final_bg = line_bg;
                             if misspelled_ranges.iter().any(|r| r.contains(&byte_offset)) {
                                 final_bg = Self::mix_colors(
                                     final_bg,
-                                    theme.spell_tint().clone().into(),
+                                    theme.spell_tint,
                                     0.15,
                                 );
                             }
@@ -371,20 +407,30 @@ impl WindowRenderer {
                                 if abs_visual_x >= scroll_x && abs_visual_x < scroll_x + text_width
                                 {
                                     let x = text_start_x as u16 + (abs_visual_x - scroll_x) as u16;
+                                    let tab_role = if is_selected {
+                                        CellRole::Selection
+                                    } else {
+                                        CellRole::EditorText
+                                    };
                                     screen_buffer.set(
                                         x,
                                         screen_y,
-                                        Cell::new(' ', token_color, bg_color),
+                                        Cell::with_role(' ', token_color, bg_color, tab_role),
                                     );
                                 }
                             }
                         } else {
                             let x = text_start_x as u16 + char_visible_start as u16;
+                            let text_role = if is_selected {
+                                CellRole::Selection
+                            } else {
+                                CellRole::EditorText
+                            };
                             if x < (text_start_x + text_width) as u16 {
                                 screen_buffer.set(
                                     x,
                                     screen_y,
-                                    Cell::new(*ch, token_color, bg_color),
+                                    Cell::with_role(*ch, token_color, bg_color, text_role),
                                 );
 
                                 if char_width > 1 {
@@ -417,7 +463,7 @@ impl WindowRenderer {
                     screen_buffer.set(
                         x,
                         screen_y,
-                        Cell::new(' ', theme.fg().clone().into(), line_bg),
+                        Cell::new(' ', theme.fg, line_bg),
                     );
                 }
             } else {
@@ -439,16 +485,16 @@ impl WindowRenderer {
                     screen_buffer.set(
                         x,
                         screen_y,
-                        Cell::new(' ', theme.fg().clone().into(), line_bg),
+                        Cell::new(' ', theme.fg, line_bg),
                     );
                 }
             }
         }
 
         // Render vertical scrollbar
-        let track_bg = theme.bg().clone().into();
-        let track_fg: Color = theme.scrollbar_track().clone().into();
-        let thumb_fg: Color = theme.scrollbar_thumb().clone().into();
+        let track_bg = theme.bg;
+        let track_fg: Color = theme.scrollbar_track;
+        let thumb_fg: Color = theme.scrollbar_thumb;
 
         crate::terminal::scrollbar::render_vertical(
             screen_buffer,
@@ -480,13 +526,15 @@ impl WindowRenderer {
         crate::terminal::scrollbar::render_horizontal(
             screen_buffer,
             rect,
-            gutter_width,
-            content_width.max(window.scroll_x + text_width),
-            text_width,
-            window.scroll_x,
-            track_fg,
-            thumb_fg,
-            track_bg,
+            &crate::terminal::scrollbar::HorizontalScrollbarParams {
+                gutter_width,
+                content_width: content_width.max(window.scroll_x + text_width),
+                text_width,
+                scroll_x: window.scroll_x,
+                track_fg,
+                thumb_fg,
+                track_bg,
+            },
         );
 
         // Return the visible max width for caching by caller
@@ -499,26 +547,26 @@ impl WindowRenderer {
     ) -> Color {
         use crate::core::diagnostics::DiagnosticSeverity;
         match severity {
-            DiagnosticSeverity::Error => theme.red().clone().into(),
-            DiagnosticSeverity::Warning => theme.orange().clone().into(),
-            DiagnosticSeverity::Info => theme.info().clone().into(),
-            DiagnosticSeverity::Note => theme.blue().clone().into(),
+            DiagnosticSeverity::Error => theme.error,
+            DiagnosticSeverity::Warning => theme.warning,
+            DiagnosticSeverity::Info => theme.info,
+            DiagnosticSeverity::Note => theme.info,
         }
     }
 
     fn token_type_to_color(token_type: TokenType, theme: &Theme) -> Color {
         match token_type {
-            TokenType::Keyword => theme.keyword().clone().into(),
-            TokenType::Type => theme.type_name().clone().into(),
-            TokenType::String => theme.string().clone().into(),
-            TokenType::Char => theme.char().clone().into(),
-            TokenType::Number => theme.number().clone().into(),
-            TokenType::Comment => theme.comment().clone().into(),
-            TokenType::Preprocessor => theme.preprocessor().clone().into(),
-            TokenType::Function => theme.function().clone().into(),
-            TokenType::Operator => theme.operator().clone().into(),
-            TokenType::Punctuation => theme.punctuation().clone().into(),
-            TokenType::Normal => theme.normal().clone().into(),
+            TokenType::Keyword => theme.keyword,
+            TokenType::Type => theme.type_name,
+            TokenType::String => theme.string,
+            TokenType::Char => theme.char_lit,
+            TokenType::Number => theme.number,
+            TokenType::Comment => theme.comment,
+            TokenType::Preprocessor => theme.preprocessor,
+            TokenType::Function => theme.function,
+            TokenType::Operator => theme.operator,
+            TokenType::Punctuation => theme.punctuation,
+            TokenType::Normal => theme.fg,
         }
     }
 

@@ -1,11 +1,11 @@
-//! Terminal event handler module
+//! Terminal event-handler module.
 //!
 //! This module processes terminal events (input, resize, mouse) and dispatches
 //! them to the appropriate editor components.
 
 use crate::core::app::EditorApp;
-use crate::core::dispatcher::{DispatchResult, InputAction, dispatch};
-use crate::core::input::Key;
+use crate::core::command::Command;
+use crate::core::dispatcher::{DispatchResult, InputAction, dispatch, dispatch_insert};
 use crate::core::layout;
 use crate::core::mouse::{
     MouseButton as CoreMouseButton, MouseEvent as CoreMouseEvent, MouseHandler, ScrollDirection,
@@ -13,7 +13,64 @@ use crate::core::mouse::{
 use crate::terminal::display::Display;
 use crate::terminal::events::EditorEvent;
 use crate::terminal::input_state::{InputMode, InputStateMachine};
-use crate::terminal::keybinds::KeyBindingManager;
+use crate::terminal::keybinds::{KeyBindingManager, KeyOutcome};
+
+/// Handle a dispatch result the same way for commands and inserted chars.
+/// Returns Ok(true) when the editor should exit.
+fn handle_dispatch_result(
+    app: &mut EditorApp,
+    display: &mut Display,
+    result: DispatchResult,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    match result {
+        DispatchResult::Exit => Ok(true),
+        DispatchResult::Success | DispatchResult::NotHandled => {
+            display.dirty = true;
+            Ok(false)
+        }
+        DispatchResult::NeedsInput { prompt, action } => {
+            // Enter prompt mode via focus manager
+            use crate::core::focus::{FocusState, FocusTarget};
+            let target = match action {
+                InputAction::Calculator => FocusTarget::Calculator,
+                InputAction::GotoLine => FocusTarget::GoToLine,
+                InputAction::SearchForward => FocusTarget::ISearch,
+                InputAction::QueryReplace => FocusTarget::FindReplace,
+                _ => FocusTarget::Minibuffer,
+            };
+            app.focus_manager.push(FocusState::new(target, &prompt));
+            display.dirty = true;
+            Ok(false)
+        }
+        DispatchResult::AwaitKey(action) => {
+            use crate::core::focus::{FocusState, FocusTarget};
+            let target = match action {
+                InputAction::DescribeKey => FocusTarget::DescribeKey,
+                _ => FocusTarget::Editor, // Should not happen
+            };
+            app.focus_manager
+                .push(FocusState::new(target, "Describe Key: "));
+            display.dirty = true;
+            Ok(false)
+        }
+        DispatchResult::FileModified => {
+            display.set_message("File changed on disk. Reload? (y/n)".into());
+            display.dirty = true;
+            Ok(false)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// Dispatch a command from outside the event handler (e.g. an `await_longer`
+/// leaf whose timeout expired). Returns Ok(true) when the editor should exit.
+pub fn dispatch_command(
+    app: &mut EditorApp,
+    display: &mut Display,
+    cmd: Command,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    { let r = dispatch(app, cmd, 1); handle_dispatch_result(app, display, r) }
+}
 
 /// Processes a single editor event and returns true if exit is requested.
 pub fn process_terminal_event(
@@ -28,10 +85,7 @@ pub fn process_terminal_event(
     state_machine.sync_from_app(
         &app.focus_manager,
         display.is_menu_open(),
-        match display.menu_bar.active_menu {
-            Some(m) => m,
-            None => 0,
-        },
+        display.menu_bar.active_menu.unwrap_or_default(),
         buffer_kind,
     );
 
@@ -52,69 +106,70 @@ pub fn process_terminal_event(
                     // Fall through to normal handling if not consumed
                 }
                 InputMode::Normal => {
+                    // N-268: the vim modal engine owns key handling when the
+                    // compile-time input model is Modal. Insert-mode special
+                    // keys and ctrl/alt chords fall through to the trie.
+                    if crate::config::keys::INPUT_MODEL == crate::config::keys::InputModel::Modal
+                    {
+                        match crate::terminal::modal::handle_modal_key(app, display, &key) {
+                            crate::core::modal::ModalOutcome::Consumed => {
+                                display.dirty = true;
+                                return Ok(false);
+                            }
+                            crate::core::modal::ModalOutcome::ExitRequested => {
+                                return Ok(true);
+                            }
+                            crate::core::modal::ModalOutcome::PassThrough => {}
+                        }
+                    }
                     // Continue to keybinding processing below
                 }
             }
 
-            // F10 toggles menu from normal mode
-            if matches!(&key.key, Key::F(10)) {
-                display.toggle_menu_focus();
-                return Ok(false);
-            }
-            // Normal mode: process through keybinding manager
-            // Process key through keybinding manager
-            let (command_name_opt, char_to_insert_opt, is_complete) =
-                keybind_manager.process_key(&key);
-
-            // Display partial key sequences in status bar
-            let current_seq = keybind_manager.current_sequence();
-            if !current_seq.is_empty() {
-                display.set_key_sequence(current_seq);
-            } else {
-                display.set_key_sequence(String::new());
-            }
-
-            // If we have a complete command or char to insert, dispatch it
-            if is_complete {
-                let result = dispatch(app, command_name_opt.as_deref(), char_to_insert_opt, 1);
-
-                // Handle different dispatch results
-                match result {
-                    DispatchResult::Exit => return Ok(true),
-                    DispatchResult::Success => {
-                        display.dirty = true;
+            // Normal mode: process through the keybinding manager.
+            // The outcome is typed (N-055): a command, a character to insert,
+            // a pending prefix, or a dead end. Dead ends are reported, never
+            // silently swallowed (N-059).
+            match keybind_manager.process_key(key) {
+                KeyOutcome::Command(Command::ToggleMenu) => {
+                    // N-043: the menu toggle is bound in the typed config;
+                    // the key is not hardcoded here. It operates on display
+                    // state, so it is handled before dispatch.
+                    display.toggle_menu_focus();
+                    display.dirty = true;
+                    return Ok(false);
+                }
+                KeyOutcome::Command(cmd) => {
+                    if { let r = dispatch(app, cmd, 1); handle_dispatch_result(app, display, r) }? {
+                        return Ok(true);
                     }
-                    DispatchResult::NotHandled => {
-                        display.dirty = true;
+                }
+                KeyOutcome::InsertChar(c) => {
+                    if { let r = dispatch_insert(app, c, 1); handle_dispatch_result(app, display, r) }? {
+                        return Ok(true);
                     }
-                    DispatchResult::NeedsInput { prompt, action } => {
-                        // Enter prompt mode via focus manager
-                        use crate::core::focus::{FocusState, FocusTarget};
-                        let target = match action {
-                            InputAction::Calculator => FocusTarget::Calculator,
-                            InputAction::GotoLine => FocusTarget::GoToLine,
-                            InputAction::SearchForward => FocusTarget::ISearch,
-                            InputAction::QueryReplace => FocusTarget::FindReplace,
-                            _ => FocusTarget::Minibuffer,
-                        };
-                        app.focus_manager.push(FocusState::new(target, &prompt));
-                        display.dirty = true;
-                    }
-                    DispatchResult::AwaitKey(action) => {
-                        use crate::core::focus::{FocusState, FocusTarget};
-                        let target = match action {
-                            InputAction::DescribeKey => FocusTarget::DescribeKey,
-                            _ => FocusTarget::Editor, // Should not happen
-                        };
-                        app.focus_manager
-                            .push(FocusState::new(target, "Describe Key: "));
-                        display.dirty = true;
-                    }
-                    DispatchResult::FileModified => {
-                        display.set_message("File changed on disk. Reload? (y/n)".into());
-                        display.dirty = true;
-                    }
-                    _ => {}
+                }
+                KeyOutcome::Prefix => {
+                    display.set_key_sequence(keybind_manager.current_sequence());
+                }
+                KeyOutcome::AwaitingLonger { .. } => {
+                    // Leaf that is also a prefix: show the sequence and wait.
+                    // The event loop polls with the sequence timeout; if it
+                    // expires, `take_awaited()` yields the leaf command.
+                    display.set_key_sequence(keybind_manager.current_sequence());
+                }
+                KeyOutcome::DeadEnd { leaf } => {
+                    // AwaitLonger leaf that got a non-matching key: run it.
+                    if let Some(cmd) = leaf
+                        && { let r = dispatch(app, cmd, 1); handle_dispatch_result(app, display, r) }? {
+                            return Ok(true);
+                        }
+                    // Otherwise the key is genuinely unbound: say so instead
+                    // of swallowing it (N-059).
+                    display.set_message(format!("{} is undefined", key));
+                    display.set_key_sequence(String::new());
+                    display.dirty = true;
+                    return Ok(false);
                 }
             }
         }
@@ -156,11 +211,9 @@ pub fn process_terminal_event(
             // Handle menu bar clicks first (only for click events, not drags/scrolls)
             if let crate::core::input::MouseEventKind::Down(_) = event.kind {
                 if let Some(cmd) = display.menu_handle_click(mouse_x, mouse_y) {
-                    let result = dispatch(app, Some(cmd), None, 1);
-                    if let DispatchResult::Exit = result {
+                    if { let r = dispatch(app, cmd, 1); handle_dispatch_result(app, display, r) }? {
                         return Ok(true);
                     }
-                    display.dirty = true;
                     return Ok(false);
                 }
                 // If menu is open and click was on menu bar but no command, skip editor handling
@@ -187,8 +240,8 @@ pub fn process_terminal_event(
                     // Found the window
                     app.active_window = window_id;
 
-                    if let Some(window) = app.windows.get_mut(&window_id) {
-                        if let Some(buffer) = app.buffers.get_mut(&window.buffer_id) {
+                    if let Some(window) = app.windows.get_mut(&window_id)
+                        && let Some(buffer) = app.buffers.get_mut(&window.buffer_id) {
                             // Calculate gutter width using input_router
                             let gutter_width = crate::core::input_router::gutter_width(
                                 buffer.line_count(),
@@ -208,23 +261,25 @@ pub fn process_terminal_event(
                                 let line_count = buffer.line_count().max(1);
 
                                 if rel_y == 0 {
-                                    // Up arrow - scroll up by 3 lines
-                                    let target = window.scroll_offset.saturating_sub(3);
+                                    // Up arrow - scroll up (N-046: typed config step).
+                                    let target = window.scroll_offset.saturating_sub(
+                                        crate::config::display::SCROLLBAR_ARROW_STEP_LINES,
+                                    );
                                     window.scroll_to(target, buffer);
                                 } else if rel_y >= text_height.saturating_sub(1) {
-                                    // Down arrow - scroll down by 3 lines
-                                    let target = window.scroll_offset.saturating_add(3);
+                                    // Down arrow - scroll down (N-046: typed config step).
+                                    let target = window.scroll_offset.saturating_add(
+                                        crate::config::display::SCROLLBAR_ARROW_STEP_LINES,
+                                    );
                                     window.scroll_to(target, buffer);
                                 } else {
                                     // Track area - jump to proportional position
                                     let track_height = text_height.saturating_sub(2); // Minus arrows
                                     let track_pos = rel_y.saturating_sub(1); // Minus up arrow
-                                    let target_line = if track_height > 0 {
-                                        (track_pos * line_count / track_height)
-                                            .min(line_count.saturating_sub(text_height))
-                                    } else {
-                                        0
-                                    };
+                                    let target_line = (track_pos * line_count)
+                                        .checked_div(track_height)
+                                        .unwrap_or(0)
+                                        .min(line_count.saturating_sub(text_height));
                                     window.scroll_to(target_line, buffer);
                                 }
                                 display.dirty = true;
@@ -253,22 +308,25 @@ pub fn process_terminal_event(
                                     .max(window.scroll_x + text_width);
 
                                 if rel_x == 0 {
-                                    // Left arrow - scroll left
-                                    window.scroll_x = window.scroll_x.saturating_sub(5);
+                                    // Left arrow - scroll left (N-046: typed config step).
+                                    window.scroll_x = window.scroll_x.saturating_sub(
+                                        crate::config::display::SCROLLBAR_ARROW_STEP_COLS,
+                                    );
                                 } else if rel_x >= hscroll_width.saturating_sub(1) {
-                                    // Right arrow - scroll right
+                                    // Right arrow - scroll right (N-046: typed config step).
                                     let max_scroll = content_width.saturating_sub(text_width);
-                                    window.scroll_x = (window.scroll_x + 5).min(max_scroll);
+                                    window.scroll_x = (window.scroll_x
+                                        + crate::config::display::SCROLLBAR_ARROW_STEP_COLS)
+                                        .min(max_scroll);
                                 } else {
                                     // Track area - jump to proportional position
                                     let track_width = hscroll_width.saturating_sub(2); // Minus arrows
                                     let track_pos = rel_x.saturating_sub(1); // Minus left arrow
                                     let max_scroll = content_width.saturating_sub(text_width);
-                                    let target_x = if track_width > 0 {
-                                        (track_pos * content_width / track_width).min(max_scroll)
-                                    } else {
-                                        0
-                                    };
+                                    let target_x = (track_pos * content_width)
+                                        .checked_div(track_width)
+                                        .unwrap_or(0)
+                                        .min(max_scroll);
                                     window.scroll_x = target_x;
                                 }
                                 display.dirty = true;
@@ -333,18 +391,17 @@ pub fn process_terminal_event(
                                     CoreMouseEvent::Click(_, _, CoreMouseButton::Middle)
                                 );
 
-                                if is_middle_click {
-                                    if let CoreMouseEvent::Click(x, y, _) = &evt {
+                                if is_middle_click
+                                    && let CoreMouseEvent::Click(x, y, _) = &evt {
                                         // Position cursor at click location
                                         let mouse_handler = MouseHandler::new();
                                         let pos_event =
                                             CoreMouseEvent::Click(*x, *y, CoreMouseButton::Left);
                                         mouse_handler.handle_event(&pos_event, window, buffer);
                                     }
-                                }
                                 // Exit borrow scope before dispatching
                                 if is_middle_click {
-                                    crate::core::dispatcher::dispatch(app, Some("yank"), None, 1);
+                                    crate::core::dispatcher::dispatch(app, Command::Yank, 1);
                                     display.dirty = true;
                                     continue;
                                 }
@@ -375,7 +432,6 @@ pub fn process_terminal_event(
                                 }
                             }
                         }
-                    }
                     break;
                 }
             }
@@ -390,29 +446,33 @@ fn handle_focus_input(
     app: &mut EditorApp,
     display: &mut Display,
     keybind_manager: &mut KeyBindingManager,
-    key: &crate::core::input::InputEvent,
+    key: &crate::core::input::KeyPress,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let focus_result = if let Some(focus) = app.focus_manager.current_state_mut() {
         if focus.target == crate::core::focus::FocusTarget::DescribeKey {
             // Process key using keybind manager to see if it's bound.
             // This properly handles prefixes and multi-key sequences.
-            let (cmd_opt, _, is_complete) = keybind_manager.process_key(key);
-
-            if is_complete {
-                // We reached a leaf or dead end
-                let seq = keybind_manager.current_sequence();
-                // Pop focus immediately since we are done describing
-                app.focus_manager.pop();
-
-                if let Some(cmd) = cmd_opt {
-                    app.message = Some(format!("{} runs command: {}", seq, cmd));
-                } else {
+            match keybind_manager.process_key(*key) {
+                KeyOutcome::Command(cmd) => {
+                    let seq = keybind_manager.current_sequence();
+                    app.focus_manager.pop();
+                    app.message = Some(format!("{} runs command: {}", seq, cmd.name()));
+                }
+                KeyOutcome::InsertChar(c) => {
+                    let seq = keybind_manager.current_sequence();
+                    app.focus_manager.pop();
+                    app.message = Some(format!("{} inserts '{}'", seq, c));
+                }
+                KeyOutcome::DeadEnd { .. } => {
+                    let seq = keybind_manager.current_sequence();
+                    app.focus_manager.pop();
                     app.message = Some(format!("{} is undefined", seq));
                 }
-            } else {
-                // Incomplete sequence (prefix)
-                // Stay in DescribeKey mode
-                focus.prompt = format!("Describe Key: {}", keybind_manager.current_sequence());
+                KeyOutcome::Prefix | KeyOutcome::AwaitingLonger { .. } => {
+                    // Incomplete sequence (prefix): stay in DescribeKey mode.
+                    focus.prompt =
+                        format!("Describe Key: {}", keybind_manager.current_sequence());
+                }
             }
             // Consumed needed input
             display.dirty = true;
@@ -469,8 +529,9 @@ fn handle_focus_input(
 fn handle_menu_input(
     app: &mut EditorApp,
     display: &mut Display,
-    key: &crate::core::input::InputEvent,
+    key: &crate::core::input::KeyPress,
 ) -> Result<bool, Box<dyn std::error::Error>> {
+    use crate::core::input::Key;
     match &key.key {
         Key::Esc => {
             display.close_menu();
@@ -488,13 +549,10 @@ fn handle_menu_input(
             display.menu_handle_right();
         }
         Key::Enter => {
-            if let Some(cmd) = display.menu_handle_enter() {
-                let result = dispatch(app, Some(cmd), None, 1);
-                if let DispatchResult::Exit = result {
+            if let Some(cmd) = display.menu_handle_enter()
+                && { let r = dispatch(app, cmd, 1); handle_dispatch_result(app, display, r) }? {
                     return Ok(true);
                 }
-                display.dirty = true;
-            }
         }
         _ => {
             // Close menu on any other key and let normal handling proceed
@@ -508,70 +566,76 @@ fn handle_menu_input(
 fn handle_special_buffer_input(
     app: &mut EditorApp,
     display: &mut Display,
-    key: &crate::core::input::InputEvent,
+    key: &crate::core::input::KeyPress,
     kind: crate::core::buffer::BufferKind,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     use crate::core::buffer::BufferKind;
+    use crate::core::input::Key;
+
+    // Plain character keys only; modified keys fall through to normal handling.
+    let plain_char = |c: char| key.key == Key::Char(c) && !key.ctrl && !key.alt;
 
     match kind {
-        BufferKind::Diagnostics => match key.key {
-            Key::Char('j') | Key::Down => {
-                dispatch(app, Some("next-line"), None, 1);
+        BufferKind::Diagnostics => {
+            if plain_char('j') || key.key == Key::Down {
+                dispatch(app, Command::NextLine, 1);
                 display.dirty = true;
                 return Ok(true);
             }
-            Key::Char('k') | Key::Up => {
-                dispatch(app, Some("previous-line"), None, 1);
+            if plain_char('k') || key.key == Key::Up {
+                dispatch(app, Command::PreviousLine, 1);
                 display.dirty = true;
                 return Ok(true);
             }
-            Key::Enter => {
-                dispatch(app, Some("diagnostics-jump"), None, 1);
+            if key.key == Key::Enter {
+                dispatch(app, Command::DiagnosticsJump, 1);
                 display.dirty = true;
                 return Ok(true);
             }
-            Key::Char('q') | Key::Esc => {
-                dispatch(app, Some("delete-window"), None, 1);
+            if plain_char('q') || key.key == Key::Esc {
+                dispatch(app, Command::DeleteWindow, 1);
                 display.dirty = true;
                 return Ok(true);
             }
-            _ => {}
-        },
-        BufferKind::DiffOriginal | BufferKind::DiffModified => match key.key {
-            Key::Char('j') => {
-                dispatch(app, Some("diff-next-hunk"), None, 1);
+        }
+        BufferKind::DiffOriginal | BufferKind::DiffModified => {
+            if plain_char('j') || plain_char('n') {
+                dispatch(app, Command::DiffNextHunk, 1);
                 display.dirty = true;
                 return Ok(true);
             }
-            Key::Char('k') => {
-                dispatch(app, Some("diff-previous-hunk"), None, 1);
+            if plain_char('k') {
+                dispatch(app, Command::DiffPreviousHunk, 1);
                 display.dirty = true;
                 return Ok(true);
             }
-            Key::Char('y') => {
-                dispatch(app, Some("diff-accept-hunk"), None, 1);
+            if plain_char('y') {
+                dispatch(app, Command::DiffAcceptHunk, 1);
                 display.dirty = true;
                 return Ok(true);
             }
-            Key::Char('n') => {
-                dispatch(app, Some("diff-next-hunk"), None, 1);
+            if plain_char('q') {
+                dispatch(app, Command::DiffQuit, 1);
                 display.dirty = true;
                 return Ok(true);
             }
-            Key::Char('q') => {
-                dispatch(app, Some("diff-quit"), None, 1);
-                display.dirty = true;
-                return Ok(true);
-            }
-            _ => {}
-        },
+        }
         BufferKind::Terminal => {
-            // Forward keys to terminal (except Ctrl-X which is prefix)
-            if key.key != Key::Ctrl('x') {
-                if let Some(ref mut host) = app.terminal_host {
+            // Forward keys to terminal (except Ctrl-X which is the prefix).
+            let is_ctrl_x = key.ctrl && key.key == Key::Char('x');
+            if !is_ctrl_x
+                && let Some(ref mut host) = app.terminal_host {
                     match key.key {
+                        Key::Char(c) if key.ctrl => {
+                            let lower = c.to_ascii_lowercase() as u8;
+                            if lower.is_ascii_lowercase() {
+                                host.write(&[lower - b'a' + 1]);
+                            }
+                        }
                         Key::Char(c) => {
-                            host.write(&[c as u8]);
+                            let mut buf = [0u8; 4];
+                            let encoded = c.encode_utf8(&mut buf);
+                            host.write(encoded.as_bytes());
                         }
                         Key::Enter => {
                             host.write(b"\n");
@@ -582,16 +646,11 @@ fn handle_special_buffer_input(
                         Key::Tab => {
                             host.write(b"\t");
                         }
-                        Key::Ctrl(c) => {
-                            let code = (c as u8).wrapping_sub(b'a').wrapping_add(1);
-                            host.write(&[code]);
-                        }
                         _ => {}
                     }
                     display.dirty = true;
                     return Ok(true);
                 }
-            }
         }
         _ => {}
     }

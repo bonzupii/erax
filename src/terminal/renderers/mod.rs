@@ -1,4 +1,4 @@
-//! Specialized renderers for TUI components
+//! Specialized renderers for TUI components.
 //!
 //! This module contains extracted rendering logic from `Display`,
 //! organized into focused, testable components.
@@ -12,3 +12,4 @@ pub use dirty_tracker::DirtyTracker;
 pub use menu_renderer::MenuRenderer;
 pub use status_renderer::StatusRenderer;
 pub use window_renderer::WindowRenderer;
+pub use window_renderer::WindowRenderParams;

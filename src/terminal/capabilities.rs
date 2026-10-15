@@ -1,3 +1,4 @@
+//! Terminal-capability detection for graceful degradation.
 /// Terminal capabilities detection for graceful degradation
 /// Detects available features and chooses appropriate display mode
 use std::env;
@@ -5,24 +6,17 @@ use std::env;
 /// Display mode representing different terminal capabilities
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayMode {
-    /// Full GUI capabilities (if running in GUI environment)
-    Gui,
     /// True color support (24-bit color)
     TrueColor,
-    /// Standard ANSI 256-color support
+    /// Standard ANSI 16-color support
     Ansi,
-    /// ASCII-only mode with minimal formatting
+    /// ASCII-only mode with minimal formatting (no color escapes, N-110)
     Ascii,
 }
 
 impl DisplayMode {
     /// Get the display mode based on environment detection
     pub fn detect() -> Self {
-        // Check for GUI environment
-        if is_gui_environment() {
-            return DisplayMode::Gui;
-        }
-
         // Check for true color support
         if has_true_color_support() {
             return DisplayMode::TrueColor;
@@ -39,23 +33,13 @@ impl DisplayMode {
 }
 
 /// Check if we're running in a GUI environment
-fn is_gui_environment() -> bool {
-    // Check common GUI environment variables
-    env::var("DISPLAY").is_ok() ||           // X11
-    env::var("WAYLAND_DISPLAY").is_ok() ||   // Wayland
-    env::var("TERMINOLOGY").is_ok() ||       // Terminology terminal
-    env::var("KITTY_PID").is_ok() ||         // Kitty terminal (has GUI features)
-    cfg!(target_os = "macos") && env::var("TERM_PROGRAM").is_ok() // macOS GUI terminals
-}
-
 /// Check if terminal supports true color (24-bit)
 fn has_true_color_support() -> bool {
     // Check COLORTERM first
-    if let Ok(colorterm) = env::var("COLORTERM") {
-        if colorterm.contains("truecolor") || colorterm.contains("24bit") {
+    if let Ok(colorterm) = env::var("COLORTERM")
+        && (colorterm.contains("truecolor") || colorterm.contains("24bit")) {
             return true;
         }
-    }
 
     // Check TERM environment variable
     if let Ok(term) = env::var("TERM") {
@@ -71,7 +55,7 @@ fn has_true_color_support() -> bool {
     }
 
     // Check for specific terminal indicators
-    env::var("TERM_PROGRAM").map_or(false, |tp| {
+    env::var("TERM_PROGRAM").is_ok_and(|tp| {
         tp == "iTerm.app" || tp == "Hyper" || tp == "wezterm" || tp == "vscode"
     })
 }
@@ -116,7 +100,7 @@ mod tests {
         // Test that detection returns a valid mode
         let mode = DisplayMode::detect();
         match mode {
-            DisplayMode::Gui | DisplayMode::TrueColor | DisplayMode::Ansi | DisplayMode::Ascii => {
+            DisplayMode::TrueColor | DisplayMode::Ansi | DisplayMode::Ascii => {
                 // Success - at least one mode should be detected
             }
         }
@@ -127,7 +111,7 @@ mod tests {
         // Test that detection returns a valid mode
         let mode = DisplayMode::detect();
         match mode {
-            DisplayMode::Gui | DisplayMode::TrueColor | DisplayMode::Ansi => {
+            DisplayMode::TrueColor | DisplayMode::Ansi => {
                 // These modes support color
             }
             DisplayMode::Ascii => {
@@ -141,8 +125,8 @@ mod tests {
         // Test that detection returns a valid mode
         let mode = DisplayMode::detect();
         match mode {
-            DisplayMode::Gui | DisplayMode::TrueColor => {
-                // These modes support advanced formatting
+            DisplayMode::TrueColor => {
+                // This mode supports advanced formatting
             }
             DisplayMode::Ansi | DisplayMode::Ascii => {
                 // These modes do not support advanced formatting
@@ -150,14 +134,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_is_gui_environment() {
-        // This test may vary based on actual environment
-        let is_gui = is_gui_environment();
-        // We can't make assumptions about the test environment,
-        // but the function should not panic
-        assert!(is_gui == is_gui); // Just verifying it doesn't panic
-    }
 
     #[test]
     fn test_has_true_color_support() {

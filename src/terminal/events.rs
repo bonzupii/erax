@@ -1,4 +1,5 @@
-use crate::core::input::{InputEvent, Key, MouseButton, MouseEvent, MouseEventKind};
+//! Terminal event types from the platform event source.
+use crate::core::input::{Key, KeyPress, MouseButton, MouseEvent, MouseEventKind};
 // use crate::terminal::parser::AnsiParser; // Removed
 
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
@@ -7,7 +8,7 @@ use std::time::{Duration, Instant};
 /// Editor events
 #[derive(Debug, Clone, PartialEq)]
 pub enum EditorEvent {
-    Input(InputEvent),
+    Input(KeyPress),
     Resize(u16, u16),
     Mouse(MouseEvent),
     None,
@@ -89,14 +90,13 @@ impl EventHandler {
             let now = Instant::now();
             let mut is_multi_click = false;
 
-            if let Some(last_time) = self.last_click_time {
-                if now.duration_since(last_time) < Duration::from_millis(500)
+            if let Some(last_time) = self.last_click_time
+                && now.duration_since(last_time) < Duration::from_millis(500)
                     && self.last_click_pos == (event.column, event.row)
                     && self.last_click_button == Some(btn)
                 {
                     is_multi_click = true;
                 }
-            }
 
             if is_multi_click {
                 self.current_click_count = self.current_click_count.saturating_add(1);
@@ -122,6 +122,7 @@ impl EventHandler {
             alt,
             ctrl,
             click_count: self.current_click_count,
+            scroll_amount: 0,
         }
     }
 
@@ -133,7 +134,7 @@ impl EventHandler {
         }
     }
 
-    fn crossterm_key_to_input(&self, key_event: event::KeyEvent) -> InputEvent {
+    fn crossterm_key_to_input(&self, key_event: event::KeyEvent) -> KeyPress {
         let code = key_event.code;
         let modifiers = key_event.modifiers;
 
@@ -141,16 +142,10 @@ impl EventHandler {
         let alt = modifiers.contains(KeyModifiers::ALT);
         let ctrl = modifiers.contains(KeyModifiers::CONTROL);
 
+        // The Key is the base key only (N-056): Ctrl/Alt are modifiers on the
+        // KeyPress, never part of the key itself.
         let key = match code {
-            KeyCode::Char(c) => {
-                if ctrl && !alt {
-                    Key::Ctrl(c)
-                } else if alt && !ctrl {
-                    Key::Alt(c)
-                } else {
-                    Key::Char(c)
-                }
-            }
+            KeyCode::Char(c) => Key::Char(c),
             KeyCode::Backspace => Key::Backspace,
             KeyCode::Enter => Key::Enter,
             KeyCode::Left => Key::Left,
@@ -171,12 +166,13 @@ impl EventHandler {
             _ => Key::Null,
         };
 
-        InputEvent {
-            key,
-            shift,
-            alt,
-            ctrl,
-        }
+        KeyPress::mods(key, shift, alt, ctrl)
+    }
+}
+
+impl Default for EventHandler {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

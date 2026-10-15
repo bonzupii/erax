@@ -1,4 +1,4 @@
-//! Dirty Region Tracker for Incremental Rendering
+//! Dirty-region tracker for incremental rendering.
 //!
 //! Tracks which regions of the screen need redrawing to minimize
 //! unnecessary full redraws and improve performance.
@@ -39,9 +39,7 @@ impl DirtyTracker {
     /// Mark entire screen as needing redraw
     pub fn mark_full_redraw(&mut self) {
         self.full_redraw = true;
-        for row in &mut self.dirty_rows {
-            *row = true;
-        }
+        self.dirty_rows.fill(true);
     }
 
     /// Mark a specific row as dirty
@@ -61,10 +59,7 @@ impl DirtyTracker {
     /// Check if a row needs redrawing
     pub fn is_row_dirty(&self, row: usize) -> bool {
         self.full_redraw
-            || match self.dirty_rows.get(row).copied() {
-                Some(v) => v,
-                None => false,
-            }
+            || self.dirty_rows.get(row).copied().unwrap_or_default()
     }
 
     /// Check if full redraw is needed
@@ -75,9 +70,7 @@ impl DirtyTracker {
     /// Clear all dirty flags after rendering
     pub fn clear(&mut self) {
         self.full_redraw = false;
-        for row in &mut self.dirty_rows {
-            *row = false;
-        }
+        self.dirty_rows.fill(false);
     }
 
     /// Get dimensions
