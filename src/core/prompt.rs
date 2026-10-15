@@ -65,9 +65,12 @@ pub fn handle_prompt_action(
                         if let Some(pos) = buffer.find_forward(&input, start_pos) {
                             let line = buffer.byte_to_line(pos);
                             let line_start = buffer.line_to_byte(line).unwrap_or_default();
-                            let col = crate::core::utf8::grapheme_count(
-                                &buffer.content_string()[line_start..pos],
-                            );
+                            // Boundary-safe: the lossy range string is
+                            // never sliced by raw buffer offsets (a raw
+                            // offset can split the replacement chars).
+                            let slice =
+                                buffer.get_range_as_string(line_start, pos - line_start);
+                            let col = crate::core::utf8::grapheme_count(&slice);
                             window.cursor_y = line;
                             window.cursor_x = col;
                             window.update_visual_cursor(buffer);

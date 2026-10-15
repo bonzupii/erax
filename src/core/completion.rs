@@ -86,27 +86,28 @@ impl WordCompleter {
         cursor_byte: usize,
     ) -> Vec<String> {
         let content = buffer.content_string();
+        let cursor_byte = cursor_byte.min(buffer.len());
 
-        // Find word start by scanning backwards from cursor
-        let prefix_start = match content[..cursor_byte]
+        // Find word start by scanning backwards from the cursor. Only the
+        // current line's bytes are scanned: a word cannot cross a line
+        // boundary, and word chars are ASCII, so byte offsets are exact
+        // here even when the buffer holds invalid UTF-8. The lossy
+        // content string above is never sliced by a raw buffer offset
+        // (a raw offset can land inside a replacement char).
+        let line_start = buffer
+            .line_to_byte(buffer.byte_to_line(cursor_byte))
+            .unwrap_or(0);
+        let head = buffer.get_range_as_string(line_start, cursor_byte - line_start);
+        let prefix = match head
             .char_indices()
             .rev()
             .take_while(|(_, c)| c.is_ascii_alphanumeric() || *c == '_')
             .last()
-            .map(|(i, _)| i)
+            .map(|(i, _)| &head[i..])
         {
-            Some(i) => i,
-            None => cursor_byte,
+            Some(p) if !p.is_empty() => p,
+            _ => return Vec::new(),
         };
-
-        if prefix_start >= cursor_byte {
-            return Vec::new();
-        }
-
-        let prefix = &content[prefix_start..cursor_byte];
-        if prefix.is_empty() {
-            return Vec::new();
-        }
 
         // Collect words if cache is empty or buffer changed
         if self.cached_words.is_empty()
@@ -177,5 +178,48 @@ mod tests {
         // Should not include "foo" itself
         assert!(!completions.contains(&"foo".to_string()));
         assert!(completions.contains(&"foobar".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod invalid_utf8_tests {
+    use super::*;
+    use crate::core::id::BufferId;
+
+    /// Raw BText offsets must never slice the lossy content string: a
+    /// mapped file keeps invalid bytes raw, so the lossy view is shorter
+    /// and a raw cursor offset can land inside a replacement char.
+    #[test]
+    fn complete_at_cursor_invalid_utf8_does_not_panic() {
+        let dir = std::env::temp_dir().join(format!("erax-complete-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("bad.bin");
+        // b"ab\xff\xffcd foobar foo": raw len 17; lossy len 21. Raw
+        // offset 4 lands inside the first U+FFFD of the lossy view.
+        std::fs::write(&path, b"ab\xff\xffcd foobar foo").expect("write fixture");
+        let buffer = Buffer::open_mapped(&path).expect("mapped open");
+
+        let mut completer = WordCompleter::new();
+        // Must not panic; invalid bytes simply end the word scan.
+        let completions = completer.complete_at_cursor(&buffer, BufferId(0), 4);
+        assert!(completions.is_empty());
+        // A cursor past the bad bytes still completes the word (self
+        // matches are excluded, so "foo" completes to "foobar").
+        let completions = completer.complete_at_cursor(&buffer, BufferId(0), 17);
+        assert!(
+            completions.iter().any(|w| w == "foobar"),
+            "expected 'foobar' completion, got {completions:?}"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn complete_at_cursor_valid_text_still_completes() {
+        let buffer = Buffer::from_string("hello world foobar foo");
+        let mut completer = WordCompleter::new();
+        let completions =
+            completer.complete_at_cursor(&buffer, BufferId(0), buffer.len());
+        assert!(completions.contains(&"foobar".to_string()));
+        assert!(!completions.contains(&"foo".to_string()));
     }
 }

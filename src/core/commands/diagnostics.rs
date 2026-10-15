@@ -243,11 +243,14 @@ fn populate_diagnostics(app: &mut EditorApp, diag_buffer_id: BufferId) {
 /// `:line:col` / `:line` segments are stripped from the RIGHT so paths
 /// containing colons (Windows drive letters like `C:\...`) survive intact.
 fn parse_diagnostic_line(line: &str) -> (Option<PathBuf>, Option<usize>) {
-    if line.len() < 3 {
-        return (None, None);
-    }
-
-    let rest = &line[2..]; // skip icon and space
+    // Skip the icon char and the following space. Char-based: the
+    // diagnostics buffer is user-editable, so the icon may be a
+    // multi-byte char a byte slice would split.
+    let mut chars = line.char_indices();
+    let rest = match (chars.next(), chars.next()) {
+        (Some(_), Some((idx, _))) => &line[idx..],
+        _ => return (None, None),
+    };
     let loc_part = match rest.split_whitespace().next() {
         Some(part) => part,
         None => return (None, None),
@@ -394,3 +397,34 @@ pub fn diagnostics_previous(app: &mut EditorApp, _count: usize) -> DispatchResul
 
         DispatchResult::Info(msg)
     }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn parse_diagnostic_line_ascii_icon() {
+        assert_eq!(
+            parse_diagnostic_line("! foo.rs:10:2"),
+            (Some(PathBuf::from("foo.rs")), Some(10))
+        );
+        assert_eq!(
+            parse_diagnostic_line("W bar.rs:3"),
+            (Some(PathBuf::from("bar.rs")), Some(3))
+        );
+    }
+
+    #[test]
+    fn parse_diagnostic_line_multibyte_icon_does_not_panic() {
+        // The diagnostics buffer is user-editable: a multi-byte icon
+        // must not split a byte slice.
+        assert_eq!(
+            parse_diagnostic_line("⚠ foo.rs:10:2"),
+            (Some(PathBuf::from("foo.rs")), Some(10))
+        );
+        assert_eq!(parse_diagnostic_line("⚠"), (None, None));
+        assert_eq!(parse_diagnostic_line(""), (None, None));
+        assert_eq!(parse_diagnostic_line("ab"), (None, None));
+    }
+}
