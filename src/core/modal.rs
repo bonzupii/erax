@@ -18,8 +18,9 @@
 //! (`kill_ring` vs `clipboard` vs vim registers) holds.
 
 use crate::config::keys::{
-    FindDir, FindEdge, InputModel, ModalAction, ModalGAction, ModalMode, ModalOperator,
-    ModalTextObject, INPUT_MODEL, MODAL_BINDINGS, MODAL_PREFIX_G, MODAL_TEXT_OBJECTS,
+    ExAction, ExArgAction, FindDir, FindEdge, InputModel, ModalAction, ModalGAction, ModalMode,
+    ModalOperator, ModalTextObject, EX_ARG_COMMANDS, EX_COMMANDS, INPUT_MODEL, MODAL_BINDINGS,
+    MODAL_PREFIX_G, MODAL_TEXT_OBJECTS,
 };
 use crate::core::app::EditorApp;
 use crate::core::buffer::Buffer;
@@ -439,8 +440,9 @@ impl ModalEngine {
         self.reset_pending();
     }
 
-    /// Look up a binding for the current mode. Ctrl/alt chords are never
-    /// modal keys — they pass through to the key trie.
+    /// Look up a binding for the current mode in the config table.
+    /// Plain keys only: ctrl/alt chords are handled per mode, so the
+    /// operator-pending motion lookup never sees them.
     fn lookup(&self, key: &KeyPress) -> Option<ModalAction> {
         if key.ctrl || key.alt {
             return None;
@@ -512,14 +514,21 @@ impl ModalEngine {
             return ModalOutcome::Consumed;
         }
 
-        // Ctrl+R: redo in Normal mode (vim), with count (`2<C-R>` redoes
-        // twice). Without this it falls through to the key trie, which
-        // rejects all ctrl chords. Other ctrl/alt chords still pass
-        // through below.
-        if key.ctrl && !key.alt && key.key == Key::Char('r') {
-            let count = self.take_count();
-            self.reset_pending();
-            return self.run(app, Command::Redo, count);
+        // Ctrl/alt chords consult the modal table before the key trie, so
+        // `C-r` redoes in Normal mode (with count) instead of reaching the
+        // trie. Unmatched chords still pass through below.
+        if (key.ctrl || key.alt)
+            && let Some(action) = MODAL_BINDINGS
+                .iter()
+                .find(|b| {
+                    b.mode == ModalMode::Normal
+                        && b.key.key == key.key
+                        && b.key.ctrl == key.ctrl
+                        && b.key.alt == key.alt
+                })
+                .map(|b| b.action)
+        {
+            return self.run_normal_action(app, action);
         }
 
         // Counts: `3dw`. A leading `0` with no count is the `0` motion.
@@ -877,6 +886,15 @@ impl ModalEngine {
             Some(ModalGAction::GotoFirstLine) => self.gg_after_prefix(app, count, from_operator),
             Some(ModalGAction::WordEndBackward { big }) => {
                 self.ge_after_prefix(app, big, count, from_operator)
+            }
+            Some(ModalGAction::ShowPosition) => {
+                // `g C-g`: a mode change has no meaning for a position
+                // report, so a pending operator is cancelled.
+                if from_operator {
+                    self.mode = ModalMode::Normal;
+                }
+                self.reset_pending();
+                self.run(app, Command::WhatCursorPosition, 1)
             }
             None => {
                 if from_operator {
@@ -1575,13 +1593,34 @@ impl ModalEngine {
         let mut parts = line.splitn(2, char::is_whitespace);
         let cmd = parts.next().unwrap_or("");
         let arg = parts.next().unwrap_or("").trim();
-        match cmd {
-            "w" if arg.is_empty() => self.run(app, Command::SaveBuffer, 1),
-            "w" => {
-                let _ = handle_prompt_action(app, InputAction::SaveAs, arg.to_string());
-                ModalOutcome::Consumed
+        // Commands that take a path argument read it from the config
+        // table; the engine only splits command from argument.
+        if !arg.is_empty()
+            && let Some((_, action)) = EX_ARG_COMMANDS.iter().find(|(name, _)| *name == cmd)
+        {
+            match action {
+                ExArgAction::SaveAs => {
+                    let _ = handle_prompt_action(app, InputAction::SaveAs, arg.to_string());
+                }
+                ExArgAction::Open => {
+                    let _ = handle_prompt_action(app, InputAction::OpenFile, arg.to_string());
+                }
             }
-            "q" => {
+            return ModalOutcome::Consumed;
+        }
+        // The ex vocabulary is config data; the engine interprets the
+        // action variants. `:q`'s modified-buffer refusal is a state
+        // decision, so it stays here rather than in the table.
+        match EX_COMMANDS.iter().find(|(name, _)| *name == cmd).map(|(_, a)| *a) {
+            Some(ExAction::Run(command)) => self.run(app, command, 1),
+            Some(ExAction::RunSequence(commands)) => {
+                let mut outcome = ModalOutcome::Consumed;
+                for command in commands.iter() {
+                    outcome = self.run(app, *command, 1);
+                }
+                outcome
+            }
+            Some(ExAction::ConditionalQuit) => {
                 let modified = app.buffers.values().any(|b| b.modified);
                 if modified {
                     app.message = Some("No write since last change (add ! to override)".to_string());
@@ -1590,19 +1629,10 @@ impl ModalEngine {
                     self.run(app, Command::ExitErax, 1)
                 }
             }
-            "q!" => self.run(app, Command::ExitWithoutSave, 1),
-            "wq" | "x" => {
-                self.run(app, Command::SaveBuffer, 1);
-                self.run(app, Command::ExitErax, 1)
-            }
-            "e" if !arg.is_empty() => {
-                let _ = handle_prompt_action(app, InputAction::OpenFile, arg.to_string());
-                ModalOutcome::Consumed
-            }
             // Every other name resolves through the typed command table, so
             // the vim model reaches every command through its native idiom
             // (the `:` line), the same capability Emacs gets from M-x.
-            _ => match Command::from_name(cmd) {
+            None => match Command::from_name(cmd) {
                 // ToggleMenu is intercepted by the event loop before
                 // dispatch; the modal engine owns no display state, so it
                 // cannot run it from here.
@@ -1615,7 +1645,7 @@ impl ModalEngine {
                     app.message = Some(format!("Not an editor command: {}", cmd));
                     ModalOutcome::Consumed
                 }
-            }
+            },
         }
     }
 }

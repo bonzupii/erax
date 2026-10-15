@@ -575,65 +575,35 @@ fn handle_menu_input(
     Ok(false)
 }
 
-/// Handle input for special buffer types (Diagnostics, Diff, Terminal)
+/// Handle input for special buffer types (Diagnostics, Diff, Terminal).
+///
+/// Diagnostics and diff views read their single-key maps from the config
+/// tables: which view is active is the engine's decision, but the key to
+/// command pairs are data. Keys are matched exactly, so a modified key in
+/// a special view falls through to the model tables. Terminal buffers
+/// forward keys to the pty instead; that forwarding policy is engine
+/// behavior, not a mapping, and stays here.
 fn handle_special_buffer_input(
     app: &mut EditorApp,
     display: &mut Display,
     key: &crate::core::input::KeyPress,
     kind: crate::core::buffer::BufferKind,
 ) -> Result<bool, Box<dyn std::error::Error>> {
+    use crate::config::keys::{DIAGNOSTICS_KEYS, DIFF_KEYS};
     use crate::core::buffer::BufferKind;
     use crate::core::input::Key;
 
-    // Plain character keys only; modified keys fall through to normal handling.
-    let plain_char = |c: char| key.key == Key::Char(c) && !key.ctrl && !key.alt;
-
-    match kind {
-        BufferKind::Diagnostics => {
-            if plain_char('j') || key.key == Key::Down {
-                dispatch(app, Command::NextLine, 1);
-                display.dirty = true;
-                return Ok(true);
-            }
-            if plain_char('k') || key.key == Key::Up {
-                dispatch(app, Command::PreviousLine, 1);
-                display.dirty = true;
-                return Ok(true);
-            }
-            if key.key == Key::Enter {
-                dispatch(app, Command::DiagnosticsJump, 1);
-                display.dirty = true;
-                return Ok(true);
-            }
-            if plain_char('q') || key.key == Key::Esc {
-                dispatch(app, Command::DeleteWindow, 1);
-                display.dirty = true;
-                return Ok(true);
-            }
-        }
-        BufferKind::DiffOriginal | BufferKind::DiffModified => {
-            if plain_char('j') || plain_char('n') {
-                dispatch(app, Command::DiffNextHunk, 1);
-                display.dirty = true;
-                return Ok(true);
-            }
-            if plain_char('k') {
-                dispatch(app, Command::DiffPreviousHunk, 1);
-                display.dirty = true;
-                return Ok(true);
-            }
-            if plain_char('y') {
-                dispatch(app, Command::DiffAcceptHunk, 1);
-                display.dirty = true;
-                return Ok(true);
-            }
-            if plain_char('q') {
-                dispatch(app, Command::DiffQuit, 1);
-                display.dirty = true;
-                return Ok(true);
-            }
-        }
-        BufferKind::Terminal => {
+    let table: &[(crate::core::input::KeyPress, Command)] = match kind {
+        BufferKind::Diagnostics => DIAGNOSTICS_KEYS,
+        BufferKind::DiffOriginal | BufferKind::DiffModified => DIFF_KEYS,
+        _ => &[],
+    };
+    if let Some((_, command)) = table.iter().find(|(k, _)| k == key) {
+        dispatch(app, *command, 1);
+        display.dirty = true;
+        return Ok(true);
+    }
+    if kind == BufferKind::Terminal {
             // Forward keys to terminal (except Ctrl-X which is the prefix).
             let is_ctrl_x = key.ctrl && key.key == Key::Char('x');
             if !is_ctrl_x
@@ -664,8 +634,6 @@ fn handle_special_buffer_input(
                     display.dirty = true;
                     return Ok(true);
                 }
-        }
-        _ => {}
     }
     Ok(false)
 }
