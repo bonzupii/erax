@@ -453,12 +453,20 @@ impl ModalEngine {
 
     /// Run a dispatch and map `Exit` to the modal outcome. Informational
     /// results surface as the app message — a `:`-invoked command must show
-    /// its output just like M-x does.
+    /// its output just like M-x does. Prompt-requesting results enter the
+    /// focus manager like the TUI event loop does, so `/` and `?` start
+    /// incremental search instead of dying silently.
     fn run(&mut self, app: &mut EditorApp, cmd: Command, count: usize) -> ModalOutcome {
         match dispatch(app, cmd, count) {
             DispatchResult::Exit => ModalOutcome::ExitRequested,
             DispatchResult::Info(msg) => {
                 app.message = Some(msg);
+                ModalOutcome::Consumed
+            }
+            DispatchResult::NeedsInput { prompt, action } => {
+                use crate::core::focus::{FocusState, focus_target_for_action};
+                let target = focus_target_for_action(action);
+                app.focus_manager.push(FocusState::new(target, &prompt));
                 ModalOutcome::Consumed
             }
             _ => ModalOutcome::Consumed,
@@ -3599,6 +3607,25 @@ mod tests {
             .as_deref()
             .unwrap_or("")
             .contains("event loop"));
+    }
+
+    #[test]
+    fn slash_and_question_start_search() {
+        use crate::core::focus::FocusTarget;
+        // `/` must enter incremental search, not die silently: the engine
+        // routes NeedsInput through the focus manager like the event loop.
+        let mut app = app_with("hello world\n");
+        press(&mut app, kp('/'));
+        assert_eq!(
+            app.focus_manager
+                .current_state()
+                .map(|f| f.target),
+            Some(FocusTarget::ISearch)
+        );
+        // `?` (reverse search) prompts through the same path.
+        let mut app = app_with("hello world\n");
+        press(&mut app, kp('?'));
+        assert!(app.focus_manager.current_state().is_some());
     }
 
     #[test]

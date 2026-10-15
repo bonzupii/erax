@@ -8,6 +8,20 @@
 
 use std::fmt;
 
+/// Map a prompt-requesting input action to its focus target: the single
+/// rule for entering prompt mode, used by the TUI event loop and the
+/// modal engine alike.
+pub fn focus_target_for_action(action: crate::core::dispatcher::InputAction) -> FocusTarget {
+    use crate::core::dispatcher::InputAction;
+    match action {
+        InputAction::Calculator => FocusTarget::Calculator,
+        InputAction::GotoLine => FocusTarget::GoToLine,
+        InputAction::SearchForward => FocusTarget::ISearch,
+        InputAction::QueryReplace => FocusTarget::FindReplace,
+        _ => FocusTarget::Minibuffer,
+    }
+}
+
 // =============================================================================
 // FOCUS TARGET ENUM
 // =============================================================================

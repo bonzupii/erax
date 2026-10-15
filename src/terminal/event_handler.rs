@@ -30,14 +30,8 @@ fn handle_dispatch_result(
         }
         DispatchResult::NeedsInput { prompt, action } => {
             // Enter prompt mode via focus manager
-            use crate::core::focus::{FocusState, FocusTarget};
-            let target = match action {
-                InputAction::Calculator => FocusTarget::Calculator,
-                InputAction::GotoLine => FocusTarget::GoToLine,
-                InputAction::SearchForward => FocusTarget::ISearch,
-                InputAction::QueryReplace => FocusTarget::FindReplace,
-                _ => FocusTarget::Minibuffer,
-            };
+            use crate::core::focus::{FocusState, focus_target_for_action};
+            let target = focus_target_for_action(action);
             app.focus_manager.push(FocusState::new(target, &prompt));
             display.dirty = true;
             Ok(false)
