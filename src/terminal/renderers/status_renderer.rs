@@ -89,14 +89,14 @@ impl StatusRenderer {
                 },
                 BarOwner::CommandLine => {
                     let text = format!(":{}", bar.cmdline_text);
-                    // Command-line cursor, in bar character units — the same
-                    // units the cell loop below uses.
-                    let cursor_chars = bar
+                    // Command-line cursor in grapheme units — the same units
+                    // the cell loop below uses.
+                    let cursor_graphemes = bar
                         .cmdline_text
                         .get(..bar.cmdline_cursor.min(bar.cmdline_text.len()))
-                        .map(|s| s.chars().count())
+                        .map(|s| s.graphemes(true).count())
                         .unwrap_or(0);
-                    let cursor_i = left.chars().count() + 1 + cursor_chars;
+                    let cursor_i = left.graphemes(true).count() + 1 + cursor_graphemes;
                     let screen_x = rect.x + cursor_i;
                     if screen_x < rect.x + rect.width {
                         cmd_cursor = Some((screen_x as u16, status_y));
