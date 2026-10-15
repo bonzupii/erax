@@ -1,4 +1,4 @@
-//! Glyph Atlas - Simple and correct implementation
+//! Glyph atlas: pre-split implementation (see `core::atlas`).
 
 use cosmic_text::fontdb::ID;
 use rustc_hash::FxHashMap;

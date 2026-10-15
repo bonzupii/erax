@@ -1,6 +1,9 @@
-//! GUI mode implementation (requires "gui" feature).
+//! GUI mode: dumb passthrough for the TUI plus shader presentation.
+//!
+//! The GUI owns no editor state or input semantics (principle 12). It renders
+//! the TUI screen model and forwards raw input events to the backend event
+//! handler. All editor logic lives in the backend exactly once.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use winit::application::ApplicationHandler;
@@ -8,40 +11,52 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
-use crate::config::{Config, ConfigValue};
+use crate::cli::Invocation;
+use crate::config::keys::{INPUT_MODEL, InputModel, KEYBINDINGS, MODAL_BINDINGS, STANDARD_BINDINGS};
 use crate::core;
 use crate::terminal;
 
-/// Run in GUI mode (requires "gui" feature).
-pub fn run_gui_mode(files: &[PathBuf], config: &Config) -> Result<(), Box<dyn std::error::Error>> {
-    let font_path: Option<String> = config.settings.get("gui_font").and_then(|v| {
-        if let ConfigValue::String(s) = v {
-            Some(s.clone())
-        } else {
-            None
-        }
-    });
-    let font_size = match config.settings.get("font_size").and_then(|v| {
-        if let ConfigValue::Int(i) = v {
-            Some(*i as f32 + 1.0)
-        } else {
-            None
-        }
-    }) {
-        Some(f) => f,
-        None => crate::gui::DEFAULT_FONT_SIZE + 1.0,
-    };
+/// Typed errors for GUI startup.
+#[derive(Debug)]
+pub enum GuiError {
+    /// The event loop could not be created.
+    EventLoop(String),
+    /// The window could not be created.
+    Window(String),
+    /// The renderer could not be initialized.
+    Renderer(String),
+}
 
+impl std::fmt::Display for GuiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GuiError::EventLoop(e) => write!(f, "cannot create event loop: {e}"),
+            GuiError::Window(e) => write!(f, "cannot create window: {e}"),
+            GuiError::Renderer(e) => write!(f, "cannot initialize renderer: {e}"),
+        }
+    }
+}
+
+/// Run in GUI mode.
+pub fn run_gui_mode(inv: &Invocation) -> Result<(), GuiError> {
     let mut keybind_manager = terminal::keybinds::KeyBindingManager::new();
-    for (binding, command) in &config.keybindings {
-        keybind_manager.bind(binding, command.clone());
+    // Load the keymap for the compile-time input model (N-268).
+    match INPUT_MODEL {
+        InputModel::KeyTrie => keybind_manager.load(KEYBINDINGS),
+        InputModel::Standard => keybind_manager.load(STANDARD_BINDINGS),
+        InputModel::Modal => {
+            // Modal bindings are handled by the modal engine, which
+            // intercepts plain keys first; the trie underneath is the emacs
+            // keymap for special keys and ctrl/alt chords (same as the TUI).
+            keybind_manager.load(KEYBINDINGS);
+            let _ = MODAL_BINDINGS;
+        }
     }
 
-    let editor_app = core::app::EditorApp::initialize_with_config(config, files);
+    let editor_app = core::app::EditorApp::initialize(&inv.files);
+    let display = terminal::display::Display::new(120, 40, inv.theme, inv.wrap);
 
-    let display = terminal::display::Display::new_terminal(config)?;
-
-    let event_loop = EventLoop::new()?;
+    let event_loop = EventLoop::new().map_err(|e| GuiError::EventLoop(e.to_string()))?;
     event_loop.set_control_flow(ControlFlow::Wait);
 
     let mut app = GuiApp {
@@ -51,19 +66,14 @@ pub fn run_gui_mode(files: &[PathBuf], config: &Config) -> Result<(), Box<dyn st
         display,
         keybinds: keybind_manager,
         modifiers: winit::keyboard::ModifiersState::default(),
-        font_path,
-        font_size,
         dirty: true,
         cursor_pos: None,
-        is_mouse_down: false,
-        scrollbar_dragging: false,
-        last_click_time: None,
-        last_click_pos: (0, 0),
-        last_click_button: None,
-        click_count: 0,
+        pressed_button: None,
     };
 
-    event_loop.run_app(&mut app)?;
+    event_loop
+        .run_app(&mut app)
+        .map_err(|e| GuiError::EventLoop(e.to_string()))?;
     Ok(())
 }
 
@@ -74,16 +84,13 @@ struct GuiApp {
     display: terminal::display::Display,
     keybinds: terminal::keybinds::KeyBindingManager,
     modifiers: winit::keyboard::ModifiersState,
-    font_path: Option<String>,
-    font_size: f32,
     dirty: bool,
+    /// Last cursor position in pixels (for wheel events); transient input
+    /// state, not editor state.
     cursor_pos: Option<(f64, f64)>,
-    is_mouse_down: bool,
-    scrollbar_dragging: bool,
-    last_click_time: Option<std::time::Instant>,
-    last_click_pos: (usize, usize),
-    last_click_button: Option<winit::event::MouseButton>,
-    click_count: u8,
+    /// Currently pressed mouse button, for Drag vs Moved synthesis.
+    /// Transient input state; click counting lives in the backend.
+    pressed_button: Option<winit::event::MouseButton>,
 }
 
 impl ApplicationHandler for GuiApp {
@@ -96,10 +103,10 @@ impl ApplicationHandler for GuiApp {
             match event_loop.create_window(window_attrs) {
                 Ok(window) => {
                     let window = Arc::new(window);
-                    match crate::gui::GridRenderer::new(
+                    // Native shell: resolve the configured font to bytes
+                    // (platform lookup) and build the presentation core.
+                    match crate::gui::shell::native::create_renderer(
                         window.clone(),
-                        self.font_path.as_deref(),
-                        self.font_size,
                         window.scale_factor(),
                     ) {
                         Ok(mut renderer) => {
@@ -121,7 +128,7 @@ impl ApplicationHandler for GuiApp {
 
                             // Pre-warm ALL chars in the document (not just viewport)
                             if let Some(buffer) = self.editor.active_buffer() {
-                                let doc_text = buffer.to_string();
+                                let doc_text = buffer.content_string();
                                 renderer.preload_document(&doc_text);
                             }
 
@@ -182,18 +189,22 @@ impl ApplicationHandler for GuiApp {
                     self.dirty = false;
                 }
                 if let Some(renderer) = &mut self.renderer {
+                    // Backend cursor shape → presentation core (verbatim;
+                    // position comes from the Cursor-role cell in the buffer).
+                    let dpr = self
+                        .window
+                        .as_ref()
+                        .map(|w| w.scale_factor() as f32)
+                        .unwrap_or(1.0);
+                    renderer.set_cursor(self.display.cursor_style, dpr);
                     match renderer.render(&self.display.back_buffer) {
                         Ok(_) => {}
-                        Err(wgpu::SurfaceError::Lost) => {
+                        Err(crate::gui::RenderError::SurfaceLost) => {
                             let size = renderer.size();
                             renderer.resize(size);
                         }
-                        Err(wgpu::SurfaceError::OutOfMemory) => {
-                            eprintln!("GPU out of memory");
-                            event_loop.exit();
-                        }
                         Err(e) => {
-                            eprintln!("Render error: {:?}", e);
+                            eprintln!("Render error: {e}");
                         }
                     }
                 }
@@ -215,11 +226,10 @@ impl ApplicationHandler for GuiApp {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if self.dirty {
-            if let Some(window) = &self.window {
+        if self.dirty
+            && let Some(window) = &self.window {
                 window.request_redraw();
             }
-        }
     }
 }
 
@@ -235,36 +245,19 @@ impl Drop for GuiApp {
 // Event handler helper methods
 impl GuiApp {
     fn handle_keyboard(&mut self, event_loop: &ActiveEventLoop, event: winit::event::KeyEvent) {
-        if !crate::gui::input::should_process(event.state) {
+        // Only process key presses (not releases).
+        if event.state != winit::event::ElementState::Pressed {
             return;
         }
 
-        // Try to get the key from winit's text field first (respects keyboard layout)
-        // Fall back to physical key mapping for special keys
-        let key = if let Some(ref text) = event.text {
-            // Use the actual typed text (handles keyboard layouts correctly)
-            if let Some(ch) = text.chars().next() {
-                if self.modifiers.control_key() && !self.modifiers.alt_key() {
-                    Some(core::input::Key::Ctrl(ch.to_ascii_lowercase()))
-                } else if self.modifiers.alt_key() && !self.modifiers.control_key() {
-                    Some(core::input::Key::Alt(ch))
-                } else {
-                    Some(core::input::Key::Char(ch))
-                }
-            } else {
-                None
-            }
-        } else {
-            // Fall back to physical key mapping for special keys (arrows, F-keys, etc.)
-            crate::gui::input::winit_key_to_key(event.physical_key, self.modifiers)
-        };
+        // Dumb passthrough (principle 12): convert to the backend's typed
+        // KeyPress and forward raw to the TUI event handler. No GUI-side
+        // input semantics.
+        let press = crate::gui::input::winit_key_to_press(&event, self.modifiers);
 
-        if let Some(key) = key {
-            // Convert winit key to InputEvent
-            let input_event = crate::gui::input::create_input_event(key, self.modifiers);
-
+        if let Some(press) = press {
             // Create EditorEvent and delegate to TUI event handler
-            let editor_event = terminal::events::EditorEvent::Input(input_event);
+            let editor_event = terminal::events::EditorEvent::Input(press);
 
             // Use TUI event handler for all keyboard processing
             match terminal::event_handler::process_terminal_event(
@@ -312,13 +305,19 @@ impl GuiApp {
             return;
         };
 
-        // Determine event kind based on mouse button state
-        let kind = if self.is_mouse_down
-            && self.last_click_button == Some(winit::event::MouseButton::Left)
-        {
-            core::input::MouseEventKind::Drag(core::input::MouseButton::Left)
-        } else {
-            core::input::MouseEventKind::Moved
+        // Dumb passthrough: Drag if a button is held, else Moved.
+        // Click counting lives in the backend (no GUI-side synthesis).
+        let kind = match self.pressed_button {
+            Some(winit::event::MouseButton::Left) => {
+                core::input::MouseEventKind::Drag(core::input::MouseButton::Left)
+            }
+            Some(winit::event::MouseButton::Right) => {
+                core::input::MouseEventKind::Drag(core::input::MouseButton::Right)
+            }
+            Some(winit::event::MouseButton::Middle) => {
+                core::input::MouseEventKind::Drag(core::input::MouseButton::Middle)
+            }
+            _ => core::input::MouseEventKind::Moved,
         };
 
         let mouse_event = core::input::MouseEvent {
@@ -328,24 +327,29 @@ impl GuiApp {
             shift: self.modifiers.shift_key(),
             alt: self.modifiers.alt_key(),
             ctrl: self.modifiers.control_key(),
-            click_count: self.click_count,
+            click_count: 1,
+            scroll_amount: 0,
         };
 
-        let editor_event = terminal::events::EditorEvent::Mouse(mouse_event);
+        self.forward_mouse(mouse_event);
+    }
 
-        if let Ok(_) = terminal::event_handler::process_terminal_event(
+    /// Forward a mouse event to the backend event handler (dumb passthrough).
+    fn forward_mouse(&mut self, mouse_event: core::input::MouseEvent) {
+        let editor_event = terminal::events::EditorEvent::Mouse(mouse_event);
+        if terminal::event_handler::process_terminal_event(
             &mut self.editor,
             &mut self.display,
             &mut self.keybinds,
             editor_event,
-        ) {
-            if self.display.dirty {
+        )
+        .is_ok()
+            && self.display.dirty {
                 self.dirty = true;
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
             }
-        }
     }
 
     fn handle_mouse_wheel(&mut self, delta: winit::event::MouseScrollDelta) {
@@ -385,17 +389,14 @@ impl GuiApp {
         let (col, row) =
             if let (Some((x, y)), Some(renderer)) = (self.cursor_pos, self.renderer.as_ref()) {
                 let (vw, vh) = renderer.size();
-                match crate::gui::input::mouse_pos_to_grid(
+                crate::gui::input::mouse_pos_to_grid(
                     x as f32,
                     y as f32,
                     renderer.cell_width(),
                     renderer.cell_height(),
                     vw as f32,
                     vh as f32,
-                ) {
-                    Some(pos) => pos,
-                    None => (0, 0),
-                }
+                ).unwrap_or_default()
             } else {
                 (0, 0)
             };
@@ -404,25 +405,14 @@ impl GuiApp {
             column: col as u16,
             row: row as u16,
             kind,
-            shift: false,
-            alt: false,
-            ctrl: false,
-            click_count: lines, // Repurpose click_count for scroll amount
+            shift: self.modifiers.shift_key(),
+            alt: self.modifiers.alt_key(),
+            ctrl: self.modifiers.control_key(),
+            click_count: 1,
+            scroll_amount: lines,
         };
 
-        let editor_event = terminal::events::EditorEvent::Mouse(mouse_event);
-
-        if let Ok(_) = terminal::event_handler::process_terminal_event(
-            &mut self.editor,
-            &mut self.display,
-            &mut self.keybinds,
-            editor_event,
-        ) {
-            self.dirty = true;
-            if let Some(window) = &self.window {
-                window.request_redraw();
-            }
-        }
+        self.forward_mouse(mouse_event);
     }
 
     fn handle_mouse_input(
@@ -433,16 +423,12 @@ impl GuiApp {
     ) {
         use winit::event::ElementState;
 
-        // Track mouse state for drag detection
-        self.is_mouse_down = state == ElementState::Pressed;
-        if state == ElementState::Released {
-            self.scrollbar_dragging = false;
-            return; // TUI doesn't handle mouse up events currently
-        }
-
-        // Only handle press events
-        if state != ElementState::Pressed {
-            return;
+        // Track pressed button for Drag synthesis; forward ALL states
+        // including release (N-028). Click counting lives in the backend.
+        if state == ElementState::Pressed {
+            self.pressed_button = Some(button);
+        } else {
+            self.pressed_button = None;
         }
 
         // Convert pixel position to grid
@@ -465,24 +451,6 @@ impl GuiApp {
             return;
         };
 
-        // Track click count for double/triple click
-        let now = std::time::Instant::now();
-        if let Some(last_time) = self.last_click_time {
-            if now.duration_since(last_time) < std::time::Duration::from_millis(500)
-                && self.last_click_pos == (col, row)
-                && self.last_click_button == Some(button)
-            {
-                self.click_count = self.click_count.saturating_add(1).min(3);
-            } else {
-                self.click_count = 1;
-            }
-        } else {
-            self.click_count = 1;
-        }
-        self.last_click_time = Some(now);
-        self.last_click_pos = (col, row);
-        self.last_click_button = Some(button);
-
         // Convert winit button to core button
         let core_button = match button {
             winit::event::MouseButton::Left => core::input::MouseButton::Left,
@@ -491,39 +459,24 @@ impl GuiApp {
             _ => core::input::MouseButton::Left,
         };
 
-        // Create MouseEvent and delegate to TUI
+        let kind = match state {
+            ElementState::Pressed => core::input::MouseEventKind::Down(core_button),
+            ElementState::Released => core::input::MouseEventKind::Up(core_button),
+        };
+
+        // Create MouseEvent and delegate to TUI (dumb passthrough)
         let mouse_event = core::input::MouseEvent {
             column: col as u16,
             row: row as u16,
-            kind: core::input::MouseEventKind::Down(core_button),
+            kind,
             shift: self.modifiers.shift_key(),
             alt: self.modifiers.alt_key(),
             ctrl: self.modifiers.control_key(),
-            click_count: self.click_count,
+            click_count: 1,
+            scroll_amount: 0,
         };
 
-        let editor_event = terminal::events::EditorEvent::Mouse(mouse_event);
-
-        match terminal::event_handler::process_terminal_event(
-            &mut self.editor,
-            &mut self.display,
-            &mut self.keybinds,
-            editor_event,
-        ) {
-            Ok(should_exit) => {
-                if should_exit {
-                    event_loop.exit();
-                    return;
-                }
-            }
-            Err(e) => {
-                self.editor.message = Some(format!("Error: {}", e));
-            }
-        }
-
-        self.dirty = true;
-        if let Some(window) = &self.window {
-            window.request_redraw();
-        }
+        self.forward_mouse(mouse_event);
+        let _ = event_loop;
     }
 }

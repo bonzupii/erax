@@ -1,4 +1,4 @@
-//! Font system using cosmic-text
+//! Font manager: pre-split implementation (see `core::font_manager`).
 
 use cosmic_text::{Align, Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache};
 
@@ -26,7 +26,6 @@ impl FontManager {
 
         let mut buffer = Buffer::new(&mut font_system, metrics);
         buffer.set_text(
-            &mut font_system,
             "M",
             &attrs,
             Shaping::Advanced,
