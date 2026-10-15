@@ -32,6 +32,8 @@ pub enum CalcError {
     EmptyExpression,
     /// Tokenization error.
     Tokenize(String),
+    /// Arithmetic overflow, or a shift amount outside 0..64.
+    Overflow,
 }
 
 impl std::fmt::Display for CalcError {
@@ -47,6 +49,7 @@ impl std::fmt::Display for CalcError {
             CalcError::MismatchedParentheses => write!(f, "Mismatched parentheses"),
             CalcError::EmptyExpression => write!(f, "Empty expression"),
             CalcError::Tokenize(msg) => write!(f, "Tokenize error: {}", msg),
+            CalcError::Overflow => write!(f, "Arithmetic overflow"),
         }
     }
 }
@@ -437,33 +440,33 @@ fn evaluate(
             Token::UnaryMinus => {
                 // N-188: Unary minus negates the top of stack.
                 let a = stack.pop().ok_or(CalcError::StackUnderflow)?;
-                stack.push(-a);
+                stack.push(a.checked_neg().ok_or(CalcError::Overflow)?);
             }
             Token::Plus => {
                 let (a, b) = pop_two(&mut stack)?;
-                stack.push(a + b);
+                stack.push(a.checked_add(b).ok_or(CalcError::Overflow)?);
             }
             Token::Minus => {
                 let (a, b) = pop_two(&mut stack)?;
-                stack.push(a - b);
+                stack.push(a.checked_sub(b).ok_or(CalcError::Overflow)?);
             }
             Token::Star => {
                 let (a, b) = pop_two(&mut stack)?;
-                stack.push(a * b);
+                stack.push(a.checked_mul(b).ok_or(CalcError::Overflow)?);
             }
             Token::Slash => {
                 let (a, b) = pop_two(&mut stack)?;
                 if b == 0 {
                     return Err(CalcError::DivisionByZero);
                 }
-                stack.push(a / b);
+                stack.push(a.checked_div(b).ok_or(CalcError::Overflow)?);
             }
             Token::Percent => {
                 let (a, b) = pop_two(&mut stack)?;
                 if b == 0 {
                     return Err(CalcError::ModuloByZero);
                 }
-                stack.push(a % b);
+                stack.push(a.checked_rem(b).ok_or(CalcError::Overflow)?);
             }
             Token::Ampersand => {
                 let (a, b) = pop_two(&mut stack)?;
@@ -483,11 +486,11 @@ fn evaluate(
             }
             Token::LessLess => {
                 let (a, b) = pop_two(&mut stack)?;
-                stack.push(a << b);
+                stack.push(a.checked_shl(shift_amount(b)?).ok_or(CalcError::Overflow)?);
             }
             Token::GreaterGreater => {
                 let (a, b) = pop_two(&mut stack)?;
-                stack.push(a >> b);
+                stack.push(a.checked_shr(shift_amount(b)?).ok_or(CalcError::Overflow)?);
             }
             Token::Equals => {
                 let val = stack.pop().ok_or(CalcError::StackUnderflow)?;
@@ -511,6 +514,16 @@ fn evaluate(
 }
 
 /// Pop two values from stack (returns (first, second) where first was pushed first)
+/// A validated shift amount: 0..64, else [`CalcError::Overflow`].
+/// Negative amounts and amounts >= 64 are errors, not wraparound.
+fn shift_amount(b: i64) -> Result<u32, CalcError> {
+    let s: u32 = b.try_into().map_err(|_| CalcError::Overflow)?;
+    if s >= 64 {
+        return Err(CalcError::Overflow);
+    }
+    Ok(s)
+}
+
 fn pop_two(stack: &mut Vec<i64>) -> Result<(i64, i64), CalcError> {
     let b = stack.pop().ok_or(CalcError::StackUnderflow)?;
     let a = stack.pop().ok_or(CalcError::StackUnderflow)?;
@@ -743,6 +756,94 @@ mod tests {
         let mut calc = Calculator::new();
         assert!(calc.eval("10 / 0").is_err());
         assert!(calc.eval("10 % 0").is_err());
+    }
+
+    /// G-003: arithmetic overflow and out-of-range shifts are `Overflow`
+    /// errors, never panics (debug) or silent wraparound (release).
+    #[test]
+    fn g003_calc_overflow_is_a_typed_error() {
+        let mut calc = Calculator::new();
+        // i64::MIN via arithmetic (the literal itself does not parse).
+        assert_eq!(calc.eval("m = 0 - 9223372036854775807 - 1").unwrap(), i64::MIN);
+        let overflows = [
+            "9223372036854775807 + 1",
+            "m - 1",
+            "3037000500 * 3037000500",
+            "m * -1",
+            "-m",
+            "m / -1",
+            "m % -1",
+            "1 << 64",
+            "1 << -1",
+            "1 >> 64",
+            "1 >> -1",
+            "1 << 1000000",
+        ];
+        for expr in overflows {
+            assert!(
+                matches!(calc.eval(expr), Err(CalcError::Overflow)),
+                "{expr} must be Overflow, got {:?}",
+                calc.eval(expr)
+            );
+        }
+        // Boundary-valid cases still compute.
+        assert_eq!(calc.eval("1 << 63").unwrap(), i64::MIN);
+        assert_eq!(calc.eval("8 >> 2").unwrap(), 2);
+        assert_eq!(calc.eval("m >> 63").unwrap(), -1);
+        assert_eq!(calc.eval("m << 0").unwrap(), i64::MIN);
+    }
+
+    /// G-003: random expression fuzz — the evaluator must never panic,
+    /// whatever the input. Any `Err` must be a `CalcError`.
+    #[test]
+    fn g004_calc_fuzz_never_panics() {
+        struct Rng(u64);
+        impl Rng {
+            fn next(&mut self) -> u64 {
+                let mut x = self.0;
+                x ^= x >> 12;
+                x ^= x << 25;
+                x ^= x >> 27;
+                self.0 = x;
+                x.wrapping_mul(0x2545F4914F6CDD1D)
+            }
+            fn below(&mut self, n: u64) -> u64 {
+                self.next() % n.max(1)
+            }
+        }
+        let nums = [
+            "0", "1", "2", "7", "8", "63", "64", "65", "100",
+            "9223372036854775807", "9223372036854775808", "3037000500",
+            "99999999999999999999999999",
+        ];
+        let ops = [
+            "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "==", "!=",
+        ];
+        let mut rng = Rng(0xCA1C);
+        let mut calc = Calculator::new();
+        for _ in 0..20000 {
+            let mut expr = String::new();
+            let terms = 1 + rng.below(4);
+            for t in 0..terms {
+                if rng.below(4) == 0 {
+                    expr.push('(');
+                }
+                if rng.below(5) == 0 {
+                    expr.push('-');
+                }
+                expr.push_str(nums[rng.below(nums.len() as u64) as usize]);
+                if rng.below(4) == 0 {
+                    expr.push(')');
+                }
+                if t + 1 < terms {
+                    expr.push(' ');
+                    expr.push_str(ops[rng.below(ops.len() as u64) as usize]);
+                    expr.push(' ');
+                }
+            }
+            // Must not panic; the result type enforces typed errors.
+            let _ = calc.eval(&expr);
+        }
     }
 
     #[test]
