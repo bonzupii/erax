@@ -108,18 +108,13 @@ pub fn buffer_info(app: &mut EditorApp, _count: usize) -> DispatchResult {
 pub fn what_cursor_position(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let active_window_id = app.active_window;
         if let Some(window) = app.windows.get(&active_window_id)
-            && let Some(buffer) = app.buffers.get(&window.buffer_id) {
-                let win_id = window.id.0;
-                let win_width = window.width;
-
-                if let Some(byte_off) = window.get_byte_offset(buffer) {
-                    let line = buffer.byte_to_line(byte_off);
-                    let char_at_cursor = buffer.char_at(byte_off);
-                    eprintln!(
-                        "Window {}, width {}. Byte {}, Line {}, Char {:?}",
-                        win_id, win_width, byte_off, line, char_at_cursor
-                    );
-                }
+            && let Some(buffer) = app.buffers.get(&window.buffer_id)
+            && let Some(byte_off) = window.get_byte_offset(buffer) {
+                let line = buffer.byte_to_line(byte_off);
+                let char_at_cursor = buffer.char_at(byte_off);
+                return DispatchResult::Info(format!(
+                    "Byte {byte_off}, Line {line}, Char {char_at_cursor:?}"
+                ));
             }
         DispatchResult::Success
     }
@@ -204,3 +199,30 @@ pub fn show_position(app: &mut EditorApp, _count: usize) -> DispatchResult {
                 }
         DispatchResult::Success
     }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::command::Command;
+    use crate::core::dispatcher::dispatch;
+
+    /// `what-cursor-position` reports through the editor, not stderr: the
+    /// old body `eprintln!`d the answer where no user could see it.
+    #[test]
+    fn what_cursor_position_surfaces_info_in_editor() {
+        let mut app = EditorApp::new();
+        if let Some(buffer) = app.active_buffer_mut() {
+            buffer.insert(0, "hello\n");
+        }
+        let result = dispatch(&mut app, Command::WhatCursorPosition, 1);
+        match result {
+            DispatchResult::Info(message) => {
+                assert!(
+                    message.contains("Byte 0") && message.contains("Line 0"),
+                    "unexpected position report: {message:?}"
+                );
+            }
+            other => panic!("expected Info, got {other:?}"),
+        }
+    }
+}

@@ -364,6 +364,20 @@ impl EditorApp {
         }
     }
 
+    /// Enlarge the active window's pane against its split sibling.
+    pub fn grow_window(&mut self) {
+        let active = self.active_window;
+        self.layout
+            .adjust_split(active, crate::core::layout::SPLIT_ADJUST_STEP);
+    }
+
+    /// Shrink the active window's pane in favor of its split sibling.
+    pub fn shrink_window(&mut self) {
+        let active = self.active_window;
+        self.layout
+            .adjust_split(active, -crate::core::layout::SPLIT_ADJUST_STEP);
+    }
+
     /// Move cursor to specific byte offset
     pub fn goto_byte(&mut self, byte_offset: usize) {
         if let Some(window) = self.windows.get_mut(&self.active_window)

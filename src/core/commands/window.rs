@@ -39,11 +39,11 @@ pub fn window_picker(app: &mut EditorApp, _count: usize) -> DispatchResult {
     }
 
 pub fn grow_window(app: &mut EditorApp, _count: usize) -> DispatchResult {
-        app.message = Some("grow-window: Not yet implemented".to_string());
+        app.grow_window();
         DispatchResult::Success
     }
 
 pub fn shrink_window(app: &mut EditorApp, _count: usize) -> DispatchResult {
-        app.message = Some("shrink-window: Not yet implemented".to_string());
+        app.shrink_window();
         DispatchResult::Success
     }

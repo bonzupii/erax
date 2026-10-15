@@ -77,6 +77,11 @@ pub enum LayoutNode {
     },
 }
 
+/// How much one grow/shrink step moves a split ratio. A 0.05 step takes
+/// ten invocations to cross half the screen; the ratio is clamped to
+/// [0.1, 0.9] so no pane can be squeezed out of existence.
+pub const SPLIT_ADJUST_STEP: f32 = 0.05;
+
 impl LayoutNode {
     /// Create a new leaf node
     pub fn new_leaf(window_id: WindowId) -> Self {
@@ -238,6 +243,52 @@ impl LayoutNode {
             }
         }
     }
+
+    /// Grow the pane holding `target_id` by `delta`, shrinking its
+    /// sibling. The innermost split containing the window adjusts; the
+    /// ratio clamps to [0.1, 0.9]. Returns false when the window is not
+    /// in any split (a lone window has nothing to grow against).
+    pub fn adjust_split(&mut self, target_id: WindowId, delta: f32) -> bool {
+        match self {
+            Self::Leaf(_) => false,
+            Self::HSplit {
+                left,
+                right,
+                split_ratio,
+            } => {
+                if left.adjust_split(target_id, delta) || right.adjust_split(target_id, delta) {
+                    return true;
+                }
+                if left.window_ids().contains(&target_id) {
+                    *split_ratio = (*split_ratio + delta).clamp(0.1, 0.9);
+                    true
+                } else if right.window_ids().contains(&target_id) {
+                    *split_ratio = (*split_ratio - delta).clamp(0.1, 0.9);
+                    true
+                } else {
+                    false
+                }
+            }
+            Self::VSplit {
+                top,
+                bottom,
+                split_ratio,
+            } => {
+                if top.adjust_split(target_id, delta) || bottom.adjust_split(target_id, delta) {
+                    return true;
+                }
+                if top.window_ids().contains(&target_id) {
+                    *split_ratio = (*split_ratio + delta).clamp(0.1, 0.9);
+                    true
+                } else if bottom.window_ids().contains(&target_id) {
+                    *split_ratio = (*split_ratio - delta).clamp(0.1, 0.9);
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -275,5 +326,45 @@ mod tests {
         assert!(remaining_ids.contains(&WindowId(0)));
         assert!(remaining_ids.contains(&WindowId(1)));
         assert!(!remaining_ids.contains(&WindowId(2))); // Window 2 should be removed
+    }
+
+    #[test]
+    fn test_adjust_split_grows_active_pane() {
+        let mut layout = LayoutNode::new_leaf(WindowId(0));
+        assert!(layout.split_window(WindowId(0), WindowId(1), SplitDirection::Vertical));
+        let area = Rect::new(0, 0, 80, 40);
+        let height_of = |layout: &LayoutNode, id: WindowId| {
+            layout
+                .collect_windows(area)
+                .into_iter()
+                .find(|(wid, _)| *wid == id)
+                .map(|(_, r)| r.height)
+                .unwrap()
+        };
+        let before = height_of(&layout, WindowId(0));
+        assert!(layout.adjust_split(WindowId(0), SPLIT_ADJUST_STEP));
+        let after = height_of(&layout, WindowId(0));
+        assert!(after > before, "growing window 0 must enlarge its pane");
+        assert!(layout.adjust_split(WindowId(0), -SPLIT_ADJUST_STEP));
+        assert_eq!(height_of(&layout, WindowId(0)), before);
+    }
+
+    #[test]
+    fn test_adjust_split_clamps_and_ignores_lone_window() {
+        let mut layout = LayoutNode::new_leaf(WindowId(0));
+        assert!(!layout.adjust_split(WindowId(0), SPLIT_ADJUST_STEP));
+        assert!(layout.split_window(WindowId(0), WindowId(1), SplitDirection::Horizontal));
+        for _ in 0..40 {
+            layout.adjust_split(WindowId(0), SPLIT_ADJUST_STEP);
+        }
+        // The ratio clamps: window 1's pane never vanishes entirely.
+        let area = Rect::new(0, 0, 80, 40);
+        let right_width = layout
+            .collect_windows(area)
+            .into_iter()
+            .find(|(wid, _)| *wid == WindowId(1))
+            .map(|(_, r)| r.width)
+            .unwrap();
+        assert!(right_width >= 8, "clamp keeps the sibling pane visible");
     }
 }
