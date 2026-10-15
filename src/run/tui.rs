@@ -51,14 +51,20 @@ pub fn run_terminal_mode(
         ColorMode::Mono => terminal::capabilities::DisplayMode::Ascii,
     };
     {
+        // Window dimensions come from the unified frame, the same source
+        // the renderer and the resize handler use.
         let (cols, rows) = display.terminal_size;
-        let viewport = core::layout::Viewport::new(cols, rows, display.show_menu_bar);
-        let window_rects = app.layout.collect_windows(viewport.editor);
-        for (window_id, win_rect) in window_rects {
-            if let Some(window) = app.windows.get_mut(&window_id) {
-                window.set_dimensions(win_rect.width, win_rect.height.saturating_sub(1));
-            }
-        }
+        let frame = core::geometry::compute_frame(
+            core::geometry::FrameOptions {
+                cols: cols as usize,
+                rows: rows as usize,
+                menu_rows: display.menu_bar_height(),
+                show_line_numbers: display.show_line_numbers,
+            },
+            &app.layout,
+            &app.geom_inputs(),
+        );
+        frame.apply_window_dims(&mut app.windows);
     }
 
     // Initialize GPM for Linux console mouse support

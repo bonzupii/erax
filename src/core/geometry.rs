@@ -162,3 +162,719 @@ mod tests {
         assert_eq!(m2.row_y(3), (m2.offset_y + 3.0 * 16.0).round());
     }
 }
+
+// =====================================================================
+// Frame layout: one cell-geometry source for TUI, GUI, and WebUI.
+// =====================================================================
+
+use std::collections::HashMap;
+
+use crate::core::id::WindowId;
+use crate::core::layout::{LayoutNode, Rect};
+
+/// Options for [`compute_frame`]: the cell grid plus frame-wide display
+/// choices. All three frontends build this from their own size source
+/// (terminal size, pixel-derived grid); the model owns everything below.
+#[derive(Debug, Clone, Copy)]
+pub struct FrameOptions {
+    /// Frame width in cells.
+    pub cols: usize,
+    /// Frame height in cells.
+    pub rows: usize,
+    /// Rows reserved for the menu bar at the top (0 or 1).
+    pub menu_rows: usize,
+    /// Line numbers shown in the gutter.
+    pub show_line_numbers: bool,
+}
+
+/// Per-window model inputs for [`compute_frame`]. Plain data in;
+/// the module computes everything. [`EditorApp::geom_inputs`] fills
+/// these from window and buffer state.
+#[derive(Debug, Clone, Copy)]
+pub struct WindowGeomInput {
+    pub window: WindowId,
+    pub scroll_offset: usize,
+    pub scroll_x: usize,
+    pub cursor_y: usize,
+    pub visual_cursor_x: usize,
+    pub line_count: usize,
+    pub content_width: usize,
+}
+
+/// One scrollbar's derived geometry, in absolute cell coordinates.
+/// The track is the arrow-free span; the thumb is a sub-range of it.
+/// Renderers paint from this; none of them recompute positions.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScrollbarGeom {
+    /// Cross-axis coordinate: x for a vertical bar, y for a horizontal one.
+    pub cross: usize,
+    /// First cell of the arrow-free track.
+    pub track_start: usize,
+    /// Track length in cells (arrows excluded).
+    pub track_len: usize,
+    /// Thumb offset within the track.
+    pub thumb_start: usize,
+    /// Thumb length in cells.
+    pub thumb_len: usize,
+}
+
+/// One pane's derived geometry, in absolute cell coordinates.
+///
+/// `frame` is the whole pane (status row included). `text` is the
+/// editable area: gutter included, status and horizontal-scrollbar rows
+/// excluded. The vertical scrollbar column overlaps the text area's last
+/// column (the renderer paints it over text, as it always has).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PaneGeometry {
+    pub window: WindowId,
+    /// Whole pane, status row included.
+    pub frame: Rect,
+    /// Text area: gutter included, status/hscroll rows excluded.
+    pub text: Rect,
+    pub gutter_width: usize,
+    /// Absolute y of the pane's status row.
+    pub status_row: usize,
+    /// Absolute y of the horizontal scrollbar row, when shown.
+    pub hscroll_row: Option<usize>,
+    /// Vertical scrollbar geometry, when shown.
+    pub v_scrollbar: Option<ScrollbarGeom>,
+    /// Horizontal scrollbar geometry, when shown.
+    pub h_scrollbar: Option<ScrollbarGeom>,
+    /// Absolute cell of the text cursor, or `None` when the cursor is
+    /// outside the visible text area. The model hides; it never clamps
+    /// an out-of-viewport cursor to an edge.
+    pub cursor: Option<(usize, usize)>,
+}
+
+/// One frame's complete derived geometry.
+///
+/// Invariants, all by construction:
+/// - The pane frames tile the editor area (below the menu rows) exactly:
+///   no gaps, no overlaps, at any size including degenerate ones.
+/// - Split remainder rule: the first pane takes floor(ratio * span);
+///   the sibling takes the remainder. Nested splits tile the parent
+///   rect exactly, because the second span is always span minus first.
+/// - Degenerate spans are deterministic: a 0-cell span splits into two
+///   0-cell panes; a 1-cell span at ratio 0.5 splits into (0, 1).
+/// - MinimizeWindow seam: a collapsed pane is a leaf whose span
+///   computes to zero size. The tiling handles zero-size leaves with
+///   no special case, so the minimize command only needs to mark
+///   panes collapsed in the layout tree; the geometry follows.
+/// - The cursor is `Some` exactly when the model cursor sits inside
+///   the pane's text rect. Out-of-viewport cursors are hidden, never
+///   clamped to a viewport edge.
+#[derive(Debug, Clone)]
+pub struct FrameLayout {
+    pub menu_rows: usize,
+    pub cols: usize,
+    pub rows: usize,
+    pub panes: Vec<PaneGeometry>,
+}
+
+impl FrameLayout {
+    /// The pane geometry for `window`, if it is in this frame.
+    pub fn pane_for(&self, window: WindowId) -> Option<&PaneGeometry> {
+        self.panes.iter().find(|p| p.window == window)
+    }
+
+    /// The pane whose frame contains cell (x, y), if any.
+    pub fn hit_test(&self, x: usize, y: usize) -> Option<&PaneGeometry> {
+        self.panes.iter().find(|p| {
+            x >= p.frame.x
+                && x < p.frame.x + p.frame.width
+                && y >= p.frame.y
+                && y < p.frame.y + p.frame.height
+        })
+    }
+
+    /// Refresh the derived width/height cache on every window from the
+    /// model. This is the single writer of those fields: split growth
+    /// can no longer leave them stale. The contract is unchanged from
+    /// the old resize-only writer (full frame width, frame height minus
+    /// the status row), so consumers like paragraph reflow keep their
+    /// exact behavior.
+    pub fn apply_window_dims(&self, windows: &mut HashMap<WindowId, crate::core::window::Window>) {
+        for pane in &self.panes {
+            if let Some(window) = windows.get_mut(&pane.window) {
+                window.set_dimensions(pane.frame.width, pane.frame.height.saturating_sub(1));
+            }
+        }
+    }
+}
+
+/// Split point for one axis: the first pane takes floor(ratio * span),
+/// the sibling takes the remainder. Integer result, deterministic for
+/// every span including 0 and 1.
+fn split_point(span: usize, ratio: f32) -> usize {
+    (span as f32 * ratio) as usize
+}
+
+/// Gutter width for one pane: digits of the largest visible line number
+/// plus one border column, or 0 without line numbers. Two-pass callers
+/// pass the estimated text height first, then the final one.
+fn gutter_width(show_line_numbers: bool, line_count: usize, max_visible_line: usize) -> usize {
+    if !show_line_numbers {
+        return 0;
+    }
+    let max_line_num = line_count.min(max_visible_line).max(1);
+    // Digits via the same decimal rendering the painter emits.
+    format!("{max_line_num}").len() + 1
+}
+
+/// Scrollbar thumb position and size within a track.
+///
+/// Returns (thumb_start, thumb_size) with thumb_start + thumb_size <=
+/// track_size always. The thumb is proportional to the visible/total
+/// ratio, never smaller than 2 cells, and fills the track when all
+/// content is visible.
+pub fn thumb_range(
+    visible: usize,
+    total: usize,
+    scroll_offset: usize,
+    track_size: usize,
+) -> (usize, usize) {
+    if total == 0 || track_size == 0 {
+        return (0, track_size.max(1));
+    }
+
+    // Minimum thumb size (at least 2 units)
+    let min_thumb_size = 2;
+
+    // Calculate thumb size proportional to visible/total ratio
+    let thumb_size = if total <= visible {
+        track_size // Full track if all content is visible
+    } else {
+        (visible * track_size / total)
+            .max(min_thumb_size)
+            .min(track_size)
+    };
+
+    // Calculate thumb position
+    let scrollable_range = total.saturating_sub(visible);
+    let thumb_start = if scrollable_range == 0 {
+        0
+    } else {
+        let available_track = track_size.saturating_sub(thumb_size);
+        (scroll_offset * available_track)
+            .checked_div(scrollable_range)
+            .unwrap_or(0)
+            .min(available_track)
+    };
+
+    (thumb_start, thumb_size)
+}
+
+/// Derive one pane's full geometry from its frame rect and model inputs.
+///
+/// Two passes resolve the gutter/hscroll cycle exactly as the old
+/// renderers did: the gutter is estimated with the status-only text
+/// height, the horizontal scrollbar decision uses that estimate, and
+/// the final gutter uses the final text height.
+fn pane_geometry(
+    frame: Rect,
+    input: &WindowGeomInput,
+    show_line_numbers: bool,
+) -> PaneGeometry {
+    let estimate_height = frame.height.saturating_sub(1);
+    let gutter_est = gutter_width(
+        show_line_numbers,
+        input.line_count,
+        input.scroll_offset + estimate_height,
+    );
+    // The horizontal-scroll decision reserves the scrollbar column.
+    let decision_width = frame.width.saturating_sub(gutter_est + 1);
+    let needs_hscroll = input.content_width > decision_width || input.scroll_x > 0;
+
+    let text_height = estimate_height.saturating_sub(if needs_hscroll { 1 } else { 0 });
+    let gutter = gutter_width(
+        show_line_numbers,
+        input.line_count,
+        input.scroll_offset + text_height,
+    );
+    // Degenerate panes (gutter wider than the frame) keep the text
+    // rect inside the frame: the origin clamps, the size saturates.
+    let text_x = (frame.x + gutter).min(frame.x + frame.width);
+    let text = Rect::new(
+        text_x,
+        frame.y,
+        frame.width.saturating_sub(gutter),
+        text_height,
+    );
+    let status_row = frame.y + frame.height.saturating_sub(1);
+
+    // The vertical bar spans the pane minus the status row, exactly as
+    // the old renderer painted it: when a horizontal bar is shown, the
+    // vertical bar's down arrow occupies the shared corner cell, and the
+    // horizontal bar stops one cell short of it.
+    let vbar_rows = frame.height.saturating_sub(1);
+    let v_scrollbar = if vbar_rows >= 4 {
+        let track_len = vbar_rows.saturating_sub(2);
+        let (thumb_start, thumb_len) = thumb_range(
+            vbar_rows,
+            input.line_count.max(1),
+            input.scroll_offset,
+            track_len,
+        );
+        Some(ScrollbarGeom {
+            cross: frame.x + frame.width.saturating_sub(1),
+            track_start: frame.y + 1,
+            track_len,
+            thumb_start,
+            thumb_len,
+        })
+    } else {
+        None
+    };
+
+    let (hscroll_row, h_scrollbar) = if needs_hscroll {
+        let row = status_row.saturating_sub(1);
+        // Drawn bar width: the text area minus the scrollbar column,
+        // minus one more cell for the vertical bar's corner. The thumb's
+        // visible count uses the final gutter, matching the old
+        // renderer's two-pass resolution exactly.
+        let visible_cols = text.width.saturating_sub(1);
+        let bar_width = visible_cols.saturating_sub(1);
+        if bar_width >= 5 {
+            let track_len = bar_width.saturating_sub(2);
+            let content = input.content_width.max(input.scroll_x + visible_cols);
+            let (thumb_start, thumb_len) =
+                thumb_range(visible_cols, content, input.scroll_x, track_len);
+            (
+                Some(row),
+                Some(ScrollbarGeom {
+                    cross: row,
+                    track_start: text.x + 1,
+                    track_len,
+                    thumb_start,
+                    thumb_len,
+                }),
+            )
+        } else {
+            // The row is still reserved (as the renderers always did);
+            // too narrow to paint a bar with arrows.
+            (Some(row), None)
+        }
+    } else {
+        (None, None)
+    };
+
+    PaneGeometry {
+        window: input.window,
+        frame,
+        text,
+        gutter_width: gutter,
+        status_row,
+        hscroll_row,
+        v_scrollbar,
+        h_scrollbar,
+        cursor: cursor_cell(&text, input),
+    }
+}
+
+/// The model cursor cell: `Some` exactly when the window cursor sits
+/// inside the text rect. Anything else (above, below, or past the right
+/// edge) is `None`: hidden, never clamped.
+fn cursor_cell(text: &Rect, input: &WindowGeomInput) -> Option<(usize, usize)> {
+    let rel_y = input.cursor_y.checked_sub(input.scroll_offset)?;
+    if rel_y >= text.height {
+        return None;
+    }
+    let rel_x = input.visual_cursor_x.checked_sub(input.scroll_x)?;
+    if rel_x >= text.width {
+        return None;
+    }
+    Some((text.x + rel_x, text.y + rel_y))
+}
+
+/// Input for a layout leaf with no live window: the pane tiles (the
+/// frame stays total) but carries no cursor and no content.
+fn unknown_window_input(window: WindowId) -> WindowGeomInput {
+    WindowGeomInput {
+        window,
+        scroll_offset: 0,
+        scroll_x: 0,
+        cursor_y: usize::MAX,
+        visual_cursor_x: 0,
+        line_count: 0,
+        content_width: 0,
+    }
+}
+
+/// Tile one layout node into `out`, honoring the remainder rule at
+/// every level so nested splits tile their parent exactly.
+fn tile_node(
+    node: &LayoutNode,
+    area: Rect,
+    inputs: &HashMap<WindowId, WindowGeomInput>,
+    show_line_numbers: bool,
+    out: &mut Vec<PaneGeometry>,
+) {
+    match node {
+        LayoutNode::Leaf(id) => {
+            let input = inputs.get(id).copied().unwrap_or_else(|| unknown_window_input(*id));
+            out.push(pane_geometry(area, &input, show_line_numbers));
+        }
+        LayoutNode::HSplit {
+            left,
+            right,
+            split_ratio,
+        } => {
+            // Clamped to the span: the sibling's rect can never go
+            // negative, whatever ratio the layout tree carries.
+            let first = split_point(area.width, *split_ratio).min(area.width);
+            tile_node(
+                left,
+                Rect::new(area.x, area.y, first, area.height),
+                inputs,
+                show_line_numbers,
+                out,
+            );
+            tile_node(
+                right,
+                Rect::new(area.x + first, area.y, area.width - first, area.height),
+                inputs,
+                show_line_numbers,
+                out,
+            );
+        }
+        LayoutNode::VSplit {
+            top,
+            bottom,
+            split_ratio,
+        } => {
+            let first = split_point(area.height, *split_ratio).min(area.height);
+            tile_node(
+                top,
+                Rect::new(area.x, area.y, area.width, first),
+                inputs,
+                show_line_numbers,
+                out,
+            );
+            tile_node(
+                bottom,
+                Rect::new(area.x, area.y + first, area.width, area.height - first),
+                inputs,
+                show_line_numbers,
+                out,
+            );
+        }
+    }
+}
+
+/// Compute one frame's complete geometry: the single source every
+/// frontend consumes. Inputs are plain model data; outputs are absolute
+/// cell coordinates. No frontend recomputes any of this.
+pub fn compute_frame(
+    options: FrameOptions,
+    layout: &LayoutNode,
+    inputs: &[WindowGeomInput],
+) -> FrameLayout {
+    let by_window: HashMap<WindowId, WindowGeomInput> =
+        inputs.iter().map(|i| (i.window, *i)).collect();
+    let editor = Rect::new(
+        0,
+        options.menu_rows,
+        options.cols,
+        options.rows.saturating_sub(options.menu_rows),
+    );
+    let mut panes = Vec::new();
+    tile_node(
+        layout,
+        editor,
+        &by_window,
+        options.show_line_numbers,
+        &mut panes,
+    );
+    FrameLayout {
+        menu_rows: options.menu_rows,
+        cols: options.cols,
+        rows: options.rows,
+        panes,
+    }
+}
+
+#[cfg(test)]
+mod frame_tests {
+    use super::*;
+    use crate::core::id::WindowId;
+
+    fn input_for(window: usize) -> WindowGeomInput {
+        WindowGeomInput {
+            window: WindowId(window),
+            scroll_offset: 0,
+            scroll_x: 0,
+            cursor_y: 0,
+            visual_cursor_x: 0,
+            line_count: 20,
+            content_width: 40,
+        }
+    }
+
+    fn leaf(id: usize) -> LayoutNode {
+        LayoutNode::Leaf(WindowId(id))
+    }
+
+    fn trees() -> Vec<LayoutNode> {
+        let mut t = leaf(0);
+        t.split_window(WindowId(0), WindowId(1), crate::core::layout::SplitDirection::Vertical);
+        let mut nested = leaf(0);
+        nested.split_window(WindowId(0), WindowId(1), crate::core::layout::SplitDirection::Vertical);
+        nested.split_window(WindowId(0), WindowId(2), crate::core::layout::SplitDirection::Horizontal);
+        let mut deep = leaf(0);
+        deep.split_window(WindowId(0), WindowId(1), crate::core::layout::SplitDirection::Horizontal);
+        deep.split_window(WindowId(1), WindowId(2), crate::core::layout::SplitDirection::Vertical);
+        deep.split_window(WindowId(2), WindowId(3), crate::core::layout::SplitDirection::Horizontal);
+        vec![leaf(0), t, nested, deep]
+    }
+
+    fn inputs_for(tree: &LayoutNode) -> Vec<WindowGeomInput> {
+        tree.window_ids()
+            .iter()
+            .map(|id| input_for(id.0))
+            .collect()
+    }
+
+    /// Every cell of the editor area belongs to exactly one pane frame,
+    /// and every pane frame lies inside the editor area.
+    fn assert_tiling(frame: &FrameLayout) {
+        let editor_y = frame.menu_rows;
+        let editor_h = frame.rows.saturating_sub(editor_y);
+        for pane in &frame.panes {
+            assert!(pane.frame.x + pane.frame.width <= frame.cols, "pane overflows cols");
+            assert!(
+                pane.frame.y >= editor_y
+                    && pane.frame.y + pane.frame.height <= editor_y + editor_h,
+                "pane outside editor area"
+            );
+            assert!(
+                pane.text.x + pane.text.width <= pane.frame.x + pane.frame.width,
+                "text rect overflows pane frame"
+            );
+            assert!(
+                pane.text.y + pane.text.height <= pane.frame.y + pane.frame.height,
+                "text rect overflows pane frame"
+            );
+            assert_eq!(
+                pane.status_row,
+                pane.frame.y + pane.frame.height.saturating_sub(1),
+                "status row is the pane's last row"
+            );
+            if let Some((cx, cy)) = pane.cursor {
+                assert!(
+                    cx >= pane.text.x
+                        && cx < pane.text.x + pane.text.width
+                        && cy >= pane.text.y
+                        && cy < pane.text.y + pane.text.height,
+                    "cursor outside its text rect"
+                );
+            }
+            for bar in pane.v_scrollbar.iter().chain(pane.h_scrollbar.iter()) {
+                assert!(
+                    bar.thumb_start + bar.thumb_len <= bar.track_len,
+                    "thumb overflows its track"
+                );
+                assert!(bar.thumb_len >= 1, "thumb must exist");
+            }
+        }
+        // Pairwise: no two pane frames overlap.
+        for (i, a) in frame.panes.iter().enumerate() {
+            for b in frame.panes.iter().skip(i + 1) {
+                let overlap_x = a.frame.x < b.frame.x + b.frame.width
+                    && b.frame.x < a.frame.x + a.frame.width;
+                let overlap_y = a.frame.y < b.frame.y + b.frame.height
+                    && b.frame.y < a.frame.y + a.frame.height;
+                assert!(!(overlap_x && overlap_y), "pane frames overlap");
+            }
+        }
+        // Area: the frames exactly cover the editor area.
+        let covered: usize = frame.panes.iter().map(|p| p.frame.width * p.frame.height).sum();
+        assert_eq!(
+            covered,
+            frame.cols * editor_h,
+            "pane frames must tile the editor area exactly"
+        );
+    }
+
+    #[test]
+    fn remainder_rule_is_deterministic() {
+        assert_eq!(split_point(7, 0.5), 3);
+        assert_eq!(split_point(1, 0.5), 0);
+        assert_eq!(split_point(0, 0.5), 0);
+        assert_eq!(split_point(80, 0.5), 40);
+        assert_eq!(split_point(80, 0.1), 8);
+        // Sibling always takes the remainder: nested splits tile exactly.
+        for span in 0..=40usize {
+            for ratio in [0.1f32, 0.25, 0.5, 0.75, 0.9] {
+                let first = split_point(span, ratio);
+                assert_eq!(first + (span - first), span);
+            }
+        }
+    }
+
+    #[test]
+    fn frame_tiles_at_every_size() {
+        let cols = [0usize, 1, 2, 3, 5, 40, 79, 80, 81, 200];
+        let rows = [0usize, 1, 2, 3, 10, 23, 24, 25, 100];
+        for tree in trees() {
+            let inputs = inputs_for(&tree);
+            for &c in &cols {
+                for &r in &rows {
+                    for menu_rows in [0usize, 1] {
+                        for show_line_numbers in [false, true] {
+                            let frame = compute_frame(
+                                FrameOptions {
+                                    cols: c,
+                                    rows: r,
+                                    menu_rows,
+                                    show_line_numbers,
+                                },
+                                &tree,
+                                &inputs,
+                            );
+                            assert_tiling(&frame);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cursor_hidden_outside_viewport_never_clamped() {
+        let tree = leaf(0);
+        let opts = FrameOptions {
+            cols: 80,
+            rows: 24,
+            menu_rows: 0,
+            show_line_numbers: true,
+        };
+        let mut base = input_for(0);
+        base.line_count = 100;
+        // Above the viewport.
+        let mut above = base;
+        above.cursor_y = 0;
+        above.scroll_offset = 50;
+        let f = compute_frame(opts, &tree, &[above]);
+        assert_eq!(f.panes[0].cursor, None, "cursor above viewport must hide");
+        // Below the viewport.
+        let mut below = base;
+        below.cursor_y = 99;
+        below.scroll_offset = 0;
+        let f = compute_frame(opts, &tree, &[below]);
+        assert_eq!(f.panes[0].cursor, None, "cursor below viewport must hide");
+        // Past the right edge.
+        let mut wide = base;
+        wide.cursor_y = 0;
+        wide.visual_cursor_x = 500;
+        wide.scroll_x = 0;
+        let f = compute_frame(opts, &tree, &[wide]);
+        assert_eq!(f.panes[0].cursor, None, "cursor past text width must hide");
+        // Visible: exact cell, no clamping.
+        let mut shown = base;
+        shown.cursor_y = 3;
+        shown.scroll_offset = 0;
+        shown.visual_cursor_x = 10;
+        let f = compute_frame(opts, &tree, &[shown]);
+        let pane = &f.panes[0];
+        assert_eq!(
+            pane.cursor,
+            Some((pane.text.x + 10, pane.text.y + 3)),
+            "visible cursor lands on its exact cell"
+        );
+    }
+
+    #[test]
+    fn thumb_never_leaves_its_track() {
+        for visible in [1usize, 2, 5, 20, 100] {
+            for total in [0usize, 1, 5, 19, 20, 21, 1000] {
+                for offset in [0usize, 1, 7, 500] {
+                    for track in [0usize, 1, 3, 10, 50] {
+                        let (start, len) = thumb_range(visible, total, offset, track);
+                        assert!(
+                            start + len <= track.max(1),
+                            "thumb overflow: v{visible} t{total} o{offset} track{track}"
+                        );
+                        assert!(len >= 1, "thumb must exist");
+                        if total <= visible && track > 0 {
+                            assert_eq!(len, track, "all visible: thumb fills track");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn resize_storm_keeps_every_invariant() {
+        let tree = trees()[3].clone();
+        let inputs = inputs_for(&tree);
+        // Deterministic pseudo-random size sequence (xorshift).
+        let mut state: u64 = 0x243F_6A88_85A3_08D3;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for _ in 0..500 {
+            let cols = (next() % 220) as usize;
+            let rows = (next() % 110) as usize;
+            let frame = compute_frame(
+                FrameOptions {
+                    cols,
+                    rows,
+                    menu_rows: 1,
+                    show_line_numbers: true,
+                },
+                &tree,
+                &inputs,
+            );
+            assert_tiling(&frame);
+        }
+    }
+
+    #[test]
+    fn unknown_window_tiles_without_cursor() {
+        // A layout leaf with no live window keeps the frame total; it
+        // carries no cursor and the renderer skips it.
+        let tree = leaf(7);
+        let frame = compute_frame(
+            FrameOptions {
+                cols: 80,
+                rows: 24,
+                menu_rows: 0,
+                show_line_numbers: true,
+            },
+            &tree,
+            &[],
+        );
+        assert_eq!(frame.panes.len(), 1);
+        assert_eq!(frame.panes[0].cursor, None);
+        assert_tiling(&frame);
+    }
+
+    #[test]
+    fn hit_test_finds_owning_pane() {
+        let mut tree = leaf(0);
+        tree.split_window(WindowId(0), WindowId(1), crate::core::layout::SplitDirection::Horizontal);
+        let inputs = inputs_for(&tree);
+        let frame = compute_frame(
+            FrameOptions {
+                cols: 80,
+                rows: 24,
+                menu_rows: 1,
+                show_line_numbers: false,
+            },
+            &tree,
+            &inputs,
+        );
+        let left = frame.pane_for(WindowId(0)).unwrap();
+        let right = frame.pane_for(WindowId(1)).unwrap();
+        assert_eq!(left.frame.width, 40);
+        assert_eq!(right.frame.x, 40);
+        assert_eq!(frame.hit_test(0, 5).unwrap().window, WindowId(0));
+        assert_eq!(frame.hit_test(79, 5).unwrap().window, WindowId(1));
+        assert_eq!(frame.hit_test(40, 5).unwrap().window, WindowId(1));
+        assert!(frame.hit_test(200, 200).is_none());
+    }
+}

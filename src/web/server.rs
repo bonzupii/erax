@@ -747,6 +747,72 @@ mod tests {
         ));
     }
 
+
+    /// Golden: the web server's resize path feeds the unified model.
+    /// A resize arriving over the wire is forwarded as
+    /// `EditorEvent::Resize` through the same handler the TUI uses (the
+    /// real server code path, minus the socket); the resulting frame map
+    /// must equal the TUI golden's, and the cursor the protocol ships is
+    /// the model's verdict. No protocol change: the wire already carries
+    /// cells plus the cursor's visible flag, and the client paints only
+    /// what the model derived.
+    #[test]
+    fn golden_web_resize_frame_consistency() {
+        use crate::core::app::EditorApp;
+        use crate::core::buffer::Buffer;
+        use crate::core::geometry::{compute_frame, FrameOptions};
+        use crate::core::id::BufferId;
+        use crate::web::server::EditorEvent;
+        use crate::terminal::display::Display;
+        use crate::terminal::event_handler::process_terminal_event;
+        use crate::terminal::keybinds::KeyBindingManager;
+
+        let mut app = EditorApp::new();
+        let text = (0..100)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        app.buffers.insert(BufferId(0), Buffer::from_string(&text));
+        let mut display = Display::new(80, 24, None, None);
+        let mut keybind_manager = KeyBindingManager::new();
+
+        // The wire resize: clamped and forwarded as EditorEvent::Resize.
+        let (w, h) = (80u16, 24u16);
+        process_terminal_event(&mut app, &mut display, &mut keybind_manager,
+            EditorEvent::Resize(w, h))
+            .expect("resize");
+        display.render(&mut app).expect("render");
+
+        let frame = compute_frame(
+            FrameOptions {
+                cols: 80,
+                rows: 24,
+                menu_rows: 1,
+                show_line_numbers: true,
+            },
+            &app.layout,
+            &app.geom_inputs(),
+        );
+        assert_eq!(frame.panes.len(), 1);
+        let p = &frame.panes[0];
+        assert_eq!(
+            (p.frame.x, p.frame.y, p.frame.width, p.frame.height),
+            (0, 1, 80, 23)
+        );
+        assert_eq!(p.gutter_width, 3);
+        assert_eq!(
+            (p.text.x, p.text.y, p.text.width, p.text.height),
+            (3, 1, 77, 22)
+        );
+        assert_eq!(p.status_row, 23);
+        let v = p.v_scrollbar.expect("vertical scrollbar");
+        assert_eq!((v.cross, v.track_start, v.track_len), (79, 2, 20));
+        assert_eq!((v.thumb_start, v.thumb_len), (0, 4));
+        // The cursor the protocol ships is the model's.
+        assert_eq!(display.cursor_pos, p.cursor);
+        assert_eq!(display.cursor_pos, Some((3, 1)));
+    }
+
     #[test]
     fn web_asset_override_dir() {
         // Override dir containing only index.html: that asset comes from

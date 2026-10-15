@@ -6,7 +6,6 @@
 use crate::core::app::EditorApp;
 use crate::core::command::Command;
 use crate::core::dispatcher::{DispatchResult, InputAction, dispatch, dispatch_insert};
-use crate::core::layout;
 use crate::core::mouse::{
     MouseButton as CoreMouseButton, MouseEvent as CoreMouseEvent, MouseHandler, ScrollDirection,
 };
@@ -185,17 +184,20 @@ pub fn process_terminal_event(
         EditorEvent::Resize(cols, rows) => {
             display.update_size(cols, rows);
 
-            // Account for menu bar height
-            let menu_height = display.menu_bar_height();
-            let editor_height = (rows as usize).saturating_sub(menu_height);
-            let rect = layout::Rect::new(0, menu_height, cols as usize, editor_height);
-
-            let window_rects = app.layout.collect_windows(rect);
-            for (window_id, win_rect) in window_rects {
-                if let Some(window) = app.windows.get_mut(&window_id) {
-                    window.set_dimensions(win_rect.width, win_rect.height.saturating_sub(1));
-                }
-            }
+            // The unified frame is the single writer of window dimensions:
+            // scroll and clamp logic reads fresh text areas after any
+            // resize, split, or split-growth change.
+            let frame = crate::core::geometry::compute_frame(
+                crate::core::geometry::FrameOptions {
+                    cols: cols as usize,
+                    rows: rows as usize,
+                    menu_rows: display.menu_bar_height(),
+                    show_line_numbers: display.show_line_numbers,
+                },
+                &app.layout,
+                &app.geom_inputs(),
+            );
+            frame.apply_window_dims(&mut app.windows);
             display.dirty = true;
             // Note: GUI mode doesn't use stdout, it renders via GridRenderer
             // TUI mode will call render separately in main loop
@@ -232,125 +234,126 @@ pub fn process_terminal_event(
                 }
             }
 
-            // Find window under mouse
+            // Forward and inverse geometry from one source: the same
+            // frame the renderer paints. Hit-testing, scrollbar clicks,
+            // and text coordinates all read model rects.
             let (cols, rows) = display.terminal_size;
-            // Account for menu bar height (same as resize handler)
-            let menu_height = display.menu_bar_height();
-            let editor_height = (rows as usize).saturating_sub(menu_height);
-            let root_rect = layout::Rect::new(0, menu_height, cols as usize, editor_height);
-            let windows = app.layout.collect_windows(root_rect);
+            let frame = crate::core::geometry::compute_frame(
+                crate::core::geometry::FrameOptions {
+                    cols: cols as usize,
+                    rows: rows as usize,
+                    menu_rows: display.menu_bar_height(),
+                    show_line_numbers: display.show_line_numbers,
+                },
+                &app.layout,
+                &app.geom_inputs(),
+            );
 
-            for (window_id, rect) in windows {
-                if mouse_x >= rect.x
-                    && mouse_x < rect.x + rect.width
-                    && mouse_y >= rect.y
-                    && mouse_y < rect.y + rect.height
+            if let Some(pane) = frame.hit_test(mouse_x, mouse_y) {
                 {
                     // Found the window
+                    let window_id = pane.window;
                     app.active_window = window_id;
 
                     if let Some(window) = app.windows.get_mut(&window_id)
                         && let Some(buffer) = app.buffers.get_mut(&window.buffer_id) {
-                            // Calculate gutter width using input_router
-                            let gutter_width = crate::core::input_router::gutter_width(
-                                buffer.line_count(),
-                                display.show_line_numbers,
-                            );
+                            let gutter_width = pane.gutter_width;
 
-                            // Check if click is on vertical scrollbar (rightmost column)
-                            let scrollbar_x = rect.x + rect.width.saturating_sub(1);
-                            let text_height = rect.height.saturating_sub(1); // Exclude status line
-
-                            if mouse_x == scrollbar_x
-                                && mouse_y >= rect.y
-                                && mouse_y < rect.y + text_height
+                            // Check if click is on the vertical scrollbar.
+                            // The bar spans the pane minus the status row;
+                            // its down arrow owns the corner cell when a
+                            // horizontal bar is shown. All bounds derive
+                            // from the model bar.
+                            if let Some(vbar) = &pane.v_scrollbar
+                                && mouse_x == vbar.cross
+                                && mouse_y >= pane.text.y
+                                && mouse_y < vbar.track_start + vbar.track_len + 1
                             {
                                 // Vertical scrollbar click with arrows
-                                let rel_y = mouse_y.saturating_sub(rect.y);
+                                let bar_rows = vbar.track_len + 2;
+                                let rel_y = mouse_y.saturating_sub(pane.text.y);
                                 let line_count = buffer.line_count().max(1);
 
                                 if rel_y == 0 {
-                                    // Up arrow - scroll up (N-046: typed config step).
+                                    // Up arrow - scroll up by the typed config step.
                                     let target = window.scroll_offset.saturating_sub(
                                         crate::config::display::SCROLLBAR_ARROW_STEP_LINES,
                                     );
                                     window.scroll_to(target, buffer);
-                                } else if rel_y >= text_height.saturating_sub(1) {
-                                    // Down arrow - scroll down (N-046: typed config step).
+                                } else if rel_y >= bar_rows.saturating_sub(1) {
+                                    // Down arrow - scroll down by the typed config step.
                                     let target = window.scroll_offset.saturating_add(
                                         crate::config::display::SCROLLBAR_ARROW_STEP_LINES,
                                     );
                                     window.scroll_to(target, buffer);
                                 } else {
                                     // Track area - jump to proportional position
-                                    let track_height = text_height.saturating_sub(2); // Minus arrows
                                     let track_pos = rel_y.saturating_sub(1); // Minus up arrow
                                     let target_line = (track_pos * line_count)
-                                        .checked_div(track_height)
+                                        .checked_div(vbar.track_len)
                                         .unwrap_or(0)
-                                        .min(line_count.saturating_sub(text_height));
+                                        .min(line_count.saturating_sub(bar_rows));
                                     window.scroll_to(target_line, buffer);
                                 }
                                 display.dirty = true;
-                                continue;
+                                return Ok(false);
                             }
 
-                            // Check if click is on horizontal scrollbar (second-to-last row)
-                            let hscroll_y = rect.y + rect.height.saturating_sub(2);
-                            let hscroll_start_x = rect.x + gutter_width;
-                            let text_width = rect.width.saturating_sub(gutter_width + 1);
-                            let hscroll_width = text_width.saturating_sub(1);
-
-                            // Only handle if horizontal scroll is active
-                            let needs_hscroll =
-                                window.cached_content_width > text_width || window.scroll_x > 0;
-
-                            if needs_hscroll
-                                && mouse_y == hscroll_y
-                                && mouse_x >= hscroll_start_x
-                                && mouse_x < hscroll_start_x + hscroll_width
+                            // Check if click is on the horizontal scrollbar.
+                            // Bounds derive from the model bar: the bar
+                            // stops one cell short of the vertical bar's
+                            // corner cell.
+                            if let (Some(hbar), Some(hrow)) =
+                                (&pane.h_scrollbar, pane.hscroll_row)
+                                && mouse_y == hrow
+                                && mouse_x >= hbar.track_start.saturating_sub(1)
+                                && mouse_x < hbar.track_start + hbar.track_len + 1
                             {
                                 // Horizontal scrollbar click with arrows
-                                let rel_x = mouse_x.saturating_sub(hscroll_start_x);
+                                let bar_start_x = hbar.track_start.saturating_sub(1);
+                                let bar_width = hbar.track_len + 2;
+                                let rel_x = mouse_x.saturating_sub(bar_start_x);
+                                let text_width = bar_width + 1;
                                 let content_width = window
                                     .cached_content_width
                                     .max(window.scroll_x + text_width);
 
                                 if rel_x == 0 {
-                                    // Left arrow - scroll left (N-046: typed config step).
+                                    // Left arrow - scroll left by the typed config step.
                                     window.scroll_x = window.scroll_x.saturating_sub(
                                         crate::config::display::SCROLLBAR_ARROW_STEP_COLS,
                                     );
-                                } else if rel_x >= hscroll_width.saturating_sub(1) {
-                                    // Right arrow - scroll right (N-046: typed config step).
+                                } else if rel_x >= bar_width.saturating_sub(1) {
+                                    // Right arrow - scroll right by the typed config step.
                                     let max_scroll = content_width.saturating_sub(text_width);
                                     window.scroll_x = (window.scroll_x
                                         + crate::config::display::SCROLLBAR_ARROW_STEP_COLS)
                                         .min(max_scroll);
                                 } else {
                                     // Track area - jump to proportional position
-                                    let track_width = hscroll_width.saturating_sub(2); // Minus arrows
                                     let track_pos = rel_x.saturating_sub(1); // Minus left arrow
                                     let max_scroll = content_width.saturating_sub(text_width);
                                     let target_x = (track_pos * content_width)
-                                        .checked_div(track_width)
+                                        .checked_div(hbar.track_len)
                                         .unwrap_or(0)
                                         .min(max_scroll);
                                     window.scroll_x = target_x;
                                 }
                                 display.dirty = true;
-                                continue;
+                                return Ok(false);
                             }
 
                             // Calculate relative coordinates within the text area
-                            // Note: rect.y already accounts for menu bar (root_rect starts at menu_height)
-                            let rel_x = mouse_x.saturating_sub(rect.x).saturating_sub(gutter_width);
-                            let rel_y = mouse_y.saturating_sub(rect.y);
+                            // Note: pane.text.y already accounts for the menu bar.
+                            let rel_x = mouse_x
+                                .saturating_sub(pane.text.x)
+                                .saturating_sub(gutter_width);
+                            let rel_y = mouse_y.saturating_sub(pane.text.y);
 
                             // Ignore clicks on status line
-                            if rel_y >= rect.height.saturating_sub(1) {
+                            if rel_y >= pane.frame.height.saturating_sub(1) {
                                 display.dirty = true;
-                                continue;
+                                return Ok(false);
                             }
 
                             // Convert input mouse button to core mouse button
@@ -412,7 +415,7 @@ pub fn process_terminal_event(
                                 if is_middle_click {
                                     crate::core::dispatcher::dispatch(app, Command::Yank, 1);
                                     display.dirty = true;
-                                    continue;
+                                    return Ok(false);
                                 }
 
                                 let mouse_handler = MouseHandler::new();
@@ -441,7 +444,6 @@ pub fn process_terminal_event(
                                 }
                             }
                         }
-                    break;
                 }
             }
         }

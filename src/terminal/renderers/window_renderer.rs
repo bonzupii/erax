@@ -1,6 +1,6 @@
 //! Window-content rendering for TUI mode.
 use crate::core::buffer::{Buffer, BufferKind};
-use crate::core::layout::Rect;
+use crate::core::geometry::PaneGeometry;
 use crate::core::lexer::{Token, TokenKind};
 use crate::core::spell::SpellChecker;
 use crate::core::syntax::{SyntaxHighlighter, TokenType};
@@ -20,7 +20,9 @@ pub struct WindowRenderer;
 pub struct WindowRenderParams<'a> {
     pub buffer: &'a mut Buffer,
     pub window: &'a Window,
-    pub rect: &'a Rect,
+    /// The pane's unified geometry (frame, text area, gutter, scrollbars).
+    /// All positional math comes from here; nothing below recomputes it.
+    pub geom: &'a PaneGeometry,
     pub screen_buffer: &'a mut ScreenBuffer,
     pub theme: &'a Theme,
     pub syntax_highlighter: &'a mut SyntaxHighlighter,
@@ -39,7 +41,7 @@ impl WindowRenderer {
         let WindowRenderParams {
             buffer,
             window,
-            rect,
+            geom,
             screen_buffer,
             theme,
             syntax_highlighter,
@@ -58,30 +60,12 @@ impl WindowRenderer {
             );
         }
 
-        // Pre-calculate gutter width to determine text area width
-        let pre_text_height = rect.height.saturating_sub(1);
-        let gutter_width_estimate: usize = if show_line_numbers {
-            let max_line = window.scroll_offset + pre_text_height;
-            let max_line_num = buffer.line_count().min(max_line).max(1);
-            format!("{}", max_line_num).len() + 1
-        } else {
-            0
-        };
-
-        // Calculate text width for horizontal scrollbar decision
-        let text_width_estimate = rect.width.saturating_sub(gutter_width_estimate + 1);
-
-        // Determine if horizontal scrollbar will be shown
-        // (based on cached_content_width or if we're scrolled horizontally)
-        let needs_hscroll =
-            window.cached_content_width > text_width_estimate || window.scroll_x > 0;
-
-        // Reserve extra row for horizontal scrollbar if needed
-        let text_height = if needs_hscroll {
-            rect.height.saturating_sub(2) // 1 for status, 1 for hscroll
-        } else {
-            rect.height.saturating_sub(1) // 1 for status only
-        };
+        // All geometry (gutter, text area, scrollbar decisions) comes from
+        // the unified model; the renderer only paints.
+        let gutter_width = geom.gutter_width;
+        let text_height = geom.text.height;
+        let text_start_x = geom.text.x;
+        let text_width = geom.text.width;
 
         let kind = buffer.buffer_kind();
         let is_original_diff = kind == BufferKind::DiffOriginal;
@@ -95,13 +79,13 @@ impl WindowRenderer {
                 let grid = host.grid();
 
                 for y in 0..text_height.min(host.rows as usize) {
-                    let screen_y = (rect.y + y) as u16;
+                    let screen_y = (geom.text.y + y) as u16;
                     // Optimization: check dirty tracker (though terminal usually needs full redraw)
                     // if !dirty_tracker.is_row_dirty(screen_y as usize) { continue; }
 
                     if y < grid.len() {
-                        for x in 0..rect.width.min(host.cols as usize) {
-                            let screen_x = (rect.x + x) as u16;
+                        for x in 0..geom.frame.width.min(host.cols as usize) {
+                            let screen_x = (geom.frame.x + x) as u16;
                             if x < grid[y].len() {
                                 let ch = grid[y][x];
                                 screen_buffer.set(screen_x, screen_y, Cell::new(ch, fg, bg));
@@ -120,15 +104,6 @@ impl WindowRenderer {
             if p1 <= p2 { (p1, p2) } else { (p2, p1) }
         });
 
-        // Calculate gutter width if line numbers are enabled (now accurate with text_height)
-        let gutter_width: usize = if show_line_numbers {
-            let max_line = window.scroll_offset + text_height;
-            let max_line_num = buffer.line_count().min(max_line).max(1);
-            format!("{}", max_line_num).len() + 1
-        } else {
-            0
-        };
-
         // Line count first: split_for_render holds a borrow of the buffer.
         // (On a pager failure line_count records the error on the buffer and
         // returns 0; the line iterator below then simply yields nothing.)
@@ -146,7 +121,7 @@ impl WindowRenderer {
 
         for y in 0..text_height {
             let buffer_line_idx = window.scroll_offset + y;
-            let screen_y = (rect.y + y) as u16;
+            let screen_y = (geom.text.y + y) as u16;
 
             // Optimization: Skip rendering if row is not dirty
             // Note: caller handles copying from front buffer if skipped
@@ -207,8 +182,8 @@ impl WindowRenderer {
                     format!("{}│", " ".repeat(gutter_width - 1))
                 };
                 for (i, ch) in line_num_str.chars().enumerate() {
-                    let gx = rect.x as u16 + i as u16;
-                    if gx < (rect.x + rect.width) as u16 {
+                    let gx = geom.frame.x as u16 + i as u16;
+                    if gx < (geom.frame.x + geom.frame.width) as u16 {
                         screen_buffer.set(
                             gx,
                             screen_y,
@@ -231,8 +206,8 @@ impl WindowRenderer {
                 } else {
                     theme.warning
                 };
-                let gx = rect.x as u16 + (gutter_width as u16).saturating_sub(1);
-                if gx < (rect.x + rect.width) as u16 {
+                let gx = geom.frame.x as u16 + (gutter_width as u16).saturating_sub(1);
+                if gx < (geom.frame.x + geom.frame.width) as u16 {
                     screen_buffer.set(
                         gx,
                         screen_y,
@@ -245,8 +220,6 @@ impl WindowRenderer {
                 }
             }
 
-            let text_start_x = rect.x + gutter_width;
-            let text_width = rect.width.saturating_sub(gutter_width);
             let line_slice = line_iter.next();
 
             // `owned_line` extends the lifetime of mapped-region lines (which
@@ -488,26 +461,30 @@ impl WindowRenderer {
             }
         }
 
-        // Render vertical scrollbar
+        // Scrollbars paint from the unified model geometry.
         let track_bg = theme.bg;
         let track_fg: Color = theme.scrollbar_track;
         let thumb_fg: Color = theme.scrollbar_thumb;
 
-        crate::terminal::scrollbar::render_vertical(
-            screen_buffer,
-            rect,
-            buffer.line_count(),
-            window.scroll_offset,
-            track_fg,
-            thumb_fg,
-            track_bg,
-        );
+        if let Some(vbar) = &geom.v_scrollbar {
+            // Span and origin derive from the model bar: the bar covers
+            // the pane minus the status row, corner cell included.
+            crate::terminal::scrollbar::render_vertical(
+                screen_buffer,
+                vbar,
+                vbar.track_start.saturating_sub(1),
+                vbar.track_len + 2,
+                track_fg,
+                thumb_fg,
+                track_bg,
+            );
+        }
 
         // Render horizontal scrollbar
         // Update cached content width with max of visible lines (grows but doesn't shrink rapidly)
         let visible_start = window.scroll_offset;
-        let visible_end =
-            (window.scroll_offset + rect.height.saturating_sub(1)).min(buffer.line_count());
+        let visible_end = (window.scroll_offset + geom.frame.height.saturating_sub(1))
+            .min(buffer.line_count());
         let mut visible_max_width: usize = 0;
         for line_idx in visible_start..visible_end {
             if let Some(line) = buffer.line(line_idx) {
@@ -516,23 +493,25 @@ impl WindowRenderer {
             }
         }
         // Keep the maximum width ever seen (only grows, not shrinks, for stable scrollbar)
-        let content_width = window.cached_content_width.max(visible_max_width);
+
         // Note: can't mutate window here, caller should update cached_content_width after render
 
-        let text_width = rect.width.saturating_sub(gutter_width + 1);
-        crate::terminal::scrollbar::render_horizontal(
-            screen_buffer,
-            rect,
-            &crate::terminal::scrollbar::HorizontalScrollbarParams {
-                gutter_width,
-                content_width: content_width.max(window.scroll_x + text_width),
-                text_width,
-                scroll_x: window.scroll_x,
+        // The bar paints only when the model derived one; the row is
+        // reserved whenever the model decided horizontal scrolling.
+        // Span and origin derive from the model bar.
+        if let Some(hbar) = &geom.h_scrollbar {
+            let bar_start_x = hbar.track_start.saturating_sub(1);
+            let bar_width = hbar.track_len + 2;
+            crate::terminal::scrollbar::render_horizontal(
+                screen_buffer,
+                hbar,
+                bar_start_x,
+                bar_width,
                 track_fg,
                 thumb_fg,
                 track_bg,
-            },
-        );
+            );
+        }
 
         // Return the visible max width for caching by caller
         visible_max_width

@@ -19,7 +19,6 @@ pub mod geometry;
 pub mod hex;
 pub mod id;
 pub mod input;
-pub mod input_router;
 pub mod kill_ring;
 pub mod layout;
 pub mod lexer;

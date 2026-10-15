@@ -261,6 +261,32 @@ impl EditorApp {
         self.windows.get_mut(&self.active_window)
     }
 
+    /// Per-window model inputs for the unified geometry computation.
+    /// Every consumer (render, resize, mouse hit-testing) builds its
+    /// [`crate::core::geometry::FrameLayout`] from these, so the frame
+    /// geometry can never diverge between call sites.
+    pub fn geom_inputs(&self) -> Vec<crate::core::geometry::WindowGeomInput> {
+        self.windows
+            .iter()
+            .map(|(id, window)| {
+                let line_count = self
+                    .buffers
+                    .get(&window.buffer_id)
+                    .map(|b| b.line_count())
+                    .unwrap_or(0);
+                crate::core::geometry::WindowGeomInput {
+                    window: *id,
+                    scroll_offset: window.scroll_offset,
+                    scroll_x: window.scroll_x,
+                    cursor_y: window.cursor_y,
+                    visual_cursor_x: window.visual_cursor_x,
+                    line_count,
+                    content_width: window.cached_content_width,
+                }
+            })
+            .collect()
+    }
+
     /// Reset kill command flag (call when a non-kill command is executed)
     pub fn reset_kill_flag(&mut self) {
         self.last_command_was_kill = false;

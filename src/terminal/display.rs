@@ -1,6 +1,5 @@
 //! Display: the TUI back/front buffer renderer.
 use crate::core::app::EditorApp;
-use crate::core::layout::Rect;
 use crate::core::spell::SpellChecker;
 use crate::core::syntax::SyntaxHighlighter;
 use crate::terminal::capabilities::DisplayMode;
@@ -434,15 +433,23 @@ impl Display {
         // 1. Clear back buffer (the one we are drawing to)
         self.back_buffer.clear();
 
-        // 2. Calculate full screen rect
-        // Per-window status bars are included in window height, no separate global bar needed
-        // IMPORTANT: Account for menu bar height if visible to avoid overlap
-        let menu_height = self.menu_bar_height();
-        let main_height = (self.terminal_size.1 as usize).saturating_sub(menu_height);
-        let full_rect = Rect::new(0, menu_height, self.terminal_size.0 as usize, main_height);
-
-        // 3. Collect all windows with their geometry from the layout tree
-        let window_rects = app.layout.collect_windows(full_rect);
+        // 2-3. One geometry computation for the whole frame: every
+        // pane's rect, gutter, scrollbar, and cursor comes from the
+        // unified model. Nothing below recomputes any of it.
+        let frame = crate::core::geometry::compute_frame(
+            crate::core::geometry::FrameOptions {
+                cols: self.terminal_size.0 as usize,
+                rows: self.terminal_size.1 as usize,
+                menu_rows: self.menu_bar_height(),
+                show_line_numbers: self.show_line_numbers,
+            },
+            &app.layout,
+            &app.geom_inputs(),
+        );
+        // Refresh the derived width/height cache on every window from
+        // the model: the single writer, so split growth can no longer
+        // leave it stale.
+        frame.apply_window_dims(&mut app.windows);
 
         // 4. Render each window to the back buffer
         // Collect updates to apply after rendering (to avoid borrow issues)
@@ -459,20 +466,21 @@ impl Display {
         // command line owns the bar (set from the active window's status).
         let mut cmdline_cursor: Option<(u16, u16)> = None;
 
-        for (window_id, rect) in &window_rects {
+        for pane in &frame.panes {
+            let window_id = pane.window;
             // Mark this window's rect as dirty for incremental rendering
-            self.dirty_tracker.mark_rect(rect);
+            self.dirty_tracker.mark_rect(&pane.frame);
 
-            if let Some(window) = app.windows.get(window_id)
+            if let Some(window) = app.windows.get(&window_id)
                 && let Some(buffer) = app.buffers.get_mut(&window.buffer_id) {
-                    let is_active = *window_id == app.active_window;
+                    let is_active = window_id == app.active_window;
 
                     // Render Content, Scrollbars, etc.
                     let visible_max_width = crate::terminal::renderers::WindowRenderer::render(
                         crate::terminal::renderers::WindowRenderParams {
                             buffer,
                             window,
-                            rect,
+                            geom: pane,
                             screen_buffer: &mut self.back_buffer,
                             theme: &self.theme,
                             syntax_highlighter: &mut self.syntax_highlighter,
@@ -487,7 +495,7 @@ impl Display {
 
                     // Track width update for after render loop
                     if visible_max_width > window.cached_content_width {
-                        width_updates.push((*window_id, visible_max_width));
+                        width_updates.push((window_id, visible_max_width));
                     }
 
                     // Modal linewise-visual: the newline itself is not a rendered
@@ -497,8 +505,8 @@ impl Display {
                     if linewise_newline_pass {
                         stamp_linewise_visual_newlines(
                             &mut self.back_buffer,
-                            rect,
-                            text_gutter_width(self.show_line_numbers, window, buffer, rect),
+                            &pane.frame,
+                            pane.gutter_width,
                             window,
                             buffer,
                             &self.theme,
@@ -509,11 +517,12 @@ impl Display {
                     let status_ctx = crate::terminal::renderers::status_renderer::StatusCtx {
                         window,
                         buffer,
-                        rect,
+                        rect: &pane.frame,
                         theme: &self.theme,
                         is_active,
                         prompt_state: self.prompt_state.as_ref(),
                         bar: &self.bar,
+                        status_row: pane.status_row,
                     };
                     let bar_cursor = crate::terminal::renderers::StatusRenderer::render(
                         &mut self.back_buffer,
@@ -534,56 +543,30 @@ impl Display {
 
         // Global status bar removed - prompts/messages/key_sequence are now in per-window status
 
-        // 5. Position cursor in active window and style cursor cell
-        if let Some((cx, cy)) = cmdline_cursor {
-            // The modal `:` command line owns the bar: the hardware cursor
-            // lives on the command line, not in the text.
-            if let Some(cell) = self.back_buffer.get_cell_mut(cx as usize, cy as usize) {
+        // 5. Cursor: the model's verdict, painted verbatim. When the
+        // modal `:` command line owns the bar, the hardware cursor lives
+        // on the command line; otherwise the model cursor cell is used.
+        // An out-of-viewport cursor hides here (cursor_pos = None):
+        // the model never clamps a cursor to a viewport edge.
+        let model_cursor = if cmdline_cursor.is_some() {
+            None
+        } else {
+            frame.pane_for(app.active_window).and_then(|pane| pane.cursor)
+        };
+        let cursor = cmdline_cursor
+            .map(|(cx, cy)| (cx as usize, cy as usize))
+            .or(model_cursor);
+        if let Some((cx, cy)) = cursor {
+            if let Some(cell) = self.back_buffer.get_cell_mut(cx, cy) {
                 cell.fg = self.theme.cursor_fg;
                 cell.bg = self.theme.cursor_bg;
                 cell.role = CellRole::Cursor;
             }
 
             // Store cursor position for GUI access
-            self.cursor_pos = Some((cx as usize, cy as usize));
-        } else if let Some(window) = app.windows.get(&app.active_window) {
-            for (window_id, rect) in &window_rects {
-                if *window_id == app.active_window {
-                    // Calculate gutter width to offset cursor properly
-                    let gutter_width: usize = if self.show_line_numbers {
-                        if let Some(buffer) = app.buffers.get(&window.buffer_id) {
-                            let text_height = rect.height.saturating_sub(1);
-                            let max_line = window.scroll_offset + text_height;
-                            let max_line_num = buffer.line_count().min(max_line).max(1);
-                            format!("{}", max_line_num).len() + 1 // digits + border
-                        } else {
-                            3 // fallback: "1│"
-                        }
-                    } else {
-                        0
-                    };
-
-                    let screen_y = rect.y + (window.cursor_y.saturating_sub(window.scroll_offset));
-                    let screen_x = rect.x + gutter_width + window.visual_cursor_x;
-
-                    let max_y = rect.y + rect.height.saturating_sub(2);
-                    let max_x = rect.x + rect.width.saturating_sub(1);
-
-                    let final_y = screen_y.min(max_y);
-                    let final_x = screen_x.min(max_x);
-
-                    // Style cursor cell with cursor_bg/cursor_fg from theme
-                    if let Some(cell) = self.back_buffer.get_cell_mut(final_x, final_y) {
-                        cell.fg = self.theme.cursor_fg;
-                        cell.bg = self.theme.cursor_bg;
-                        cell.role = CellRole::Cursor;
-                    }
-
-                    // Store cursor position for GUI access
-                    self.cursor_pos = Some((final_x, final_y));
-                    break;
-                }
-            }
+            self.cursor_pos = Some((cx, cy));
+        } else {
+            self.cursor_pos = None;
         }
 
         // 6. Validate buffer synchronization before swap
@@ -858,22 +841,6 @@ impl Display {
         // After swap, ensure the back buffer is ready for next frame
         self.back_buffer.clear();
     }
-}
-
-/// Gutter width in cells, mirroring the window renderer's layout math.
-fn text_gutter_width(
-    show_line_numbers: bool,
-    window: &crate::core::window::Window,
-    buffer: &crate::core::buffer::Buffer,
-    rect: &crate::core::layout::Rect,
-) -> usize {
-    if !show_line_numbers {
-        return 0;
-    }
-    let text_height = rect.height.saturating_sub(1);
-    let max_line = window.scroll_offset + text_height;
-    let max_line_num = buffer.line_count().min(max_line).max(1);
-    format!("{}", max_line_num).len() + 1 // digits + border
 }
 
 /// Presentation-only (N-268 D6): in modal linewise-visual mode, extend the
@@ -1327,6 +1294,7 @@ mod tests {
             is_active: true,
             prompt_state: None,
             bar: &bar,
+            status_row: 23,
         };
         let cursor = StatusRenderer::render(&mut display.back_buffer, &ctx);
         assert_eq!(cursor, None);
@@ -1437,17 +1405,38 @@ mod tests {
         let mut display = Display::new(40, 10, None, None);
         let theme = display.theme;
         let rect = crate::core::layout::Rect::new(0, 0, 40, 10);
-        let gutter = text_gutter_width(true, &window, &buffer, &rect);
+        let pane = crate::core::geometry::compute_frame(
+            crate::core::geometry::FrameOptions {
+                cols: 40,
+                rows: 10,
+                menu_rows: 0,
+                show_line_numbers: true,
+            },
+            &crate::core::layout::LayoutNode::Leaf(WindowId(0)),
+            &[crate::core::geometry::WindowGeomInput {
+                window: WindowId(0),
+                scroll_offset: 0,
+                scroll_x: 0,
+                cursor_y: 1,
+                visual_cursor_x: 0,
+                line_count: 3,
+                content_width: 0,
+            }],
+        )
+        .panes
+        .into_iter()
+        .next()
+        .unwrap();
         stamp_linewise_visual_newlines(
             &mut display.back_buffer,
             &rect,
-            gutter,
+            pane.gutter_width,
             &window,
             &buffer,
             &theme,
         );
         // Newline regions: end of "ab" (visual x 2) and end of "cde" (x 3).
-        let text_x = rect.x + gutter;
+        let text_x = rect.x + pane.gutter_width;
         let cell = display.back_buffer.get((text_x + 2) as u16, 0).unwrap();
         assert_eq!(cell.role, CellRole::Selection);
         assert_eq!(cell.bg, theme.selection_bg);
@@ -1463,7 +1452,7 @@ mod tests {
         stamp_linewise_visual_newlines(
             &mut display2.back_buffer,
             &rect,
-            gutter,
+            pane.gutter_width,
             &window2,
             &buffer,
             &theme,
@@ -1481,6 +1470,182 @@ mod tests {
         assert!(!display.cursor_style_touched);
         assert_eq!(display.cursor_style, CursorStyle::Default);
         drop(display);
+    }
+}
+
+
+#[cfg(test)]
+mod golden_tests {
+    use super::*;
+    use crate::core::app::EditorApp;
+    use crate::core::buffer::Buffer;
+    use crate::core::geometry::{compute_frame, FrameLayout, FrameOptions};
+    use crate::core::id::BufferId;
+
+    fn app_100_lines() -> EditorApp {
+        let mut app = EditorApp::new();
+        let text = (0..100)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        app.buffers.insert(BufferId(0), Buffer::from_string(&text));
+        app
+    }
+
+    fn frame_of(app: &EditorApp, cols: usize, rows: usize) -> FrameLayout {
+        compute_frame(
+            FrameOptions {
+                cols,
+                rows,
+                menu_rows: 1,
+                show_line_numbers: true,
+            },
+            &app.layout,
+            &app.geom_inputs(),
+        )
+    }
+
+    /// Golden: single window on 80x24. The exact rect map plus painted
+    /// proof (gutter, status, scrollbar, cursor cells).
+    #[test]
+    fn golden_single_window_rect_map() {
+        let mut app = app_100_lines();
+        let mut display = Display::new(80, 24, None, None);
+        display.render(&mut app).expect("render");
+        let frame = frame_of(&app, 80, 24);
+        assert_eq!(frame.panes.len(), 1);
+        let p = &frame.panes[0];
+        assert_eq!(
+            (p.frame.x, p.frame.y, p.frame.width, p.frame.height),
+            (0, 1, 80, 23)
+        );
+        assert_eq!(p.gutter_width, 3);
+        assert_eq!(
+            (p.text.x, p.text.y, p.text.width, p.text.height),
+            (3, 1, 77, 22)
+        );
+        assert_eq!(p.status_row, 23);
+        assert_eq!(p.hscroll_row, None);
+        assert_eq!(p.h_scrollbar, None);
+        let v = p.v_scrollbar.expect("vertical scrollbar");
+        assert_eq!((v.cross, v.track_start, v.track_len), (79, 2, 20));
+        assert_eq!((v.thumb_start, v.thumb_len), (0, 4));
+        assert_eq!(p.cursor, Some((3, 1)));
+        // Painted proof.
+        assert_eq!(
+            display.back_buffer.get(0, 1).unwrap().role,
+            CellRole::Gutter
+        );
+        assert_eq!(
+            display.back_buffer.get(0, 23).unwrap().role,
+            CellRole::StatusBar
+        );
+        assert_eq!(
+            display.back_buffer.get(79, 2).unwrap().role,
+            CellRole::Scrollbar
+        );
+        assert_eq!(display.cursor_pos, Some((3, 1)));
+    }
+
+    /// Golden: horizontal split (side by side) on 80x24. Remainder rule:
+    /// the left pane takes floor(40), the right takes the remainder.
+    #[test]
+    fn golden_side_by_side_split_rect_map() {
+        let mut app = app_100_lines();
+        app.split_window_horizontally();
+        let mut display = Display::new(80, 24, None, None);
+        display.render(&mut app).expect("render");
+        let frame = frame_of(&app, 80, 24);
+        assert_eq!(frame.panes.len(), 2);
+        let (left, right) = (&frame.panes[0], &frame.panes[1]);
+        assert_eq!(
+            (left.frame.x, left.frame.y, left.frame.width, left.frame.height),
+            (0, 1, 40, 23)
+        );
+        assert_eq!(
+            (
+                right.frame.x,
+                right.frame.y,
+                right.frame.width,
+                right.frame.height
+            ),
+            (40, 1, 40, 23)
+        );
+        assert_eq!(left.status_row, 23);
+        assert_eq!(right.status_row, 23);
+        // Both status rows paint.
+        assert_eq!(
+            display.back_buffer.get(0, 23).unwrap().role,
+            CellRole::StatusBar
+        );
+        assert_eq!(
+            display.back_buffer.get(79, 23).unwrap().role,
+            CellRole::StatusBar
+        );
+        // The divider column boundary: last text column of the left pane
+        // carries its scrollbar.
+        assert_eq!(
+            display.back_buffer.get(39, 2).unwrap().role,
+            CellRole::Scrollbar
+        );
+    }
+
+    /// Golden: vertical split (stacked) on 80x24 with content wider than
+    /// the viewport. The horizontal scrollbar row is the pane's
+    /// second-to-last row; the thumb sits inside its track.
+    #[test]
+    fn golden_stacked_split_hscroll_rect_map() {
+        let mut app = app_100_lines();
+        app.split_window_vertically();
+        // Content wider than any viewport: the scrollbar decision reads
+        // the cached width the renderer maintains.
+        for window in app.windows.values_mut() {
+            window.cached_content_width = 200;
+        }
+        let mut display = Display::new(80, 24, None, None);
+        display.render(&mut app).expect("render");
+        let frame = frame_of(&app, 80, 24);
+        assert_eq!(frame.panes.len(), 2);
+        let (top, bottom) = (&frame.panes[0], &frame.panes[1]);
+        assert_eq!(
+            (top.frame.x, top.frame.y, top.frame.width, top.frame.height),
+            (0, 1, 80, 11)
+        );
+        assert_eq!(
+            (
+                bottom.frame.x,
+                bottom.frame.y,
+                bottom.frame.width,
+                bottom.frame.height
+            ),
+            (0, 12, 80, 12)
+        );
+        // Top pane: 11 rows = 9 text + 1 hscroll + 1 status.
+        assert_eq!(top.text.height, 9);
+        assert_eq!(top.hscroll_row, Some(10));
+        assert_eq!(top.status_row, 11);
+        // Vertical bar spans the pane minus the status row; its down
+        // arrow owns the corner cell shared with the hscroll row.
+        let v = top.v_scrollbar.expect("vertical scrollbar");
+        assert_eq!((v.cross, v.track_start, v.track_len), (79, 2, 8));
+        assert_eq!((v.thumb_start, v.thumb_len), (0, 2));
+        // Horizontal bar stops one cell short of that corner cell.
+        // (Gutter here is 2: 9 visible lines, one digit plus border.)
+        let h = top.h_scrollbar.expect("horizontal scrollbar");
+        assert_eq!(h.cross, 10);
+        assert_eq!(h.track_start, 3);
+        assert_eq!(h.track_len, 74);
+        assert_eq!((h.thumb_start, h.thumb_len), (0, 28));
+        assert!(h.thumb_start + h.thumb_len <= h.track_len);
+        // Painted proof: the hscroll row carries scrollbar cells with
+        // arrows at both ends, and the corner cell is the vertical
+        // bar's down arrow.
+        let left_arrow = display.back_buffer.get(top.text.x as u16, 10).unwrap();
+        assert_eq!(left_arrow.role, CellRole::Scrollbar);
+        let right_end = display.back_buffer.get((top.text.x + 75) as u16, 10).unwrap();
+        assert_eq!(right_end.role, CellRole::Scrollbar);
+        let corner = display.back_buffer.get(79, 10).unwrap();
+        assert_eq!(corner.role, CellRole::Scrollbar);
     }
 }
 
@@ -1516,11 +1681,9 @@ mod cursor_clamp_tests {
             .collect()
     }
 
-    /// An out-of-viewport cursor must not paint a cursor cell: the paint
-    /// clamps the position to the viewport edge, drawing a cursor where
-    /// the user's cursor is not.
+    /// An out-of-viewport cursor must not paint a cursor cell: the
+    /// model hides it instead of clamping it to the viewport edge.
     #[test]
-    #[ignore]
     fn out_of_viewport_cursor_paints_no_cursor_cell() {
         let (mut app, mut display) = app_with_scrolled_view();
         display.render(&mut app).expect("render");
@@ -1528,5 +1691,56 @@ mod cursor_clamp_tests {
             cursor_cells(&display).is_empty(),
             "cursor is above the viewport but a cursor cell was painted"
         );
+        assert_eq!(
+            display.cursor_pos, None,
+            "an out-of-viewport cursor must leave cursor_pos unset"
+        );
+    }
+
+    /// A cursor below the viewport hides too, and the cursor position
+    /// the frontends consume reports nothing.
+    #[test]
+    fn cursor_below_viewport_paints_no_cursor_cell() {
+        let (mut app, mut display) = app_with_scrolled_view();
+        let window = app.windows.get_mut(&WindowId(0)).expect("window");
+        window.cursor_y = 99;
+        window.scroll_offset = 0;
+        display.render(&mut app).expect("render");
+        assert!(cursor_cells(&display).is_empty());
+        assert_eq!(display.cursor_pos, None);
+    }
+
+    /// A cursor past the visible text width hides instead of painting
+    /// on the scrollbar column or the viewport edge.
+    #[test]
+    fn cursor_past_text_width_paints_no_cursor_cell() {
+        let (mut app, mut display) = app_with_scrolled_view();
+        let window = app.windows.get_mut(&WindowId(0)).expect("window");
+        window.cursor_y = 0;
+        window.scroll_offset = 0;
+        window.visual_cursor_x = 200;
+        window.scroll_x = 0;
+        display.render(&mut app).expect("render");
+        assert!(cursor_cells(&display).is_empty());
+        assert_eq!(display.cursor_pos, None);
+    }
+
+    /// The visible case: exactly one cursor cell, at the model cursor's
+    /// cell, with no clamping involved.
+    #[test]
+    fn visible_cursor_paints_exactly_one_cell_at_model_position() {
+        let (mut app, mut display) = app_with_scrolled_view();
+        let window = app.windows.get_mut(&WindowId(0)).expect("window");
+        window.cursor_y = 2;
+        window.scroll_offset = 0;
+        window.visual_cursor_x = 3;
+        window.scroll_x = 0;
+        display.render(&mut app).expect("render");
+        let cells = cursor_cells(&display);
+        assert_eq!(cells.len(), 1, "exactly one cursor cell paints");
+        // Gutter for lines 0..=22 of a 100-line file: 2 digits + border.
+        let gx = 3;
+        assert_eq!(cells[0], (gx + 3, 1 + 2));
+        assert_eq!(display.cursor_pos, Some((gx + 3, 1 + 2)));
     }
 }

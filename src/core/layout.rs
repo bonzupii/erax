@@ -28,36 +28,6 @@ impl Rect {
     }
 }
 
-// =============================================================================
-// Viewport - Unified editor area calculation
-// =============================================================================
-
-/// Unified viewport area calculations
-///
-/// Provides consistent sizing for the editor area, accounting for:
-/// - Menu bar at top
-#[derive(Debug, Clone, Copy)]
-pub struct Viewport {
-    /// Editor area after menu subtraction
-    pub editor: Rect,
-}
-
-impl Viewport {
-    /// Calculate viewport from terminal size
-    pub fn new(cols: u16, rows: u16, show_menu: bool) -> Self {
-        let menu_height = if show_menu { 1 } else { 0 };
-
-        let editor = Rect::new(
-            0,
-            menu_height,
-            cols as usize,
-            (rows as usize).saturating_sub(menu_height),
-        );
-
-        Self { editor }
-    }
-}
-
 /// A node in the layout tree
 #[derive(Debug, Clone)]
 pub enum LayoutNode {
@@ -86,45 +56,6 @@ impl LayoutNode {
     /// Create a new leaf node
     pub fn new_leaf(window_id: WindowId) -> Self {
         Self::Leaf(window_id)
-    }
-
-    /// Collect all windows and their calculated rectangles
-    pub fn collect_windows(&self, area: Rect) -> Vec<(WindowId, Rect)> {
-        let mut windows = Vec::new();
-        match self {
-            Self::Leaf(id) => {
-                windows.push((*id, area));
-            }
-            Self::HSplit {
-                left,
-                right,
-                split_ratio,
-            } => {
-                let left_width = (area.width as f32 * split_ratio) as usize;
-                let right_width = area.width - left_width;
-
-                let left_rect = Rect::new(area.x, area.y, left_width, area.height);
-                let right_rect = Rect::new(area.x + left_width, area.y, right_width, area.height);
-
-                windows.extend(left.collect_windows(left_rect));
-                windows.extend(right.collect_windows(right_rect));
-            }
-            Self::VSplit {
-                top,
-                bottom,
-                split_ratio,
-            } => {
-                let top_height = (area.height as f32 * split_ratio) as usize;
-                let bottom_height = area.height - top_height;
-
-                let top_rect = Rect::new(area.x, area.y, area.width, top_height);
-                let bottom_rect = Rect::new(area.x, area.y + top_height, area.width, bottom_height);
-
-                windows.extend(top.collect_windows(top_rect));
-                windows.extend(bottom.collect_windows(bottom_rect));
-            }
-        }
-        windows
     }
 
     /// Remove a window from the layout tree
@@ -328,14 +259,46 @@ mod tests {
         assert!(!remaining_ids.contains(&WindowId(2))); // Window 2 should be removed
     }
 
+    /// Pane frames from the unified model for these layout tests.
+    /// The tiling rule lives in core::geometry; these tests assert the
+    /// layout tree drives it correctly.
+    fn model_frames(layout: &LayoutNode) -> Vec<(WindowId, Rect)> {
+        use crate::core::geometry::{FrameOptions, WindowGeomInput, compute_frame};
+        let inputs: Vec<WindowGeomInput> = layout
+            .window_ids()
+            .iter()
+            .map(|id| WindowGeomInput {
+                window: *id,
+                scroll_offset: 0,
+                scroll_x: 0,
+                cursor_y: 0,
+                visual_cursor_x: 0,
+                line_count: 0,
+                content_width: 0,
+            })
+            .collect();
+        compute_frame(
+            FrameOptions {
+                cols: 80,
+                rows: 40,
+                menu_rows: 0,
+                show_line_numbers: false,
+            },
+            layout,
+            &inputs,
+        )
+        .panes
+        .into_iter()
+        .map(|p| (p.window, p.frame))
+        .collect()
+    }
+
     #[test]
     fn test_adjust_split_grows_active_pane() {
         let mut layout = LayoutNode::new_leaf(WindowId(0));
         assert!(layout.split_window(WindowId(0), WindowId(1), SplitDirection::Vertical));
-        let area = Rect::new(0, 0, 80, 40);
         let height_of = |layout: &LayoutNode, id: WindowId| {
-            layout
-                .collect_windows(area)
+            model_frames(layout)
                 .into_iter()
                 .find(|(wid, _)| *wid == id)
                 .map(|(_, r)| r.height)
@@ -358,9 +321,7 @@ mod tests {
             layout.adjust_split(WindowId(0), SPLIT_ADJUST_STEP);
         }
         // The ratio clamps: window 1's pane never vanishes entirely.
-        let area = Rect::new(0, 0, 80, 40);
-        let right_width = layout
-            .collect_windows(area)
+        let right_width = model_frames(&layout)
             .into_iter()
             .find(|(wid, _)| *wid == WindowId(1))
             .map(|(_, r)| r.width)

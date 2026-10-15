@@ -12,6 +12,8 @@ pub struct StatusCtx<'a> {
     pub window: &'a Window,
     pub buffer: &'a Buffer,
     pub rect: &'a Rect,
+    /// Absolute y of the bar row, from the unified geometry model.
+    pub status_row: usize,
     pub theme: &'a Theme,
     pub is_active: bool,
     pub prompt_state: Option<&'a PromptState>,
@@ -43,8 +45,9 @@ impl StatusRenderer {
             is_active,
             prompt_state,
             bar,
+            status_row,
         } = ctx;
-        let status_y = (rect.y + rect.height.saturating_sub(1)) as u16;
+        let status_y = *status_row as u16;
         let bg_color = if *is_active {
             theme.status_bg
         } else {
@@ -187,6 +190,7 @@ mod tests {
             is_active: true,
             prompt_state: prompt,
             bar,
+            status_row: rect.y + rect.height.saturating_sub(1),
         };
         let cursor = StatusRenderer::render(&mut display.back_buffer, &ctx);
         let y = (rect.y + rect.height - 1) as u16;

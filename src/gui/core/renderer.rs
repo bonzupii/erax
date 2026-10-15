@@ -1259,6 +1259,58 @@ mod tests {
         Cell::with_role(ch, fg, TermColor::Reset, CellRole::EditorText)
     }
 
+
+    /// Golden: the GUI's pixel-to-grid derivation feeds the same frame
+    /// model as the TUI. 808x488 px at 10x20 px cells is an 80x24 grid
+    /// (the same derivation `run/gui.rs` uses before emitting the resize
+    /// event); the resulting rect map must equal the TUI golden's. This
+    /// pins the derivation, not the wgpu renderer.
+    #[test]
+    fn golden_gui_pixel_grid_frame_consistency() {
+        use crate::core::app::EditorApp;
+        use crate::core::buffer::Buffer;
+        use crate::core::geometry::{compute_frame, FrameOptions, GridMetrics};
+        use crate::core::id::BufferId;
+
+        let mut app = EditorApp::new();
+        let text = (0..100)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        app.buffers.insert(BufferId(0), Buffer::from_string(&text));
+
+        let metrics = GridMetrics::new(10.0, 20.0, 808.0, 488.0);
+        let (cols, rows) = metrics.grid_dimensions();
+        assert_eq!((cols, rows), (80, 24));
+
+        let frame = compute_frame(
+            FrameOptions {
+                cols: cols as usize,
+                rows: rows as usize,
+                menu_rows: 1,
+                show_line_numbers: true,
+            },
+            &app.layout,
+            &app.geom_inputs(),
+        );
+        assert_eq!(frame.panes.len(), 1);
+        let p = &frame.panes[0];
+        assert_eq!(
+            (p.frame.x, p.frame.y, p.frame.width, p.frame.height),
+            (0, 1, 80, 23)
+        );
+        assert_eq!(p.gutter_width, 3);
+        assert_eq!(
+            (p.text.x, p.text.y, p.text.width, p.text.height),
+            (3, 1, 77, 22)
+        );
+        assert_eq!(p.status_row, 23);
+        let v = p.v_scrollbar.expect("vertical scrollbar");
+        assert_eq!((v.cross, v.track_start, v.track_len), (79, 2, 20));
+        assert_eq!((v.thumb_start, v.thumb_len), (0, 4));
+        assert_eq!(p.cursor, Some((3, 1)));
+    }
+
     fn hidden_cell() -> Cell {
         Cell {
             text: crate::terminal::display::ClusterText::new(" "),
