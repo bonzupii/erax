@@ -625,9 +625,8 @@ fn terminal_output_reaches_client_unprompted() {
     // Drain to the post-spawn screen.
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     loop {
-        match read_server_frame(&mut ws) {
-            ServerFrame::Screen { .. } => break,
-            _ => {}
+        if let ServerFrame::Screen { .. } = read_server_frame(&mut ws) {
+            break;
         }
         assert!(
             std::time::Instant::now() < deadline,

@@ -2284,7 +2284,7 @@ mod tests {
     fn g001_collapse_merge_yields_no_single_child_internal() {
         fn underfull_internal(kids: usize) -> Rc<Node> {
             let leaves: Vec<Rc<Node>> = (0..kids)
-                .map(|_| Rc::new(Node::Leaf(Leaf::owned(Rc::from(&[b'x'][..])))))
+                .map(|_| Rc::new(Node::Leaf(Leaf::owned(Rc::from(*b"x")))))
                 .collect();
             internal_of(leaves)
         }
@@ -2322,7 +2322,7 @@ mod tests {
                 break;
             }
             let pos = rng.below(len);
-            let dlen = rng.below(len - pos).min(1 << 16).max(1);
+            let dlen = rng.below(len - pos).clamp(1, 1 << 16);
             t.delete_bytes(pos, dlen).expect("in-memory delete");
             if i % 10 == 0 {
                 check_tree_invariants(&t).expect("invariants under seeded deletes");
@@ -2341,7 +2341,7 @@ mod tests {
     #[test]
     fn g003_mid_level_merge_checked_by_invariants() {
         fn leaf() -> Rc<Node> {
-            Rc::new(Node::Leaf(Leaf::owned(Rc::from(&[b'x'][..]))))
+            Rc::new(Node::Leaf(Leaf::owned(Rc::from(*b"x"))))
         }
         fn internal(kids: usize) -> Rc<Node> {
             internal_of((0..kids).map(|_| leaf()).collect())

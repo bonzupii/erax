@@ -366,12 +366,12 @@ impl EditorApp {
             && let Some(window) = self.windows.get_mut(&self.active_window)
         {
             // Another buffer exists (the last-buffer case returned above).
-            let other = self
+            // BufferId is Copy: dereference rather than clone.
+            let other = *self
                 .buffers
                 .keys()
                 .next()
-                .expect("a buffer always remains")
-                .clone();
+                .expect("a buffer always remains");
             window.buffer_id = other;
             window.cursor_x = 0;
             window.cursor_y = 0;
