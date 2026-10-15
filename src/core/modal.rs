@@ -348,13 +348,26 @@ impl ModalEngine {
     /// crate-internal screen-model tests drive this directly; production
     /// always goes through [`Self::handle_key`]).
     pub(crate) fn handle_key_inner(&mut self, app: &mut EditorApp, key: &KeyPress) -> ModalOutcome {
-        match self.mode {
+        // The cue choke point: every mode transition in the engine
+        // funnels through this function, so one before/after
+        // comparison catches them all: no per-site instrumentation to
+        // rot. The comparison is per keypress: `d` announces
+        // OperatorPending and the completing `w` announces Normal, so
+        // the cue always names the state the user was left in. A
+        // silent mode change is a data-loss vector for non-visual
+        // users, so this comparison is the safety-critical line here.
+        let before = self.mode;
+        let outcome = match self.mode {
             ModalMode::Normal => self.normal_key(app, key),
             ModalMode::Insert => self.insert_key(app, key),
             ModalMode::Visual => self.visual_key(app, key),
             ModalMode::OperatorPending => self.operator_pending_key(app, key),
             ModalMode::CommandLine => self.cmdline_key(app, key),
+        };
+        if self.mode != before {
+            app.cue_bus.emit(crate::core::cue::Cue::ModeEntered(self.mode));
         }
+        outcome
     }
 
     /// Text describing the modal state: pending keys (`"a2d`), the mode
@@ -4042,6 +4055,70 @@ mod tests {
             Some(((1 << 20), (1 << 20) + 8))
         );
     }
+
+    /// Mode transitions emit exactly one `ModeEntered` cue carrying
+    /// the new mode; keys that do not change the mode emit nothing.
+    /// The cue bus is the safety-critical path for non-visual vim
+    /// users (a silent mode change is a data-loss vector).
+    #[test]
+    fn mode_transitions_emit_exactly_one_cue() {
+        use crate::core::cue::{Cue, CueBus};
+        let mut app = app_with("hello");
+        app.cue_bus = CueBus::new(true);
+
+        // Normal -> Insert: one cue.
+        press(&mut app, kp('i'));
+        let cues: Vec<Cue> = app.cue_bus.drain().collect();
+        assert_eq!(cues, vec![Cue::ModeEntered(ModalMode::Insert)]);
+
+        // Typing in Insert mode changes no mode: silence.
+        press(&mut app, kp('x'));
+        assert_eq!(app.cue_bus.pending(), 0);
+
+        // Insert -> Normal via Esc: one cue.
+        press(&mut app, esc());
+        let cues: Vec<Cue> = app.cue_bus.drain().collect();
+        assert_eq!(cues, vec![Cue::ModeEntered(ModalMode::Normal)]);
+
+        // Normal -> Visual: one cue.
+        press(&mut app, kp('v'));
+        let cues: Vec<Cue> = app.cue_bus.drain().collect();
+        assert_eq!(cues, vec![Cue::ModeEntered(ModalMode::Visual)]);
+    }
+
+    #[test]
+    fn operator_pending_transition_emits_its_mode() {
+        use crate::core::cue::{Cue, CueBus};
+        let mut app = app_with("hello");
+        app.cue_bus = CueBus::new(true);
+        press(&mut app, kp('d'));
+        let cues: Vec<Cue> = app.cue_bus.drain().collect();
+        assert_eq!(
+            cues,
+            vec![Cue::ModeEntered(ModalMode::OperatorPending)]
+        );
+    }
+
+    #[test]
+    fn completed_operator_motion_emits_both_transitions() {
+        // Each keypress is handled independently: `d` leaves the user
+        // in OperatorPending (the safety-critical announcement), and
+        // `w` completes the motion back to Normal. Both transitions
+        // are announced; the cue names the state each key leaves.
+        use crate::core::cue::{Cue, CueBus};
+        let mut app = app_with("hello world");
+        app.cue_bus = CueBus::new(true);
+        press(&mut app, kp('d'));
+        let cues: Vec<Cue> = app.cue_bus.drain().collect();
+        assert_eq!(
+            cues,
+            vec![Cue::ModeEntered(ModalMode::OperatorPending)]
+        );
+        press(&mut app, kp('w'));
+        let cues: Vec<Cue> = app.cue_bus.drain().collect();
+        assert_eq!(cues, vec![Cue::ModeEntered(ModalMode::Normal)]);
+        assert_eq!(app.modal_engine.mode(), ModalMode::Normal);
+    }
 }
 
 /// End-to-end parity for the modal input model.
@@ -4207,4 +4284,5 @@ mod parity_end_to_end {
             "cmdline: invocation path distorted the dispatch result for: {failures:?}"
         );
     }
+
 }

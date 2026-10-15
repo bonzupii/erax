@@ -590,6 +590,10 @@ pub fn push_reload_question(app: &mut crate::core::app::EditorApp, buffer_id: Bu
     let prompt = reload_prompt(app, buffer_id);
     app.focus_manager
         .push(FocusState::for_reload(buffer_id, &prompt));
+    // The question is a cue source for every caller at once: this is
+    // the single choke point all FileModified paths route through.
+    app.cue_bus
+        .emit(crate::core::cue::Cue::ReloadQuestionAsked);
 }
 
 /// The question text: names the file, and names the consequence when the

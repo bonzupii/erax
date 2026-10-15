@@ -314,6 +314,8 @@ fn execute(app: &mut EditorApp, command: Command, count: usize) -> DispatchResul
         Command::DiffNextHunk => diff::diff_next_hunk(app, count),
         Command::DiffPreviousHunk => diff::diff_previous_hunk(app, count),
         Command::DiffQuit => diff::diff_quit(app, count),
+        // -- accessibility --
+        Command::DescribeState => a11y::describe_state(app, count),
     }
 }
 

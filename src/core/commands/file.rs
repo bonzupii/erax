@@ -20,8 +20,14 @@ pub fn save_buffer(app: &mut EditorApp, _count: usize) -> DispatchResult {
                     return DispatchResult::FileModified(buffer_id);
                 }
                 if let Err(e) = buffer.save() {
-                    eprintln!("Error saving file: {}", e);
+                    // A failed save is a user-facing error, not stderr
+                    // noise: the message travels the typed Info path and
+                    // the failure emits an error-class cue.
+                    let message = format!("Save failed: {e}");
+                    app.cue_bus.emit(crate::core::cue::Cue::Error);
+                    return DispatchResult::Info(message);
                 }
+                app.cue_bus.emit(crate::core::cue::Cue::SaveCompleted);
             }
         }
         DispatchResult::Success

@@ -53,7 +53,7 @@ const ALLOWLIST: &[(&str, usize, &str)] = &[
     ),
     (
         "src/core/dispatcher.rs",
-        124,
+        125,
         "the dispatcher: the one place mapping commands to implementations",
     ),
 ];

@@ -156,6 +156,10 @@ pub enum Command {
     DiffNextHunk,
     DiffPreviousHunk,
     DiffQuit,
+    // -- accessibility --
+    /// Describe the active buffer's state as one spoken-style line
+    /// (buffer, position, mode, selection, diagnostics).
+    DescribeState,
 }
 
 impl Command {
@@ -283,6 +287,7 @@ impl Command {
             Command::DiffNextHunk => "diff-next-hunk",
             Command::DiffPreviousHunk => "diff-previous-hunk",
             Command::DiffQuit => "diff-quit",
+            Command::DescribeState => "describe-state",
         }
     }
 
@@ -421,6 +426,7 @@ impl Command {
             Command::DiffNextHunk,
             Command::DiffPreviousHunk,
             Command::DiffQuit,
+            Command::DescribeState,
         ]
     }
 }

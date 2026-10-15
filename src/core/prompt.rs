@@ -248,6 +248,7 @@ pub fn handle_prompt_action(
                     }
                     Err(e) => {
                         app.message = Some(format!("Error: {}", e));
+                        app.cue_bus.emit(crate::core::cue::Cue::Error);
                     }
                 }
             }
@@ -309,14 +310,17 @@ pub fn handle_prompt_action(
                                     output.status,
                                     stderr.trim()
                                 ));
+                                app.cue_bus.emit(crate::core::cue::Cue::Error);
                             }
                             Err(e) => {
                                 app.message = Some(format!("Error: {e}"));
+                                app.cue_bus.emit(crate::core::cue::Cue::Error);
                             }
                         }
                     }
                     Err(e) => {
                         app.message = Some(format!("Error: {e}"));
+                        app.cue_bus.emit(crate::core::cue::Cue::Error);
                     }
                 }
             }
@@ -330,6 +334,7 @@ pub fn handle_prompt_action(
                     }
                     Err(e) => {
                         app.message = Some(format!("Calc Error: {}", e));
+                        app.cue_bus.emit(crate::core::cue::Cue::Error);
                     }
                 }
             }
@@ -338,6 +343,7 @@ pub fn handle_prompt_action(
             if !input.is_empty()
                 && let Err(e) = crate::core::commands::diff::start_sed_diff(app, &input) {
                     app.message = Some(format!("Sed Error: {}", e));
+                    app.cue_bus.emit(crate::core::cue::Cue::Error);
                 }
         }
         InputAction::ExecuteNamedCommand => {

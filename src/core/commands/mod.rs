@@ -17,6 +17,8 @@
 //! All commands implement the [`Command`](crate::core::command::Command) trait,
 //! which defines a uniform interface for command execution.
 
+/// Accessibility commands (spoken-state description)
+pub mod a11y;
 /// Buffer introspection
 pub mod buffer;
 /// Programming calculator

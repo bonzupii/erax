@@ -109,6 +109,12 @@ pub struct Buffer {
     pub undo_grouper: UndoGrouper,
     /// Diagnostics (errors, warnings) associated with this buffer
     pub diagnostics: Vec<Diagnostic>,
+    /// Token-class annotations from the syntax highlighter (see
+    /// [`crate::core::semantics`]). The highlighter does not exist yet,
+    /// so the store is empty; the highlighter replaces it wholesale
+    /// through [`Buffer::set_token_annotations`], and the snapshot API
+    /// maps whatever is here without knowing who filled it.
+    pub token_annotations: Vec<crate::core::semantics::TokenAnnotation>,
     /// Syntax highlighting state cache for each line
     pub syntax_state_cache: Vec<SyntaxLexerState>,
     /// Original raw bytes for non-UTF-8 files (N-143, byte-exact preservation).
@@ -128,6 +134,19 @@ pub struct Buffer {
     pager_error: RefCell<Option<PagerError>>,
 }
 
+/// A diagnostic anchor after mapping through an edit.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum MappedAnchor {
+    /// The anchor never resolved (bad line, out of range): the
+    /// write-back leaves the diagnostic untouched.
+    Unresolvable,
+    /// The shift rule removed the anchor: the described text is gone,
+    /// so the diagnostic is dropped (and returned for the undo group).
+    Dropped,
+    /// The anchor mapped to this post-edit byte offset.
+    Resolved(usize),
+}
+
 impl Buffer {
     /// Create a new empty buffer
     pub fn new() -> Self {
@@ -143,6 +162,7 @@ impl Buffer {
             redo_stack: VecDeque::new(),
             undo_grouper: UndoGrouper::new(),
             diagnostics: Vec::new(),
+            token_annotations: Vec::new(),
             syntax_state_cache: Vec::new(),
             original_bytes: None,
             pager_error: RefCell::new(None),
@@ -163,6 +183,7 @@ impl Buffer {
             redo_stack: VecDeque::new(),
             undo_grouper: UndoGrouper::new(),
             diagnostics: Vec::new(),
+            token_annotations: Vec::new(),
             syntax_state_cache: Vec::new(),
             original_bytes: None,
             pager_error: RefCell::new(None),
@@ -214,6 +235,7 @@ impl Buffer {
                     redo_stack: VecDeque::new(),
                     undo_grouper: UndoGrouper::new(),
                     diagnostics: Vec::new(),
+                    token_annotations: Vec::new(),
                     syntax_state_cache: Vec::new(),
                     original_bytes: None,
                     pager_error: RefCell::new(None),
@@ -265,6 +287,7 @@ impl Buffer {
             redo_stack: VecDeque::new(),
             undo_grouper: UndoGrouper::new(),
             diagnostics: Vec::new(),
+            token_annotations: Vec::new(),
             syntax_state_cache: Vec::new(),
             original_bytes: None,
             pager_error: RefCell::new(None),
@@ -297,6 +320,7 @@ impl Buffer {
             redo_stack: VecDeque::new(),
             undo_grouper: UndoGrouper::new(),
             diagnostics: Vec::new(),
+            token_annotations: Vec::new(),
             syntax_state_cache: Vec::new(),
             original_bytes: None,
             pager_error: RefCell::new(None),
@@ -332,6 +356,7 @@ impl Buffer {
             redo_stack: VecDeque::new(),
             undo_grouper: UndoGrouper::new(),
             diagnostics: Vec::new(),
+            token_annotations: Vec::new(),
             syntax_state_cache: Vec::new(),
             original_bytes: None,
             pager_error: RefCell::new(None),
@@ -359,6 +384,7 @@ impl Buffer {
             redo_stack: VecDeque::new(),
             undo_grouper: UndoGrouper::new(),
             diagnostics: Vec::new(),
+            token_annotations: Vec::new(),
             syntax_state_cache: Vec::new(),
             original_bytes: Some(bytes),
             pager_error: RefCell::new(None),
@@ -636,13 +662,254 @@ impl Buffer {
 
     // ==================== Editing Operations ====================
 
+    // ---------- Diagnostic anchor maintenance ----------
+    //
+    // Diagnostics are line-anchored, but the annotation layer promises
+    // byte ranges that stay correct under edits. Every mutation entry
+    // point therefore maps diagnostic anchors through the edit:
+    // resolve to pre-edit byte offsets, map through the (pos, len)
+    // triple, write back as (line, char column). The mapping is exact
+    // for line motion; columns on the edited line itself are
+    // recomputed from the surviving text, which is the honest
+    // approximation (the line changed under the diagnostic).
+    //
+    // Anchors have three states after mapping. `Unresolvable` means
+    // the anchor never resolved (bad line number, empty buffer): the
+    // write-back leaves that diagnostic exactly as the producer set
+    // it. `Dropped` means the shift rule removed the anchor (its text
+    // is gone): the diagnostic is removed and returned so the caller
+    // can attach it to the undo group. `Resolved` carries the
+    // post-edit byte offset.
+    //
+    // With no diagnostics this costs one branch: the hot path is
+    // unaffected.
+
+    /// Resolve every diagnostic's start/end anchors to pre-edit byte
+    /// offsets. Unresolvable anchors are `None`.
+    fn diagnostic_anchors(&self) -> Vec<(Option<usize>, Option<usize>)> {
+        if self.diagnostics.is_empty() {
+            return Vec::new();
+        }
+        self.diagnostics
+            .iter()
+            .map(|d| {
+                (
+                    self.diagnostic_anchor(d.line, d.column),
+                    d.end_line
+                        .and_then(|line| self.diagnostic_anchor(line, d.end_column)),
+                )
+            })
+            .collect()
+    }
+
+    /// Resolve one (1-based line, 1-based char column) to a byte offset.
+    fn diagnostic_anchor(&self, line: usize, column: Option<usize>) -> Option<usize> {
+        if line == 0 {
+            return None;
+        }
+        let line_start = self.line_to_byte(line - 1)?;
+        let col = column.unwrap_or(1).max(1) - 1;
+        if col == 0 {
+            return Some(line_start);
+        }
+        let text = self.line(line - 1)?;
+        let mut off = 0usize;
+        for (_, ch) in text.char_indices().take(col) {
+            off += ch.len_utf8();
+        }
+        Some(line_start + off)
+    }
+
+    /// Byte offset to (1-based line, 1-based char column), clamped
+    /// into the buffer and onto a char boundary.
+    fn anchor_to_position(&self, anchor: usize) -> (usize, usize) {
+        let anchor = anchor.min(self.text.len());
+        let line_idx = self.byte_to_line(anchor);
+        let (line_start, text) = match (self.line_to_byte(line_idx), self.line(line_idx)) {
+            (Some(s), Some(t)) => (s, t),
+            _ => return (line_idx + 1, 1),
+        };
+        let mut prefix = anchor.saturating_sub(line_start).min(text.len());
+        while !text.is_char_boundary(prefix) {
+            prefix -= 1;
+        }
+        (line_idx + 1, text[..prefix].chars().count() + 1)
+    }
+
+    /// Lift resolved pre-edit anchors into mapped-anchor space: the
+    /// shift functions work in that space throughout, so `None`
+    /// becomes `Unresolvable` once, at the boundary.
+    fn lift_anchors(
+        anchors: &[(Option<usize>, Option<usize>)],
+    ) -> Vec<(MappedAnchor, MappedAnchor)> {
+        let lift = |a: Option<usize>| match a {
+            None => MappedAnchor::Unresolvable,
+            Some(a) => MappedAnchor::Resolved(a),
+        };
+        anchors.iter().map(|&(s, e)| (lift(s), lift(e))).collect()
+    }
+
+    /// Map anchors through an insertion of `len` bytes at `pos`:
+    /// anchors at or after the insertion point ride after the new text.
+    /// Insertions never drop anchors.
+    fn shift_anchors_for_insert(
+        anchors: &[(MappedAnchor, MappedAnchor)],
+        pos: usize,
+        len: usize,
+    ) -> Vec<(MappedAnchor, MappedAnchor)> {
+        let map = |a: MappedAnchor| match a {
+            MappedAnchor::Resolved(a) if a >= pos => MappedAnchor::Resolved(a + len),
+            other => other,
+        };
+        anchors.iter().map(|&(s, e)| (map(s), map(e))).collect()
+    }
+
+    /// Map anchors through a deletion of `len` bytes at `pos`. Anchors
+    /// inside the deleted span ride to its start, unless the deletion
+    /// removes their line from the anchor onward, then the described
+    /// text is gone and the anchor is dropped.
+    ///
+    /// Call before the tree mutation: the drop rule needs pre-edit
+    /// line geometry.
+    fn shift_anchors_for_delete(
+        &self,
+        anchors: &[(MappedAnchor, MappedAnchor)],
+        pos: usize,
+        len: usize,
+    ) -> Vec<(MappedAnchor, MappedAnchor)> {
+        anchors
+            .iter()
+            .map(|&(s, e)| {
+                (
+                    self.shift_anchor_for_delete(s, pos, len),
+                    self.shift_anchor_for_delete(e, pos, len),
+                )
+            })
+            .collect()
+    }
+
+    /// One anchor through a deletion (pre-edit coordinates).
+    fn shift_anchor_for_delete(
+        &self,
+        anchor: MappedAnchor,
+        pos: usize,
+        len: usize,
+    ) -> MappedAnchor {
+        let a = match anchor {
+            MappedAnchor::Resolved(a) => a,
+            other => return other,
+        };
+        if a < pos {
+            return MappedAnchor::Resolved(a);
+        }
+        if a >= pos + len {
+            return MappedAnchor::Resolved(a - len);
+        }
+        let line_idx = self.byte_to_line(a);
+        let line_end = self
+            .line_to_byte(line_idx + 1)
+            .unwrap_or_else(|| self.text.len());
+        if pos + len >= line_end {
+            MappedAnchor::Dropped
+        } else {
+            MappedAnchor::Resolved(pos)
+        }
+    }
+
+    /// Write mapped anchors back as (line, column) pairs. Returns the
+    /// diagnostics the drop rule removed, so the caller can attach
+    /// them to the undo group (undo restores the text, so it restores
+    /// the diagnostics).
+    ///
+    /// A dropped start anchor removes the diagnostic; a dropped or
+    /// unresolvable end anchor collapses the span to its start. An
+    /// unresolvable start anchor leaves the diagnostic exactly as the
+    /// producer set it. A diagnostic that arrived with `column: None`
+    /// keeps `None`: the column was never specified, only resolved
+    /// for the mapping.
+    fn apply_diagnostic_shift(
+        &mut self,
+        anchors: Vec<(MappedAnchor, MappedAnchor)>,
+    ) -> Vec<Diagnostic> {
+        /// Per diagnostic index: the new (line, column) for the span
+        /// start and the optional new (line, column) for the span end.
+        type AnchorWrite = (usize, (usize, usize), Option<(usize, usize)>);
+        if anchors.is_empty() {
+            return Vec::new();
+        }
+        let mut drop_idx = Vec::new();
+        let mut writes: Vec<AnchorWrite> = Vec::new();
+        for (i, (start, end)) in anchors.into_iter().enumerate() {
+            match start {
+                MappedAnchor::Unresolvable => {}
+                MappedAnchor::Dropped => drop_idx.push(i),
+                MappedAnchor::Resolved(a) => {
+                    let start_pos = self.anchor_to_position(a);
+                    let end_pos = match end {
+                        MappedAnchor::Resolved(e) => Some(self.anchor_to_position(e)),
+                        // Dropped or unresolvable end: the span
+                        // collapses to its start.
+                        _ => None,
+                    };
+                    writes.push((i, start_pos, end_pos));
+                }
+            }
+        }
+        for (i, (line, col), end) in writes {
+            if let Some(diag) = self.diagnostics.get_mut(i) {
+                diag.line = line;
+                if diag.column.is_some() {
+                    diag.column = Some(col);
+                }
+                match end {
+                    Some((eline, ecol)) => {
+                        diag.end_line = Some(eline);
+                        if diag.end_column.is_some() {
+                            diag.end_column = Some(ecol);
+                        }
+                    }
+                    None => {
+                        diag.end_line = None;
+                        diag.end_column = None;
+                    }
+                }
+            }
+        }
+        let mut dropped = Vec::new();
+        for i in drop_idx.into_iter().rev() {
+            if i < self.diagnostics.len() {
+                dropped.push(self.diagnostics.remove(i));
+            }
+        }
+        // Removed in reverse index order; restore original order so a
+        // later undo re-appends them as they were.
+        dropped.reverse();
+        dropped
+    }
+
+    /// Attach diagnostics the drop rule removed to the current undo
+    /// group, so undo restores them alongside the text. A no-op when
+    /// nothing was dropped (the common case).
+    fn stash_dropped_diagnostics(&mut self, dropped: Vec<Diagnostic>) {
+        if dropped.is_empty() {
+            return;
+        }
+        if let Some(group) = self.undo_stack.back_mut() {
+            group.dropped_diagnostics.extend(dropped);
+        }
+    }
+
     /// Insert text at byte position
     pub fn insert(&mut self, pos: usize, text: &str) {
         if text.is_empty() {
             return;
         }
         let pos = pos.min(self.text.len());
+        let anchors = self.diagnostic_anchors();
         self.text.insert_bytes(pos, text.as_bytes());
+        let shifted = Self::shift_anchors_for_insert(&Self::lift_anchors(&anchors), pos, text.len());
+        // Insertions never drop anchors.
+        let _ = self.apply_diagnostic_shift(shifted);
         self.mark_modified();
 
         // Record for undo
@@ -661,6 +928,11 @@ impl Buffer {
         }
         let actual_len = len.min(self.text.len() - pos);
 
+        // Map diagnostic anchors before the mutation: the drop rule
+        // needs pre-edit line geometry.
+        let anchors = self.diagnostic_anchors();
+        let shifted = self.shift_anchors_for_delete(&Self::lift_anchors(&anchors), pos, actual_len);
+
         // Save text for undo
         let deleted_text = match self.text.delete_bytes(pos, actual_len) {
             Ok(bytes) => bytes,
@@ -669,6 +941,7 @@ impl Buffer {
                 return;
             }
         };
+        let dropped = self.apply_diagnostic_shift(shifted);
         self.mark_modified();
 
         // Record for undo
@@ -676,6 +949,9 @@ impl Buffer {
             pos,
             text: deleted_text,
         });
+        // Diagnostics the drop rule removed ride with the undo group:
+        // undo restores the text, so it restores the diagnostics.
+        self.stash_dropped_diagnostics(dropped);
         self.redo_stack.clear();
     }
 
@@ -684,7 +960,11 @@ impl Buffer {
         let pos = pos.min(self.text.len());
         let mut buf = [0u8; 4];
         let bytes = ch.encode_utf8(&mut buf).as_bytes();
+        let anchors = self.diagnostic_anchors();
         self.text.insert_bytes(pos, bytes);
+        let shifted = Self::shift_anchors_for_insert(&Self::lift_anchors(&anchors), pos, bytes.len());
+        // Insertions never drop anchors.
+        let _ = self.apply_diagnostic_shift(shifted);
         self.mark_modified();
 
         // Record for undo
@@ -703,15 +983,24 @@ impl Buffer {
         }
         if let Some(ch) = self.text.char_at(pos) {
             let char_len = ch.len_utf8();
+            // Map diagnostic anchors before the mutation: the drop
+            // rule needs pre-edit line geometry.
+            let anchors = self.diagnostic_anchors();
+            let shifted = self.shift_anchors_for_delete(&Self::lift_anchors(&anchors), pos, char_len);
             // Atomic: on a pager failure the tree is untouched.
             match self.text.delete_bytes(pos, char_len) {
                 Ok(_) => {
+                    let dropped = self.apply_diagnostic_shift(shifted);
                     self.mark_modified();
 
                     // Record for undo
                     let mut encoded = [0u8; 4];
                     let bytes = ch.encode_utf8(&mut encoded).as_bytes().to_vec();
                     self.push_edit(Edit::Delete { pos, text: bytes });
+                    // Diagnostics the drop rule removed ride with the
+                    // undo group: undo restores the text, so it
+                    // restores the diagnostics.
+                    self.stash_dropped_diagnostics(dropped);
                     self.redo_stack.clear();
                 }
                 Err(e) => {
@@ -733,12 +1022,26 @@ impl Buffer {
     /// stays on the undo stack for retry, and `false` is returned. No partial
     /// undo is ever observable.
     pub fn undo(&mut self) -> bool {
-        if let Some(group) = self.undo_stack.pop_back() {
+        if let Some(mut group) = self.undo_stack.pop_back() {
             // O(1) snapshot: BText::clone shares the Rc root.
             let snapshot = self.text.clone();
+            let mut anchors = Self::lift_anchors(&self.diagnostic_anchors());
             let mut ok = true;
             // Apply edits in reverse order for undo
             for edit in group.edits.iter().rev() {
+                // Shift anchors through the inverse edit before
+                // applying it: the drop rule needs pre-edit geometry.
+                // On rollback the shift is discarded with the text.
+                if !anchors.is_empty() {
+                    anchors = match edit {
+                        Edit::Insert { pos, text } => {
+                            self.shift_anchors_for_delete(&anchors, *pos, text.len())
+                        }
+                        Edit::Delete { pos, text } => {
+                            Self::shift_anchors_for_insert(&anchors, *pos, text.len())
+                        }
+                    };
+                }
                 let applied = match edit {
                     Edit::Insert { pos, text } => {
                         // Undo insert = delete
@@ -766,6 +1069,14 @@ impl Buffer {
                 self.undo_stack.push_back(group);
                 return false;
             }
+            // The undo's own shifts can drop diagnostics whose text
+            // the undo itself removed; those ride with the group to
+            // redo. Restore what the forward edits dropped: the text
+            // is back, so the diagnostics are valid again.
+            let shift_dropped = self.apply_diagnostic_shift(anchors);
+            let restore = std::mem::take(&mut group.dropped_diagnostics);
+            self.diagnostics.extend(restore);
+            group.dropped_diagnostics = shift_dropped;
             self.redo_stack.push_back(group);
             self.mark_modified();
             true
@@ -778,11 +1089,25 @@ impl Buffer {
     /// failure rolls back, keeps the group on the redo stack, and returns
     /// `false`.
     pub fn redo(&mut self) -> bool {
-        if let Some(group) = self.redo_stack.pop_back() {
+        if let Some(mut group) = self.redo_stack.pop_back() {
             let snapshot = self.text.clone();
+            let mut anchors = Self::lift_anchors(&self.diagnostic_anchors());
             let mut ok = true;
             // Apply edits in original order for redo
             for edit in &group.edits {
+                // Shift anchors through the edit before applying it:
+                // the drop rule needs pre-edit geometry. On rollback
+                // the shift is discarded with the text.
+                if !anchors.is_empty() {
+                    anchors = match edit {
+                        Edit::Insert { pos, text } => {
+                            Self::shift_anchors_for_insert(&anchors, *pos, text.len())
+                        }
+                        Edit::Delete { pos, text } => {
+                            self.shift_anchors_for_delete(&anchors, *pos, text.len())
+                        }
+                    };
+                }
                 let applied = match edit {
                     Edit::Insert { pos, text } => {
                         self.text.insert_bytes(*pos, text);
@@ -808,6 +1133,11 @@ impl Buffer {
                 self.redo_stack.push_back(group);
                 return false;
             }
+            // Redo re-applies the forward edits: diagnostics its own
+            // shifts drop ride with the group, so a later undo
+            // restores them.
+            let shift_dropped = self.apply_diagnostic_shift(anchors);
+            group.dropped_diagnostics.extend(shift_dropped);
             self.undo_stack.push_back(group);
             self.mark_modified();
             true
@@ -972,6 +1302,21 @@ impl Buffer {
     /// Add a diagnostic to this buffer
     pub fn add_diagnostic(&mut self, diag: Diagnostic) {
         self.diagnostics.push(diag);
+    }
+
+    /// Replace the buffer's token-class annotation store wholesale.
+    ///
+    /// The future generic highlighter calls this after each highlight
+    /// pass; the snapshot API maps the store without knowing who
+    /// filled it. Wholesale replacement (not incremental maintenance)
+    /// is the contract: the highlighter owns the store's contents
+    /// between passes, so edits between passes cannot leave stale
+    /// token ranges behind.
+    pub fn set_token_annotations(
+        &mut self,
+        annotations: Vec<crate::core::semantics::TokenAnnotation>,
+    ) {
+        self.token_annotations = annotations;
     }
 
     /// Clear all diagnostics from this buffer

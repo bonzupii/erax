@@ -19,6 +19,7 @@
 //! To customize: edit the `pub const` values below and rebuild. An invalid
 //! value (wrong type, unknown theme, unknown command) fails compilation.
 
+pub mod accessibility;
 pub mod display;
 pub mod cursor_style;
 pub mod editor;

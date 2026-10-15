@@ -74,6 +74,10 @@ pub struct EditorApp {
     pub last_yank_len: usize,
     /// Was the last command a yank? (for yank-pop chaining)
     pub last_command_was_yank: bool,
+    /// Accessibility cue queue: the core emits typed cue events here;
+    /// each shell drains it once per frame and maps the cues to its
+    /// senses (bell, flash, earcon). See [`crate::core::cue`].
+    pub cue_bus: crate::core::cue::CueBus,
 }
 
 impl EditorApp {
@@ -128,6 +132,9 @@ impl EditorApp {
             last_yank_pos: None,
             last_yank_len: 0,
             last_command_was_yank: false,
+            cue_bus: crate::core::cue::CueBus::new(
+                crate::config::accessibility::CUES_ENABLED,
+            ),
         }
     }
 

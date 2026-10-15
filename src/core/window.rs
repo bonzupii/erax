@@ -487,25 +487,32 @@ impl Window {
 
     /// Get the absolute byte offset of the cursor
     pub fn get_byte_offset(&self, buffer: &Buffer) -> Option<usize> {
-        let line_start = buffer.line_to_byte(self.cursor_y)?;
+        self.get_byte_offset_at(buffer, self.cursor_x, self.cursor_y)
+    }
 
-        if self.cursor_x == 0 {
+    /// Byte offset of the (x, y) cell: the same cursor mapping as
+    /// [`Window::get_byte_offset`], parameterized so marks and other
+    /// positions do not need a cloned window with a moved cursor.
+    pub fn get_byte_offset_at(&self, buffer: &Buffer, x: usize, y: usize) -> Option<usize> {
+        let line_start = buffer.line_to_byte(y)?;
+
+        if x == 0 {
             return Some(line_start);
         }
 
-        if let Some(line_text) = buffer.line(self.cursor_y) {
+        if let Some(line_text) = buffer.line(y) {
             // Fast path: if content is ASCII, cursor_x == byte offset
             if line_text.is_ascii() {
-                return Some(line_start + self.cursor_x.min(line_text.len()));
+                return Some(line_start + x.min(line_text.len()));
             }
 
             // Slow path: use grapheme_byte_index for proper Unicode handling
             if let Some(byte_pos) =
-                crate::core::utf8::grapheme_byte_index(&line_text, self.cursor_x)
+                crate::core::utf8::grapheme_byte_index(&line_text, x)
             {
                 Some(line_start + byte_pos)
             } else {
-                // cursor_x is past end of line, return end of line
+                // x is past end of line, return end of line
                 Some(line_start + line_text.len())
             }
         } else {

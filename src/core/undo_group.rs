@@ -5,6 +5,7 @@
 //! undo/redo experience.
 
 use super::buffer::Edit;
+use super::diagnostics::Diagnostic;
 use super::lexer::{LexerState, TokenKind};
 
 /// Number of Unicode scalar values in `bytes`. Edit texts are the exact
@@ -47,6 +48,10 @@ pub struct UndoGroup {
     pub edits: Vec<Edit>,
     /// Optional description of what this group represents
     pub description: Option<String>,
+    /// Diagnostics the delete drop-rule removed while this group's
+    /// edits ran. Undo restores the text, so it restores these too;
+    /// redo re-drops them. Empty in the common case.
+    pub dropped_diagnostics: Vec<Diagnostic>,
 }
 
 impl UndoGroup {
@@ -55,6 +60,7 @@ impl UndoGroup {
         Self {
             edits: Vec::new(),
             description: None,
+            dropped_diagnostics: Vec::new(),
         }
     }
 
@@ -63,6 +69,7 @@ impl UndoGroup {
         Self {
             edits: Vec::new(),
             description: Some(description.into()),
+            dropped_diagnostics: Vec::new(),
         }
     }
 
