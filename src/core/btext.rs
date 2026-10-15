@@ -1730,6 +1730,13 @@ fn collapse_and_merge(children: Vec<Rc<Node>>) -> Rc<Node> {
             }
         }
     }
+    // A single node needs no wrapper: `out` holds exactly one element only
+    // when the whole level merged into it, and wrapping it would create a
+    // 1-child internal node, which I1 forbids below the root. The merged
+    // node already carries 2..=BTREE_MAX_CHILDREN children by construction.
+    if out.len() == 1 {
+        return out.into_iter().next().expect("collapse: merged");
+    }
     internal_of(out)
 }
 
@@ -2253,6 +2260,98 @@ mod tests {
         let tb = t.collect_bytes().expect("collect");
         assert_eq!(&tb[..big.len()], &big[..]);
         assert_eq!(&tb[tb.len() - 4..], b"seed");
+    }
+
+    // -- G-series: collapse_and_merge single-child regression ----------------
+    //
+    // When a level shrinks to exactly two underfull internal siblings that
+    // fit together, the merge pass produces one node; that node must be
+    // returned directly, not wrapped in a new 1-child internal node (which
+    // would violate the non-root arity-2 lower bound, I1).
+    //
+    // The first test drives the merge path deterministically: two 10-child
+    // internal nodes (underfull: < BTREE_MIN_CHILDREN == 16) merge into a
+    // 20-child node (<= BTREE_MAX_CHILDREN == 32). The second test exercises
+    // the path end to end with seeded random deletes on a 3-level tree.
+
+    #[test]
+    fn g001_collapse_merge_yields_no_single_child_internal() {
+        fn underfull_internal(kids: usize) -> Rc<Node> {
+            let leaves: Vec<Rc<Node>> = (0..kids)
+                .map(|_| Rc::new(Node::Leaf(Leaf::owned(Rc::from(&[b'x'][..])))))
+                .collect();
+            internal_of(leaves)
+        }
+        let merged = collapse_and_merge(vec![underfull_internal(10), underfull_internal(10)]);
+        match merged.as_ref() {
+            Node::Internal { children, .. } => {
+                assert!(
+                    children.len() != 1,
+                    "collapse_and_merge produced a 1-child internal node (I1 violated)"
+                );
+                assert_eq!(
+                    children.len(),
+                    20,
+                    "expected the two underfull siblings merged into 20 grandchildren"
+                );
+            }
+            Node::Leaf(_) => panic!("merging two internal nodes must stay internal"),
+        }
+    }
+
+    #[test]
+    fn g002_deep_tree_deletes_hold_invariants() {
+        // 3 levels: 33*33 leaves of 8 KiB ~= 8.7 MiB, seeded content.
+        let mut rng = Rng::new(0xB7EC5);
+        let mut data = Vec::with_capacity(33 * 33 * 8192);
+        for _ in 0..33 * 33 * 8192 {
+            data.push(rng.byte());
+        }
+        let mut t = BText::from_bytes(&data);
+        check_tree_invariants(&t).expect("invariants after build");
+        // Seeded random deletes shrink levels toward the merge path.
+        for i in 0..200usize {
+            let len = t.len();
+            if len == 0 {
+                break;
+            }
+            let pos = rng.below(len);
+            let dlen = rng.below(len - pos).min(1 << 16).max(1);
+            t.delete_bytes(pos, dlen).expect("in-memory delete");
+            if i % 10 == 0 {
+                check_tree_invariants(&t).expect("invariants under seeded deletes");
+            }
+        }
+        check_tree_invariants(&t).expect("invariants after seeded deletes");
+        assert_eq!(t.len(), t.collect_bytes().expect("collect").len());
+    }
+
+    /// Deterministic end-to-end reachability: a mid-level merge whose result
+    /// cannot merge upward (blocked by a full sibling) must not leave a
+    /// 1-child internal node in the tree. Drives the real `delete_at` path:
+    /// X = [a1, a2] (two underfull internal siblings) merges to one node,
+    /// and the root's merge pass keeps it because the next sibling B is full
+    /// (1 + 32 > BTREE_MAX_CHILDREN).
+    #[test]
+    fn g003_mid_level_merge_checked_by_invariants() {
+        fn leaf() -> Rc<Node> {
+            Rc::new(Node::Leaf(Leaf::owned(Rc::from(&[b'x'][..]))))
+        }
+        fn internal(kids: usize) -> Rc<Node> {
+            internal_of((0..kids).map(|_| leaf()).collect())
+        }
+        let x = internal_of(vec![internal(10), internal(10)]);
+        let b = internal(32);
+        let total = x.bytes() + b.bytes();
+        let mut t = BText {
+            root: internal_of(vec![x, b]),
+        };
+        // One byte inside a1: X's children stay two underfull internals and
+        // merge; X's merged result cannot merge upward past the full B.
+        t.delete_bytes(0, 1).expect("in-memory delete");
+        check_tree_invariants(&t).expect("no 1-child internal node may survive");
+        assert_eq!(t.len(), total - 1);
+        assert!(t.collect_bytes().expect("collect").iter().all(|&c| c == b'x'));
     }
 
     // -- V-03: position-mapping laws (decision D) ---------------------------
