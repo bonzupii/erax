@@ -327,7 +327,7 @@ pub const MODAL_BINDINGS: &[ModalBinding] = &[
     ModalBinding { mode: ModalMode::Visual, key: plain(Key::Char('d')), action: ModalAction::Command(Command::KillRegion) },
     ModalBinding { mode: ModalMode::Visual, key: plain(Key::Char('x')), action: ModalAction::Command(Command::KillRegion) },
     ModalBinding { mode: ModalMode::Visual, key: plain(Key::Char('y')), action: ModalAction::Command(Command::CopyRegion) },
-    ModalBinding { mode: ModalMode::Visual, key: plain(Key::Char('c')), action: ModalAction::Command(Command::KillRegion) },
+    ModalBinding { mode: ModalMode::Visual, key: plain(Key::Char('c')), action: ModalAction::VisualChange },
     ModalBinding { mode: ModalMode::Visual, key: plain(Key::Char('v')), action: ModalAction::EnterMode(ModalMode::Normal) },
     ModalBinding { mode: ModalMode::Visual, key: plain(Key::Esc), action: ModalAction::EnterMode(ModalMode::Normal) },
 ];

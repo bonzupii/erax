@@ -758,6 +758,8 @@ impl ModalEngine {
                 self.reset_pending();
                 ModalOutcome::Consumed
             }
+            // Visual-mode-only; the table never binds it in Normal mode.
+            ModalAction::VisualChange => ModalOutcome::Consumed,
             ModalAction::VimLineEnd => {
                 let count = self.take_count();
                 // `2$` also goes down a line first (vim).
@@ -1409,17 +1411,17 @@ impl ModalEngine {
                 self.enter_mode(app, ModalMode::Normal);
                 ModalOutcome::Consumed
             }
+            Some(ModalAction::VisualChange) => {
+                // `c`: delete the selection and enter Insert.
+                self.take_count();
+                self.visual_apply(app, ModalOperator::Change);
+                self.enter_insert(
+                    app,
+                    ModalChange::Insert { text: String::new() },
+                );
+                ModalOutcome::Consumed
+            }
             Some(ModalAction::Command(cmd)) => {
-                // `c` is bound to KillRegion in the table; it changes instead.
-                if cmd == Command::KillRegion && key.key == Key::Char('c') {
-                    self.take_count();
-                    self.visual_apply(app, ModalOperator::Change);
-                    self.enter_insert(
-                        app,
-                        ModalChange::Insert { text: String::new() },
-                    );
-                    return ModalOutcome::Consumed;
-                }
                 let count = self.take_count();
                 let r = self.run(app, cmd, count);
                 // In visual mode, a forward sentence motion includes its

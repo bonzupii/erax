@@ -115,6 +115,8 @@ pub enum ModalAction {
     DeleteToEndOfLine,
     /// `C`: change to end of line (`c$`, then Insert).
     ChangeToEndOfLine,
+    /// `c` in Visual mode: delete the selection and enter Insert.
+    VisualChange,
     /// `p` / `P`: put register text after / before the cursor.
     Put(bool),
     /// Vim `w`: to the start of the next word (word-start semantics, not
