@@ -94,6 +94,21 @@ impl GridMetrics {
         )
     }
 
+    /// Pixel coordinates clamped onto the grid: the same derivation as
+    /// [`GridMetrics::px_to_grid`], but out-of-grid points (scrollbar
+    /// strips, status line, window chrome) map to the nearest grid cell
+    /// instead of `None`. Scroll events use this so a wheel over the
+    /// strips scrolls the adjacent pane instead of being misattributed
+    /// to cell (0, 0).
+    pub fn clamp_to_grid(&self, x: f32, y: f32) -> (usize, usize) {
+        let (max_cols, max_rows) = self.grid_dimensions();
+        let max_cols = max_cols.max(1) as usize;
+        let max_rows = max_rows.max(1) as usize;
+        let col = ((x - self.offset_x) / self.cell_width) as usize;
+        let row = ((y - self.offset_y) / self.cell_height) as usize;
+        (col.min(max_cols - 1), row.min(max_rows - 1))
+    }
+
     /// Pixel y of the top edge of grid row `row`.
     ///
     /// Derived from the metrics, never from a pixel-sized cache table:
@@ -166,6 +181,34 @@ mod tests {
         let metrics = GridMetrics::new(10.0, 20.0, 100.0, 100.0);
         // Outside grid bounds
         assert!(metrics.px_to_grid(0.0, 0.0).is_none());
+    }
+
+    #[test]
+    fn clamp_to_grid_pins_chrome_to_the_nearest_cell() {
+        // Regression: the native shell's scroll handler mapped an
+        // out-of-grid wheel position to (0, 0) via unwrap_or_default,
+        // scrolling the top-left pane instead of the pane under the
+        // cursor. Points past the grid edge (scrollbar strips, status
+        // line, window chrome) clamp to the nearest cell.
+        let metrics = GridMetrics::new(10.0, 20.0, 805.0, 600.0);
+        let (cols, rows) = metrics.grid_dimensions();
+        let (cols, rows) = (cols as usize, rows as usize);
+        assert!(cols > 1 && rows > 1);
+
+        // Far past the viewport: last cell, where px_to_grid reports None.
+        let far = (10_000.0, 10_000.0);
+        assert!(metrics.px_to_grid(far.0, far.1).is_none());
+        assert_eq!(metrics.clamp_to_grid(far.0, far.1), (cols - 1, rows - 1));
+
+        // Negative coordinates saturate to the origin, not wrap.
+        assert_eq!(metrics.clamp_to_grid(-50.0, -50.0), (0, 0));
+
+        // In-grid points agree with px_to_grid.
+        let inside = (100.0, 100.0);
+        assert_eq!(
+            Some(metrics.clamp_to_grid(inside.0, inside.1)),
+            metrics.px_to_grid(inside.0, inside.1)
+        );
     }
 
     #[test]

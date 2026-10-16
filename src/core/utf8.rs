@@ -42,6 +42,15 @@ pub fn grapheme_byte_index(text: &str, n: usize) -> Option<usize> {
     text.grapheme_indices(true).nth(n).map(|(idx, _)| idx)
 }
 
+/// Byte index of the nth grapheme cluster, clamped to the line end when
+/// `n` is past the last cluster. Column positions go stale (a mark set
+/// before an edit that shortens the line); clamping keeps a stale
+/// column at the line end instead of wrapping the highlight to the
+/// line start.
+pub fn grapheme_byte_index_clamped(text: &str, n: usize) -> usize {
+    grapheme_byte_index(text, n).unwrap_or(text.len())
+}
+
 /// The canonical word-character predicate: one definition for every
 /// word-boundary computation (mouse double-click, selection expansion,
 /// snippet boundaries, completion). Alphanumeric or underscore, over the
@@ -300,5 +309,19 @@ mod layout_tests {
         assert_eq!(layout_grapheme_width("\x7f"), 0);
         assert_eq!(visual_width("a\x01b", 4), 2);
         assert_eq!(visual_width_up_to("a\x01b", 2, 4), 1);
+    }
+
+    #[test]
+    fn stale_column_clamps_to_line_end_not_line_start() {
+        // Regression: the selection renderer mapped a stale mark column
+        // (past the line's last cluster, after an edit shortened the
+        // line) to byte 0 via unwrap_or_default, painting the highlight
+        // from the line start. A stale column clamps to the line end.
+        assert_eq!(grapheme_byte_index_clamped("hello", 2), 2);
+        assert_eq!(grapheme_byte_index_clamped("hello", 5), 5);
+        assert_eq!(grapheme_byte_index_clamped("hello", 99), 5);
+        assert_eq!(grapheme_byte_index_clamped("", 3), 0);
+        // Multi-byte clusters: the clamp lands on a boundary.
+        assert_eq!(grapheme_byte_index_clamped("héllo", 99), "héllo".len());
     }
 }

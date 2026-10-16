@@ -253,16 +253,13 @@ impl WindowRenderer {
                 {
                     if buffer_line_idx >= start_y && buffer_line_idx <= end_y {
                         let start_byte = if buffer_line_idx == start_y {
-                            crate::core::utf8::grapheme_byte_index(line_content, start_x).unwrap_or_default()
+                            crate::core::utf8::grapheme_byte_index_clamped(line_content, start_x)
                         } else {
                             0
                         };
 
                         let end_byte = if buffer_line_idx == end_y {
-                            match crate::core::utf8::grapheme_byte_index(line_content, end_x) {
-                                Some(b) => b,
-                                None => line_content.len(),
-                            }
+                            crate::core::utf8::grapheme_byte_index_clamped(line_content, end_x)
                         } else {
                             line_content.len()
                         };

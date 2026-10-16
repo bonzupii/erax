@@ -131,6 +131,18 @@ pub fn mouse_pos_to_grid(
         .map(|(c, r)| (c as usize, r as usize))
 }
 
+/// Mouse pixel position clamped onto the grid: out-of-grid points
+/// (scrollbar strips, status line) map to the nearest cell instead of
+/// `None`. Scroll events use this — dropping the event would lose the
+/// user's intent, and fabricating (0, 0) misroutes it.
+pub fn mouse_pos_to_grid_clamped(
+    x: f32,
+    y: f32,
+    metrics: &crate::core::geometry::GridMetrics,
+) -> (usize, usize) {
+    metrics.clamp_to_grid(x, y)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
