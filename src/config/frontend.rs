@@ -18,6 +18,6 @@ pub const WEB_BIND: &str = "127.0.0.1:8080";
 ///
 /// The per-invocation `--web-allow-remote` flag ORs with this: setting the
 /// constant to `true` bakes the acknowledgement into the binary. It can
-/// only enable, never disable — a security acknowledgement is not
+/// only enable, never disable. A security acknowledgement is not
 /// something a default should silently take away.
 pub const WEB_ALLOW_REMOTE: bool = false;

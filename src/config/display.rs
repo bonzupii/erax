@@ -10,7 +10,7 @@ pub const LINE_NUMBERS: bool = true;
 /// Wrap long lines at the window edge instead of scrolling horizontally.
 ///
 /// May be overridden per-invocation by `--wrap` / `--no-wrap`; the override
-/// is a typed invocation parameter and never mutates this constant (N-012).
+/// is a typed invocation parameter and never mutates this constant.
 pub const WRAP_LINES: bool = false;
 
 /// Enable syntax highlighting.
@@ -21,18 +21,18 @@ pub const AUTO_INDENT: bool = true;
 
 /// Height of the menu bar in terminal cells.
 ///
-/// The single source of menu-bar height (N-167): layout, viewport, and input
+/// The single source of menu-bar height: layout, viewport, and input
 /// hit-testing all read this constant.
 pub const MENU_BAR_HEIGHT_CELLS: usize = 1;
 
-/// Lines scrolled per scrollbar-arrow click (N-046: typed config, not a magic number).
+/// Lines scrolled per scrollbar-arrow click.
 pub const SCROLLBAR_ARROW_STEP_LINES: usize = 3;
 
-/// Columns scrolled per horizontal scrollbar-arrow click (N-046).
+/// Columns scrolled per horizontal scrollbar-arrow click.
 pub const SCROLLBAR_ARROW_STEP_COLS: usize = 5;
 
 // ---------------------------------------------------------------------------
-// Cursor styles (N-268 mode-aware UI, D6).
+// Cursor styles (mode-aware UI).
 // ---------------------------------------------------------------------------
 // The `CursorStyle` type lives in `crate::core::cursor_style` (a leaf
 // module, so the wire protocol and the wasm web shell can include it via
@@ -47,7 +47,7 @@ pub const KEYTRIE_CURSOR_STYLE: CursorStyle = CursorStyle::SteadyBlock;
 /// Cursor style for the modeless standard model: steady bar (VS Code-like).
 pub const STANDARD_CURSOR_STYLE: CursorStyle = CursorStyle::SteadyBar;
 
-/// Cursor style for the vim modal model, per modal state (N-268 D6):
+/// Cursor style for the vim modal model, per modal state:
 /// Normal = steady block, Insert = bar, Visual = block (hollow ok),
 /// Replace = underline. OperatorPending is a sub-state of Normal; CommandLine
 /// is text entry on the bar.

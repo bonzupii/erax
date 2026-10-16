@@ -227,7 +227,7 @@ pub const fn bindings_for_model(model: InputModel) -> &'static [KeyBinding] {
 /// p/P with registers, visual v/V, command line `:`, search `/`, find-char
 /// f/F/t/T with `;`/`,`, `.` repeat, `"` registers, `e`/`E`/`ge`/`gE`
 /// word-end motions, `W`/`B` WORD motions, `(`/`)` sentence motions, and
-/// text objects (`iw`, `a(`, `i"`, …) — all served by one shared
+/// text objects (`iw`, `a(`, `i"`, …), all served by one shared
 /// word/text-object primitive.
 pub const MODAL_BINDINGS: &[ModalBinding] = &[
     // -- motions --
@@ -493,7 +493,7 @@ pub const STANDARD_BINDINGS: &[KeyBinding] = &[
     KeyBinding { keys: &[plain(Key::F(10))], command: Command::ToggleMenu, policy: PrefixPolicy::ExecuteLeaf },
     // -- terminal: the VS Code Ctrl+` idiom --
     KeyBinding { keys: &[ctrl('`')], command: Command::SpawnTerminal, policy: PrefixPolicy::ExecuteLeaf },
-    // F5: the universal run key — send the line or selection to the terminal.
+    // F5: the universal run key: send the line or selection to the terminal.
     KeyBinding { keys: &[plain(Key::F(5))], command: Command::TerminalSendInput, policy: PrefixPolicy::ExecuteLeaf },
     // F6: describe the active buffer's state as one spoken-style line.
     KeyBinding { keys: &[plain(Key::F(6))], command: Command::DescribeState, policy: PrefixPolicy::ExecuteLeaf },

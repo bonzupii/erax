@@ -40,10 +40,8 @@ pub const SELECTION_EDGE_DELTA: f32 = 0.06;
 /// Blend the cells neighboring the cursor toward the cursor cell's
 /// background: a one-cell halo around the cursor block.
 ///
-/// Off by default as a stopgap (owner report 2026-10-16: on real GPUs the
-/// halo reads as color bleeding into adjacent cells and UI chrome). The
-/// later chrome-redesign session owns the shader effects' fate; this
-/// const is not to be polished, clipped, or extended meanwhile.
+/// Off by default: on real GPUs the halo reads as color bleeding into
+/// adjacent cells and UI chrome.
 pub const CURSOR_HALO: bool = false;
 
 /// Halo blend factor: 0.0 is no halo, 1.0 paints neighbors fully in the

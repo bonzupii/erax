@@ -9,14 +9,14 @@ pub const TAB_WIDTH: usize = 8;
 pub const USE_TABS: bool = true;
 
 /// Maximum bytes kept in the kill ring entry; oversized kills are reported to
-/// the user, never silently dropped (N-185).
+/// the user, never silently dropped.
 pub const KILL_RING_MAX_BYTES: usize = 10 * 1024 * 1024;
 
-/// Adjacent single-character edits are grouped for undo up to this many
-/// (N-183). This is the one grouping rule; it is a setting, not a magic number.
+/// Adjacent single-character edits are grouped for undo up to this many.
+/// This is the one grouping rule; it is a setting, not a magic number.
 pub const UNDO_SMALL_EDIT_BATCH: usize = 100;
 
-/// Shell spawned for `shell-command` and the integrated terminal (N-237).
+/// Shell spawned for `shell-command` and the integrated terminal.
 /// A typed constant, not a hardcoded literal at the spawn site.
 pub const SHELL: &str = "sh";
 
@@ -35,9 +35,9 @@ pub const PAGE_CACHE_MAX_PAGES: usize = 256;
 /// one tree leaf per region; regions are split into pages on first touch.
 pub const MAP_REGION_BYTES: u64 = 1024 * 1024;
 
-/// Files at or below this size open eagerly (fully read + validated, current
-/// N-143 semantics). Larger files open lazily via the pager: open is O(1) in
-/// file size and files larger than RAM work.
+/// Files at or below this size open eagerly (fully read and validated).
+/// Larger files open lazily via the pager: open is O(1) in file size and
+/// files larger than RAM work.
 pub const LAZY_LOAD_THRESHOLD_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Owned leaves larger than this are split after edits (keeps leaves small
