@@ -90,7 +90,7 @@ fn raw_munmap(ptr: *mut libc::c_void, len: usize) {
 }
 
 // -- Windows veneer: hand-declared kernel32 + CRT imports (no new
-// dependency, matching the unix hand-declared `__sigsetjmp`). Only mapping
+// dependency, matching the unix hand-declared `sigsetjmp`). Only mapping
 // creation/destruction lives here; the guard's VEH trapping is in
 // `guard::os`. --
 
@@ -250,7 +250,7 @@ impl MappedRange {
 /// - Under Miri there are no real signals: installation is skipped and the
 ///   guard degrades to a pass-through (documented; fault-injection tests are
 ///   `#[cfg(not(miri))]`).
-/// - `__sigsetjmp` carries no `returns_twice` metadata: the attribute is
+/// - `sigsetjmp` carries no `returns_twice` metadata: the attribute is
 ///   unstable and unavailable on the pinned stable toolchain, so the
 ///   soundness argument is structural and must be re-checked if `guarded`
 ///   changes. What LLVM's single-return assumption could break is a local
@@ -264,7 +264,7 @@ impl MappedRange {
 ///   restores callee-saved registers to their call-time values, so the
 ///   fault path observes the same stack memory the first pass left.
 ///   Rule for future edits: no new local may be assigned between the
-///   `__sigsetjmp` call and the end of `guarded`.
+///   `sigsetjmp` call and the end of `guarded`.
 mod guard {
     use std::cell::Cell;
     #[cfg(all(unix, not(miri)))]
@@ -272,23 +272,27 @@ mod guard {
     #[cfg(not(miri))]
     use std::sync::Once;
 
-    /// Opaque storage for the jump buffer. Unix: C `sigjmp_buf` (glibc needs
-    /// 320 bytes on x86_64 and 432 on aarch64; musl needs less). Windows:
-    /// the CRT `_JUMP_BUFFER` (256 bytes on x86_64). 512 bytes at 16-byte
-    /// alignment covers all targets with margin. Rust never inspects the
-    /// contents — only the setjmp/longjmp primitives touch it.
+    /// Opaque storage for the jump buffer. Unix: C `sigjmp_buf` (glibc
+    /// needs 320 bytes on x86_64 and 432 on aarch64; FreeBSD amd64 needs
+    /// 96; musl needs less; Darwin's layout is the largest of the set).
+    /// Windows: the CRT `_JUMP_BUFFER` (256 bytes on x86_64). 1024 bytes
+    /// at 16-byte alignment covers every target with margin. Rust never
+    /// inspects the contents — only the setjmp/longjmp primitives touch
+    /// it.
     #[repr(C, align(16))]
-    struct JmpBuf([std::mem::MaybeUninit<u8>; 512]);
+    struct JmpBuf([std::mem::MaybeUninit<u8>; 1024]);
 
     // `libc` does not expose these on this platform; declared directly.
-    // Both are async-signal-safe per POSIX. Note: glibc implements
-    // `sigsetjmp` as a *macro* expanding to `__sigsetjmp` — the exported
-    // symbol is `__sigsetjmp`, so that is what we link against.
+    // Both are async-signal-safe per POSIX. The link name of the setjmp
+    // half is per-libc: glibc's header defines `sigsetjmp` as a macro
+    // expanding to `__sigsetjmp` and exports only that name; Darwin, the
+    // BSDs, and musl export the plain POSIX name.
     // Under Miri these are never called (`guarded` is a pass-through there).
     #[cfg(all(unix, not(miri)))]
     #[allow(unsafe_code)]
     unsafe extern "C" {
-        fn __sigsetjmp(env: *mut JmpBuf, savemask: libc::c_int) -> libc::c_int;
+        #[cfg_attr(all(target_os = "linux", target_env = "gnu"), link_name = "__sigsetjmp")]
+        fn sigsetjmp(env: *mut JmpBuf, savemask: libc::c_int) -> libc::c_int;
         fn siglongjmp(env: *mut JmpBuf, val: libc::c_int) -> !;
     }
 
@@ -356,7 +360,7 @@ mod guard {
         unsafe { longjmp(env, 1) }
     }
 
-    /// Checkpoint the stack for recovery. Unix: `__sigsetjmp` with
+    /// Checkpoint the stack for recovery. Unix: `sigsetjmp` with
     /// `savemask = 1`; Windows: CRT `setjmp`.
     ///
     /// SAFETY: `env` must be a live `JmpBuf` stack slot on the calling
@@ -364,7 +368,7 @@ mod guard {
     #[cfg(all(unix, not(miri)))]
     #[allow(unsafe_code)]
     fn raw_setjmp(env: *mut JmpBuf) -> libc::c_int {
-        unsafe { __sigsetjmp(env, 1) }
+        unsafe { sigsetjmp(env, 1) }
     }
 
     /// Checkpoint the stack for recovery (Windows: CRT `setjmp`).
@@ -867,7 +871,7 @@ mod guard {
             ensure_installed();
             ensure_installed();
             // Second call is a no-op (Once); reaching here is the test.
-            #[cfg(not(miri))]
+            #[cfg(all(unix, not(miri)))]
             {
                 // The handler must now be ours: query the disposition.
                 let mut cur: libc::sigaction = sigaction_zeroed();
