@@ -111,15 +111,19 @@ impl ApplicationHandler for GuiApp {
                             // Delegate resize handling to TUI
                             let resize_event =
                                 terminal::events::EditorEvent::Resize(cols as u16, rows as u16);
-                            let _ = terminal::event_handler::process_terminal_event(
+                            if let Err(e) = terminal::event_handler::process_terminal_event(
                                 &mut self.editor,
                                 &mut self.display,
                                 &mut self.keybinds,
                                 resize_event,
-                            );
+                            ) {
+                                self.editor.message = Some(format!("Error: {e}"));
+                            }
 
                             // Preload fonts for initial buffer content
-                            let _ = self.display.render(&mut self.editor);
+                            if let Err(e) = self.display.render(&mut self.editor) {
+                                self.editor.message = Some(format!("Error: {e}"));
+                            }
                             renderer.preload_fonts_for_buffer(&self.display.back_buffer);
 
                             // Pre-warm ALL chars in the document (not just viewport)
@@ -163,12 +167,14 @@ impl ApplicationHandler for GuiApp {
                     // Delegate resize handling to TUI
                     let resize_event =
                         terminal::events::EditorEvent::Resize(cols as u16, rows as u16);
-                    let _ = terminal::event_handler::process_terminal_event(
+                    if let Err(e) = terminal::event_handler::process_terminal_event(
                         &mut self.editor,
                         &mut self.display,
                         &mut self.keybinds,
                         resize_event,
-                    );
+                    ) {
+                        self.editor.message = Some(format!("Error: {e}"));
+                    }
 
                     self.dirty = true;
                 }
@@ -178,7 +184,9 @@ impl ApplicationHandler for GuiApp {
             }
             WindowEvent::RedrawRequested => {
                 if self.dirty {
-                    let _ = self.display.render(&mut self.editor);
+                    if let Err(e) = self.display.render(&mut self.editor) {
+                        self.editor.message = Some(format!("Error: {e}"));
+                    }
                     let show = self.display.show_menu_bar;
                     self.display.render_menu_bar(show);
                     self.dirty = false;
