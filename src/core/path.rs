@@ -86,13 +86,23 @@ pub fn validate_file_path(path: &Path) -> Result<PathBuf, PathError> {
     // Windows: block named pipes
     #[cfg(windows)]
     {
-        let path_str = canonical.to_string_lossy();
-        if path_str.starts_with(r"\\.\\pipe\\") || path_str.starts_with(r"\\?\pipe\\") {
+        if is_windows_pipe(&canonical) {
             return Err(PathError::BlockedFileType("Windows named pipe"));
         }
     }
 
     Ok(canonical)
+}
+
+/// Whether a canonicalized path is a Windows named pipe.
+///
+/// Separate predicate so the prefix literals are unit-testable: the
+/// filter only runs after a successful `canonicalize`, which needs a
+/// real pipe, so `validate_file_path` itself cannot pin it.
+#[cfg(windows)]
+fn is_windows_pipe(canonical: &Path) -> bool {
+    let path_str = canonical.to_string_lossy();
+    path_str.starts_with(r"\\.\pipe\") || path_str.starts_with(r"\\?\pipe\")
 }
 
 /// [`validate_file_path`] plus the existence requirement for open flows.
@@ -206,5 +216,17 @@ mod tests {
             assert!(result.is_ok());
         }
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_named_pipe_prefix_is_blocked() {
+        // Pins the pipe-prefix literals. A transcription error here (e.g.
+        // doubled backslashes in the raw strings) silently disables the
+        // filter: the prefixes would never match a real pipe path.
+        assert!(is_windows_pipe(Path::new(r"\\.\pipe\erax-test")));
+        assert!(is_windows_pipe(Path::new(r"\\?\pipe\erax-test")));
+        assert!(!is_windows_pipe(Path::new(r"C:\temp\erax-test.txt")));
+        assert!(!is_windows_pipe(Path::new("/tmp/erax-test.txt")));
     }
 }

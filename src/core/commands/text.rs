@@ -319,7 +319,7 @@ pub fn case_word_upper(app: &mut EditorApp, _count: usize) -> DispatchResult {
 
             if let Some(window_mut) = app.windows.get_mut(&active_window_id)
                 && let Some(buffer) = app.buffers.get(&buffer_id) {
-                    let (line, col) = buffer.byte_to_position( start_byte + new_text.len());
+                    let (line, col) = buffer.byte_to_position(start_byte + new_text.len());
                     window_mut.cursor_y = line;
                     window_mut.cursor_x = col;
                 }
@@ -364,7 +364,7 @@ pub fn case_word_lower(app: &mut EditorApp, _count: usize) -> DispatchResult {
 
             if let Some(window_mut) = app.windows.get_mut(&active_window_id)
                 && let Some(buffer) = app.buffers.get(&buffer_id) {
-                    let (line, col) = buffer.byte_to_position( start_byte + new_text.len());
+                    let (line, col) = buffer.byte_to_position(start_byte + new_text.len());
                     window_mut.cursor_y = line;
                     window_mut.cursor_x = col;
                 }
@@ -412,7 +412,7 @@ pub fn case_word_capitalize(app: &mut EditorApp, _count: usize) -> DispatchResul
 
             if let Some(window_mut) = app.windows.get_mut(&active_window_id)
                 && let Some(buffer) = app.buffers.get(&buffer_id) {
-                    let (line, col) = buffer.byte_to_position( start_byte + new_text.len());
+                    let (line, col) = buffer.byte_to_position(start_byte + new_text.len());
                     window_mut.cursor_y = line;
                     window_mut.cursor_x = col;
                 }
