@@ -49,7 +49,7 @@ pub fn keyboard_quit(app: &mut EditorApp, _count: usize) -> DispatchResult {
         app.universal_argument = None;
         // Clear mark if active
         if let Some(window) = app.windows.get_mut(&app.active_window) {
-            window.mark = None;
+            window.selection_manager.clear_mark();
         }
         // Clear any in-progress state
         app.message = Some("Quit".to_string());

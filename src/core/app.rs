@@ -299,7 +299,7 @@ impl EditorApp {
             return;
         };
         window.ensure_cursor_valid(buffer);
-        window.ensure_mark_valid(buffer);
+        window.selection_manager.ensure_mark_valid(buffer);
         window.update_visual_cursor(buffer);
     }
 

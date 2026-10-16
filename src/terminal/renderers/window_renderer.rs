@@ -166,10 +166,20 @@ impl WindowRenderer {
                 return 0; // Terminal buffers don't need horizontal scrollbar caching
             }
 
-        // Calculate selection range if mark is set
-        let selection = window.mark.map(|mark| {
+        // Calculate selection range if the mark is set. The mark is a
+        // byte offset; resolve it to (line, grapheme col) for the
+        // row-oriented highlight loop below.
+        let selection = window.selection_manager.mark.map(|mark_byte| {
+            let mark_line = buffer.byte_to_line(mark_byte);
+            let mark_col = buffer
+                .line_to_byte(mark_line)
+                .and_then(|ls| buffer.line(mark_line).map(|t| (ls, t)))
+                .map(|(ls, t)| {
+                    crate::core::utf8::byte_to_grapheme_col(&t, mark_byte.saturating_sub(ls))
+                })
+                .unwrap_or(0);
             let p1 = (window.cursor_y, window.cursor_x);
-            let p2 = (mark.1, mark.0);
+            let p2 = (mark_line, mark_col);
             if p1 <= p2 { (p1, p2) } else { (p2, p1) }
         });
 

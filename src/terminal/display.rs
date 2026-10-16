@@ -159,11 +159,7 @@ pub fn selection_char_count(
     window: &crate::core::window::Window,
     buffer: &crate::core::buffer::Buffer,
 ) -> Option<usize> {
-    let (mx, my) = window.mark?;
-    let mut anchor = window.clone();
-    anchor.cursor_x = mx;
-    anchor.cursor_y = my;
-    let m = anchor.get_byte_offset(buffer).unwrap_or(0);
+    let m = window.selection_manager.mark?;
     let c = window.get_byte_offset(buffer).unwrap_or(0);
     let (s, e) = (m.min(c), m.max(c));
     if s == e {
@@ -880,10 +876,11 @@ fn stamp_linewise_visual_newlines(
     buffer: &crate::core::buffer::Buffer,
     theme: &Theme,
 ) {
-    let (_, mark_y) = match window.mark {
+    let mark_byte = match window.selection_manager.mark {
         Some(m) => m,
         None => return,
     };
+    let mark_y = buffer.byte_to_line(mark_byte);
     let first = mark_y.min(window.cursor_y);
     let last = mark_y.max(window.cursor_y);
     let text_start_x = rect.x + gutter_width;
@@ -1453,7 +1450,7 @@ mod tests {
         let mut window = crate::core::window::Window::new(WindowId(0), BufferId(0), 4);
         // Linewise visual over lines 0..=1: mark at BOL of line 0, cursor at
         // EOL of line 1 (exactly what the engine sets for `V`).
-        window.mark = Some((0, 0));
+        window.selection_manager.set_mark(0);
         window.cursor_x = 3;
         window.cursor_y = 1;
         window.scroll_offset = 0;
@@ -1505,7 +1502,7 @@ mod tests {
         // No mark: no-op, nothing stamped.
         let mut display2 = Display::new(40, 10, None, None);
         let mut window2 = window.clone();
-        window2.mark = None;
+        window2.selection_manager.clear_mark();
         stamp_linewise_visual_newlines(
             &mut display2.back_buffer,
             &rect,

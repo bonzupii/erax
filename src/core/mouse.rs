@@ -125,11 +125,11 @@ impl MouseHandler {
                 window.update_visual_cursor(buffer);
                 window.ensure_cursor_visible(buffer);
 
-                // Reset selection to point
+                // The click is the mark anchor; the selection is
+                // mark↔cursor, derived. No second copy is stored.
                 if let Some(byte_pos) = window.get_byte_offset(buffer) {
-                    window
-                        .selection_manager
-                        .start_selection(byte_pos, SelectionMode::None);
+                    window.selection_manager.set_mark(byte_pos);
+                    window.selection_manager.mode = SelectionMode::None;
                 }
                 true
             }
@@ -155,13 +155,16 @@ impl MouseHandler {
         window.update_visual_cursor(buffer);
         window.ensure_cursor_visible(buffer);
 
-        // Extend selection
+        // Extend the selection: snap the drag end to the mode's
+        // boundaries and move the cursor there. The selection itself
+        // stays derived from mark↔cursor.
         if let Some(byte_pos) = window.get_byte_offset(buffer) {
             // Upgrade to character selection if we were in None mode (just started dragging)
             if window.selection_manager.mode == SelectionMode::None {
                 window.selection_manager.mode = SelectionMode::Character;
             }
-            window.selection_manager.extend_selection(byte_pos, buffer);
+            let snapped = window.selection_manager.snap_drag(byte_pos, buffer);
+            window.set_cursor_to_byte(buffer, snapped);
         }
 
         true
@@ -221,15 +224,11 @@ impl MouseHandler {
             let start_pos = line_start_byte + start_byte_offset;
             let end_pos = start_pos + len_byte_offset;
 
-            // Set selection
-            window
-                .selection_manager
-                .start_selection(start_pos, SelectionMode::Word);
-            window.selection_manager.extend_selection(end_pos, buffer);
-
-            // Move cursor to end of word
-            window.cursor_x = end;
-            window.update_visual_cursor(buffer);
+            // Mark at word start; the cursor goes to the snapped end.
+            window.selection_manager.set_mark(start_pos);
+            window.selection_manager.mode = SelectionMode::Word;
+            let snapped = window.selection_manager.snap_drag(end_pos, buffer);
+            window.set_cursor_to_byte(buffer, snapped);
         }
 
         true
@@ -246,14 +245,10 @@ impl MouseHandler {
         let (_, row) = self.screen_to_buffer_pos(x, y, window, buffer);
 
         if let Some(start_pos) = buffer.line_to_byte(row) {
-            window
-                .selection_manager
-                .start_selection(start_pos, SelectionMode::Line);
-            window.selection_manager.extend_selection(start_pos, buffer);
-
-            // Move cursor to end of line
-            window.cursor_y = row;
-            window.end_of_line(buffer);
+            window.selection_manager.set_mark(start_pos);
+            window.selection_manager.mode = SelectionMode::Line;
+            let snapped = window.selection_manager.snap_drag(start_pos, buffer);
+            window.set_cursor_to_byte(buffer, snapped);
         }
 
         true
@@ -314,7 +309,8 @@ mod tests {
 
         assert_eq!(window.cursor_y, 1);
         assert_eq!(window.cursor_x, 0);
-        assert!(!window.selection_manager.has_selection()); // Click clears selection
+        let cb = window.get_byte_offset(&buffer).unwrap();
+        assert!(!window.selection_manager.has_selection(cb)); // Click clears selection
     }
 
     #[test]
@@ -333,8 +329,9 @@ mod tests {
         handler.handle_event(&event, &mut window, &buffer);
 
         assert_eq!(window.cursor_x, 3);
-        assert!(window.selection_manager.has_selection());
-        if let Some(sel) = window.selection_manager.get_selection() {
+        let cb = window.get_byte_offset(&buffer).unwrap();
+        assert!(window.selection_manager.has_selection(cb));
+        if let Some(sel) = window.selection_manager.selection(cb) {
             assert_eq!(sel.start(), 0);
             assert_eq!(sel.end(), 3);
         } else {
@@ -350,8 +347,9 @@ mod tests {
         let event = MouseEvent::DoubleClick(1, 0);
         handler.handle_event(&event, &mut window, &buffer);
 
-        assert!(window.selection_manager.has_selection());
-        if let Some(sel) = window.selection_manager.get_selection() {
+        let cb = window.get_byte_offset(&buffer).unwrap();
+        assert!(window.selection_manager.has_selection(cb));
+        if let Some(sel) = window.selection_manager.selection(cb) {
             // "Hello" is 5 bytes. Start 0, End 5.
             assert_eq!(sel.start(), 0);
             assert_eq!(sel.end(), 5);
@@ -369,8 +367,9 @@ mod tests {
         let event = MouseEvent::TripleClick(2, 0);
         handler.handle_event(&event, &mut window, &buffer);
 
-        assert!(window.selection_manager.has_selection());
-        if let Some(sel) = window.selection_manager.get_selection() {
+        let cb = window.get_byte_offset(&buffer).unwrap();
+        assert!(window.selection_manager.has_selection(cb));
+        if let Some(sel) = window.selection_manager.selection(cb) {
             // "Hello\n" is 6 bytes
             assert_eq!(sel.start(), 0);
             assert_eq!(sel.end(), 6);

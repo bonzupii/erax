@@ -441,12 +441,8 @@ pub fn uppercase_region(app: &mut EditorApp, _count: usize) -> DispatchResult {
         if let Some(buffer_id) = buffer_id
             && let Some(window) = app.windows.get(&active_window_id)
                 && let Some(buffer) = app.buffers.get(&buffer_id) {
-                    if let Some(mark) = window.mark {
+                    if let Some(mark_byte) = window.selection_manager.mark {
                         let cursor_byte = window.get_byte_offset(buffer).unwrap_or_default();
-
-                        let mark_byte = window
-                            .get_byte_offset_at(buffer, mark.0, mark.1)
-                            .unwrap_or_default();
 
                         let (start_byte, end_byte) = if cursor_byte < mark_byte {
                             (cursor_byte, mark_byte)
@@ -486,12 +482,8 @@ pub fn lowercase_region(app: &mut EditorApp, _count: usize) -> DispatchResult {
         if let Some(buffer_id) = buffer_id
             && let Some(window) = app.windows.get(&active_window_id)
                 && let Some(buffer) = app.buffers.get(&buffer_id) {
-                    if let Some(mark) = window.mark {
+                    if let Some(mark_byte) = window.selection_manager.mark {
                         let cursor_byte = window.get_byte_offset(buffer).unwrap_or_default();
-
-                        let mark_byte = window
-                            .get_byte_offset_at(buffer, mark.0, mark.1)
-                            .unwrap_or_default();
 
                         let (start_byte, end_byte) = if cursor_byte < mark_byte {
                             (cursor_byte, mark_byte)

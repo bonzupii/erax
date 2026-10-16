@@ -2393,12 +2393,7 @@ fn cursor_byte(app: &EditorApp) -> usize {
 /// Byte offset of the mark, via a temporary window like `kill_region` does.
 fn mark_byte(app: &EditorApp) -> Option<usize> {
     let window = app.active_window_ref()?;
-    let buffer = app.active_buffer()?;
-    let (mx, my) = window.mark?;
-    let mut temp = window.clone();
-    temp.cursor_x = mx;
-    temp.cursor_y = my;
-    Some(temp.get_byte_offset(buffer).unwrap_or(0))
+    window.selection_manager.mark
 }
 
 /// Normalized (start, end) byte range of mark..cursor.
@@ -2410,7 +2405,7 @@ fn selection_bytes(app: &EditorApp) -> Option<(usize, usize)> {
 
 fn clear_mark(app: &mut EditorApp) {
     if let Some(window) = app.active_window_mut() {
-        window.mark = None;
+        window.selection_manager.clear_mark();
     }
 }
 
@@ -2992,12 +2987,8 @@ fn char_at(app: &EditorApp, byte: usize) -> Option<char> {
 
 /// Set the visual mark on a buffer byte offset.
 fn set_mark_at_byte(app: &mut EditorApp, byte: usize) {
-    let (li, col) = match app.active_buffer() {
-        Some(b) => b.byte_to_position(byte),
-        None => return,
-    };
     if let Some(window) = app.active_window_mut() {
-        window.mark = Some((col, li));
+        window.selection_manager.set_mark(byte);
     }
 }
 

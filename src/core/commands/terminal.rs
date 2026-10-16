@@ -81,11 +81,8 @@ fn text_to_send(app: &mut EditorApp) -> Option<String> {
         let window_id = app.active_window;
         let window = app.windows.get(&window_id)?;
         let buffer = app.buffers.get(&window.buffer_id)?;
-        if let Some((mx, my)) = window.mark {
+        if let Some(mark_byte) = window.selection_manager.mark {
             let cursor_byte = window.get_byte_offset(buffer).unwrap_or(0);
-            // The mark is a (grapheme col, line) pair; resolve it to a
-            // byte offset the same way the cursor is resolved.
-            let mark_byte = window.get_byte_offset_at(buffer, mx, my).unwrap_or(0);
             let (start, end) = if cursor_byte < mark_byte {
                 (cursor_byte, mark_byte)
             } else {
@@ -214,7 +211,7 @@ mod tests {
         // still execute by appending one.
         let window_id = app.active_window;
         if let Some(window) = app.windows.get_mut(&window_id) {
-            window.mark = Some((0, 0));
+            window.selection_manager.set_mark(0);
             let line_len = format!("echo {PROBE}").len();
             window.cursor_x = line_len;
         }
@@ -232,7 +229,7 @@ mod tests {
         // of line 1.
         let window_id = app.active_window;
         if let Some(window) = app.windows.get_mut(&window_id) {
-            window.mark = Some((0, 0));
+            window.selection_manager.set_mark(0);
             window.cursor_y = 1;
             window.cursor_x = format!("echo {marker_b}").chars().count();
         }

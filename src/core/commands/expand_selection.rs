@@ -23,9 +23,8 @@ pub fn mark_word(app: &mut EditorApp, _count: usize) -> DispatchResult {
 
         if let Some((start, end)) = result {
             // Set mark at word start, move cursor to word end
-            app.goto_byte(start);
             if let Some(window) = app.active_window_mut() {
-                window.mark = Some((window.cursor_x, window.cursor_y));
+                window.selection_manager.set_mark(start);
             }
             app.goto_byte(end);
             DispatchResult::Info("Word marked".to_string())
@@ -45,9 +44,8 @@ pub fn mark_line(app: &mut EditorApp, _count: usize) -> DispatchResult {
             }
         };
         if let Some((start, end)) = result {
-            app.goto_byte(start);
             if let Some(window) = app.active_window_mut() {
-                window.mark = Some((window.cursor_x, window.cursor_y));
+                window.selection_manager.set_mark(start);
             }
             app.goto_byte(end);
             DispatchResult::Info("Line marked".to_string())
@@ -67,9 +65,8 @@ pub fn mark_paragraph(app: &mut EditorApp, _count: usize) -> DispatchResult {
             }
         };
         if let Some((start, end)) = result {
-            app.goto_byte(start);
             if let Some(window) = app.active_window_mut() {
-                window.mark = Some((window.cursor_x, window.cursor_y));
+                window.selection_manager.set_mark(start);
             }
             app.goto_byte(end);
             DispatchResult::Info("Paragraph marked".to_string())
@@ -85,7 +82,7 @@ pub fn mark_paragraph(app: &mut EditorApp, _count: usize) -> DispatchResult {
 pub fn mark_whole_buffer(app: &mut EditorApp, _count: usize) -> DispatchResult {
     app.goto_byte(0);
     if let Some(window) = app.active_window_mut() {
-        window.mark = Some((window.cursor_x, window.cursor_y));
+        window.selection_manager.set_mark(0);
     }
     if let Some(buffer) = app.active_buffer() {
         let end = buffer.len();
@@ -245,7 +242,8 @@ fn current_expansion_level(
     window: &crate::core::window::Window,
     buffer: &crate::core::buffer::Buffer,
 ) -> ExpansionLevel {
-    let selection = match window.selection_manager.get_selection() {
+    let cursor_byte = window.get_byte_offset(buffer).unwrap_or(0);
+    let selection = match window.selection_manager.selection(cursor_byte) {
         Some(s) => s,
         None => return ExpansionLevel::None,
     };
@@ -295,9 +293,8 @@ fn apply_expansion_level(app: &mut EditorApp, level: ExpansionLevel) -> Dispatch
                 }
             };
             if let Some((start, end)) = result {
-                app.goto_byte(start);
                 if let Some(w) = app.active_window_mut() {
-                    w.mark = Some((w.cursor_x, w.cursor_y));
+                    w.selection_manager.set_mark(start);
                 }
                 app.goto_byte(end);
             }
@@ -307,9 +304,8 @@ fn apply_expansion_level(app: &mut EditorApp, level: ExpansionLevel) -> Dispatch
             // Select entire buffer
             if let Some(buffer) = app.active_buffer() {
                 let len = buffer.len();
-                app.goto_byte(0);
                 if let Some(w) = app.active_window_mut() {
-                    w.mark = Some((w.cursor_x, w.cursor_y));
+                    w.selection_manager.set_mark(0);
                 }
                 app.goto_byte(len);
             }

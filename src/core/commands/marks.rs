@@ -6,38 +6,58 @@ use crate::core::app::EditorApp;
 use crate::core::dispatcher::DispatchResult;
 
 pub fn set_mark(app: &mut EditorApp, _count: usize) -> DispatchResult {
-        if let Some(window) = app.active_window_mut() {
-            window.mark = Some((window.cursor_x, window.cursor_y));
-            DispatchResult::Info("Mark set".to_string())
-        } else {
-            DispatchResult::Success
+        let active_window_id = app.active_window;
+        if let Some(window) = app.windows.get(&active_window_id) {
+            let buffer_id = window.buffer_id;
+            if let Some(buffer) = app.buffers.get(&buffer_id)
+                && let Some(byte_pos) = window.get_byte_offset(buffer) {
+                    if let Some(window) = app.windows.get_mut(&active_window_id) {
+                        window.selection_manager.set_mark(byte_pos);
+                    }
+                    return DispatchResult::Info("Mark set".to_string());
+                }
         }
+        DispatchResult::Success
     }
 
 pub fn exchange_point_and_mark(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let active_window_id = app.active_window;
-
-        if let Some(window) = app.windows.get_mut(&active_window_id) {
-            if let Some(mark) = window.mark {
-                let current = (window.cursor_x, window.cursor_y);
-
-                // Swap
-                window.cursor_x = mark.0;
-                window.cursor_y = mark.1;
-                window.mark = Some(current);
-
-                let buffer_id = window.buffer_id;
-
-                if let Some(buffer) = app.buffers.get(&buffer_id) {
-                    window.update_visual_cursor(buffer);
-                    window.ensure_cursor_visible(buffer);
-                }
+        // Gather the cursor byte without holding borrows.
+        let cursor_byte: Option<usize> = app
+            .windows
+            .get(&active_window_id)
+            .and_then(|w| {
+                app.buffers
+                    .get(&w.buffer_id)
+                    .and_then(|b| w.get_byte_offset(b))
+            });
+        let Some(cursor_byte) = cursor_byte else {
+            return DispatchResult::Info("No active window".to_string());
+        };
+        let old_mark = app
+            .windows
+            .get_mut(&active_window_id)
+            .and_then(|w| w.selection_manager.exchange_point_and_mark(cursor_byte));
+        match old_mark {
+            Some(mark_byte) => {
+                // Move the cursor to the old mark byte.
+                if let Some(window) = app.windows.get_mut(&active_window_id)
+                    && let Some(buffer) = app.buffers.get(&window.buffer_id) {
+                        let line = buffer.byte_to_line(mark_byte);
+                        window.cursor_y = line;
+                        if let Some(line_start) = buffer.line_to_byte(line)
+                            && let Some(line_text) = buffer.line(line) {
+                                window.cursor_x = crate::core::utf8::byte_to_grapheme_col(
+                                    &line_text,
+                                    mark_byte.saturating_sub(line_start),
+                                );
+                            }
+                        window.update_visual_cursor(buffer);
+                        window.ensure_cursor_visible(buffer);
+                    }
                 DispatchResult::Success
-            } else {
-                DispatchResult::Info("No mark set".to_string())
             }
-        } else {
-            DispatchResult::Info("No active window".to_string())
+            None => DispatchResult::Info("No mark set".to_string()),
         }
     }
 
@@ -64,11 +84,8 @@ pub fn kill_region_in_model(
             let active_window_id = app.active_window;
             if let Some(window) = app.windows.get(&active_window_id) {
                 if let Some(buffer) = app.buffers.get(&window.buffer_id) {
-                    if let Some((mx, my)) = window.mark {
+                    if let Some(mark_byte) = window.selection_manager.mark {
                         let cursor_byte = window.get_byte_offset(buffer).unwrap_or_default();
-
-                        let mark_byte =
-                            window.get_byte_offset_at(buffer, mx, my).unwrap_or_default();
 
                         let (s, e) = if cursor_byte < mark_byte {
                             (cursor_byte, mark_byte)
@@ -166,11 +183,8 @@ pub fn copy_region_in_model(
             let buffer_opt = app.active_buffer();
 
             if let (Some(window_ref), Some(buffer_ref)) = (window_opt, buffer_opt) {
-                if let Some((mx, my)) = window_ref.mark {
+                if let Some(mark_byte) = window_ref.selection_manager.mark {
                     let cursor_byte = window_ref.get_byte_offset(buffer_ref).unwrap_or_default();
-                    let mark_byte = window_ref
-                        .get_byte_offset_at(buffer_ref, mx, my)
-                        .unwrap_or_default();
 
                     let (start_b, end_b) = if cursor_byte < mark_byte {
                         (cursor_byte, mark_byte)
@@ -216,9 +230,18 @@ pub fn copy_region_in_model(
 /// Returns the window ID for the caller to move.
 fn ensure_selection_anchor(app: &mut EditorApp) {
     let active_window_id = app.active_window;
-    if let Some(window) = app.windows.get_mut(&active_window_id)
-        && window.mark.is_none() {
-            window.mark = Some((window.cursor_x, window.cursor_y));
+    // Gather the cursor byte without holding the window borrow.
+    let cursor_byte: Option<usize> = app
+        .windows
+        .get(&active_window_id)
+        .and_then(|w| {
+            app.buffers
+                .get(&w.buffer_id)
+                .and_then(|b| w.get_byte_offset(b))
+        });
+    if let (Some(byte), Some(window)) = (cursor_byte, app.windows.get_mut(&active_window_id))
+        && window.selection_manager.mark.is_none() {
+            window.selection_manager.set_mark(byte);
         }
 }
 
@@ -273,16 +296,15 @@ pub fn delete_active_selection(app: &mut EditorApp) -> bool {
             (Some(w), Some(b)) => (w, b),
             _ => return false,
         };
-        let (mx, my) = match window.mark {
+        let mark_byte = match window.selection_manager.mark {
             Some(m) => m,
             None => return false,
         };
+        let cursor_byte = window.get_byte_offset(buffer).unwrap_or(0);
         // Empty selection (mark == cursor): just clear the mark.
-        if (mx, my) == (window.cursor_x, window.cursor_y) {
+        if mark_byte == cursor_byte {
             return false;
         }
-        let cursor_byte = window.get_byte_offset(buffer).unwrap_or(0);
-        let mark_byte = window.get_byte_offset_at(buffer, mx, my).unwrap_or(0);
         let (s, e) = if cursor_byte < mark_byte {
             (cursor_byte, mark_byte)
         } else {
@@ -294,7 +316,7 @@ pub fn delete_active_selection(app: &mut EditorApp) -> bool {
     if start_byte == end_byte {
         // Clear the mark even for empty selections.
         if let Some(window) = app.windows.get_mut(&app.active_window) {
-            window.mark = None;
+            window.selection_manager.clear_mark();
         }
         return false;
     }
@@ -314,7 +336,7 @@ pub fn delete_active_selection(app: &mut EditorApp) -> bool {
                     window.cursor_x =
                         crate::core::utf8::byte_to_grapheme_col(&line_text, byte_offset);
                 }
-            window.mark = None;
+            window.selection_manager.clear_mark();
             window.update_visual_cursor(buffer);
             window.ensure_cursor_visible(buffer);
         }

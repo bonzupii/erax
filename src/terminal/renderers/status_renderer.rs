@@ -384,7 +384,7 @@ mod tests {
             let w = app.active_window_mut().unwrap();
             w.cursor_x = 5;
             w.cursor_y = 0;
-            w.mark = Some((2, 0));
+            w.selection_manager.set_mark(2);
         }
         let window = app.active_window_ref().unwrap();
         let buffer = app.active_buffer().unwrap();
@@ -409,7 +409,7 @@ mod tests {
         // No selection: plain readout.
         {
             let w = app.active_window_mut().unwrap();
-            w.mark = None;
+            w.selection_manager.clear_mark();
         }
         let window = app.active_window_ref().unwrap();
         let buffer = app.active_buffer().unwrap();

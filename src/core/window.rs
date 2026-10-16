@@ -28,8 +28,6 @@ pub struct Window {
     pub width: usize,
     /// Viewport height (rows)
     pub height: usize,
-    /// Mark (x, y) for region operations
-    pub mark: Option<(usize, usize)>,
     /// Tab width for this window
     pub tab_width: usize,
     /// Selection manager for this window
@@ -54,7 +52,6 @@ impl Window {
             scroll_x: 0,
             width: 80,
             height: 24,
-            mark: None,
             tab_width,
             selection_manager: SelectionManager::new(),
             cached_content_width: 0,
@@ -111,6 +108,21 @@ impl Window {
             self.ensure_cursor_visible(buffer);
         }
         moved
+    }
+
+    /// Move the cursor to a buffer byte offset.
+    pub fn set_cursor_to_byte(&mut self, buffer: &Buffer, byte: usize) {
+        let line = buffer.byte_to_line(byte);
+        self.cursor_y = line;
+        if let Some(line_start) = buffer.line_to_byte(line)
+            && let Some(line_text) = buffer.line(line) {
+                self.cursor_x = crate::core::utf8::byte_to_grapheme_col(
+                    &line_text,
+                    byte.saturating_sub(line_start),
+                );
+            }
+        self.update_visual_cursor(buffer);
+        self.ensure_cursor_visible(buffer);
     }
 
     /// Move cursor down one line
@@ -333,30 +345,6 @@ impl Window {
         } else {
             self.cursor_x = 0;
         }
-    }
-
-    /// Ensure the mark is within valid bounds
-    ///
-    /// The mark names a buffer position; a mutation can delete the line
-    /// it sat on. A mark that no longer resolves is dropped rather than
-    /// left pointing at stale coordinates: readers (region commands,
-    /// the semantic snapshot) must never see a mark that does not name
-    /// a real position.
-    pub fn ensure_mark_valid(&mut self, buffer: &Buffer) {
-        let Some((mx, my)) = self.mark else {
-            return;
-        };
-        let line_count = buffer.line_count();
-        if line_count == 0 {
-            self.mark = None;
-            return;
-        }
-        let my = my.min(line_count.saturating_sub(1));
-        let mx = match buffer.line(my) {
-            Some(line_text) => mx.min(crate::core::utf8::grapheme_count(&line_text)),
-            None => 0,
-        };
-        self.mark = Some((mx, my));
     }
 
     /// Ensure cursor is visible in viewport (scroll only at edges)

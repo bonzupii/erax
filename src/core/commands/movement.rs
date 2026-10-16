@@ -5,15 +5,6 @@ use crate::core::buffer::Buffer;
 use crate::core::dispatcher::DispatchResult;
 use crate::core::window::Window;
 
-/// Helper to update selection after cursor movement
-fn update_selection(window: &mut Window, buffer: &Buffer) {
-    // If a selection is active (even if empty/point), extend it to the new cursor position
-    if window.selection_manager.primary.is_some()
-        && let Some(byte_pos) = window.get_byte_offset(buffer) {
-            window.selection_manager.extend_selection(byte_pos, buffer);
-        }
-}
-
 /// Helper to execute a movement command with the standard boilerplate pattern.
 /// Reduces duplication across all movement commands.
 fn execute_movement<F>(app: &mut EditorApp, count: usize, movement_fn: F) -> DispatchResult
@@ -34,7 +25,6 @@ where
                 // O(distance), not O(count).
                 let before = window.get_byte_offset(buffer);
                 movement_fn(window, buffer);
-                update_selection(window, buffer);
                 if window.get_byte_offset(buffer) == before {
                     break;
                 }
@@ -131,8 +121,7 @@ pub fn forward_page(app: &mut EditorApp, _count: usize) -> DispatchResult {
                     for _ in 0..page_size {
                         window.move_down(buffer);
                     }
-                    update_selection(window, buffer);
-                    // Edge-triggered scroll will handle viewport adjustment
+                        // Edge-triggered scroll will handle viewport adjustment
                     window.ensure_cursor_visible(buffer);
                 }
         DispatchResult::Success
@@ -150,8 +139,7 @@ pub fn backward_page(app: &mut EditorApp, _count: usize) -> DispatchResult {
                     for _ in 0..page_size {
                         window.move_up(buffer);
                     }
-                    update_selection(window, buffer);
-                    // Edge-triggered scroll will handle viewport adjustment
+                        // Edge-triggered scroll will handle viewport adjustment
                     window.ensure_cursor_visible(buffer);
                 }
         DispatchResult::Success
@@ -213,8 +201,7 @@ pub fn forward_paragraph(app: &mut EditorApp, count: usize) -> DispatchResult {
                             window.cursor_x = 0;
                             window.update_visual_cursor(buffer);
                         }
-                        update_selection(window, buffer);
-                    }
+                            }
                 if app
                     .windows
                     .get(&active_window_id)
@@ -281,8 +268,7 @@ pub fn backward_paragraph(app: &mut EditorApp, count: usize) -> DispatchResult {
                         window.cursor_y = y;
                         window.cursor_x = 0;
                         window.update_visual_cursor(buffer);
-                        update_selection(window, buffer);
-                        window.ensure_cursor_visible(buffer);
+                                window.ensure_cursor_visible(buffer);
                     }
                 if app
                     .windows
@@ -356,7 +342,6 @@ fn place_window_at_byte(window: &mut Window, buffer: &Buffer, byte: usize) {
     window.cursor_y = li;
     window.cursor_x = col;
     window.update_visual_cursor(buffer);
-    update_selection(window, buffer);
     window.ensure_cursor_visible(buffer);
 }
 

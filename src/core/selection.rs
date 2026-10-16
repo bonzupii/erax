@@ -180,15 +180,18 @@ pub enum SelectionMode {
 // SELECTION MANAGER
 // =============================================================================
 
-/// Manages selections for a window
+/// The single authority for mark and selection state in a window.
+///
+/// The mark is a byte offset; the selection is always mark↔cursor,
+/// derived at read time. Nothing stores a second copy, so the two
+/// cannot disagree: keyboard and mouse both write the mark, and every
+/// reader derives the selection from the same field.
 #[derive(Debug, Default, Clone)]
 pub struct SelectionManager {
-    /// Primary selection
-    pub primary: Option<Selection>,
-    /// Selection mode
-    pub mode: SelectionMode,
-    /// Mark position
+    /// Mark position as a byte offset.
     pub mark: Option<usize>,
+    /// Selection mode for mouse-drag snapping.
+    pub mode: SelectionMode,
 }
 
 impl SelectionManager {
@@ -197,100 +200,30 @@ impl SelectionManager {
         Self::default()
     }
 
-    /// Check if there's an active selection
-    pub fn has_selection(&self) -> bool {
-        match self.primary {
-            Some(s) => !s.is_empty(),
-            None => false,
-        }
-    }
-
-    /// Get the current selection
-    pub fn get_selection(&self) -> Option<&Selection> {
-        self.primary.as_ref().filter(|s| !s.is_empty())
-    }
-
-    /// Start a selection at the given position
-    pub fn start_selection(&mut self, pos: usize, mode: SelectionMode) {
-        self.primary = Some(Selection::point(pos));
-        self.mode = mode;
-    }
-
-    /// Extend the current selection to a new position (respecting selection mode)
-    pub fn extend_selection(&mut self, pos: usize, buffer: &crate::core::buffer::Buffer) {
-        let raw_cursor = pos;
-
-        // If no selection exists, start one (point)
-        if self.primary.is_none() {
-            self.primary = Some(Selection::point(pos));
-            return;
-        }
-
-        // Calculate final cursor position based on mode
-        let final_cursor = {
-            let sel = match self.primary.as_ref() {
-                Some(s) => s,
-                None => return,
-            };
-            let anchor = sel.anchor;
-
-            match self.mode {
-                SelectionMode::Character | SelectionMode::None | SelectionMode::Rectangle => {
-                    raw_cursor
-                }
-                SelectionMode::Word => {
-                    // Snap to word boundaries
-                    let (w_start, w_end) = Self::find_word_boundaries(buffer, raw_cursor);
-
-                    if raw_cursor >= anchor {
-                        w_end // Dragging forward: end of word
-                    } else {
-                        w_start // Dragging backward: start of word
-                    }
-                }
-                SelectionMode::Line => {
-                    let line_idx = buffer.byte_to_line(raw_cursor);
-
-                    if raw_cursor >= anchor {
-                        // Dragging forward: include full line (end including newline)
-                        let start_pos = buffer.line_to_byte(line_idx).unwrap_or_default();
-                        let len = buffer.line_len(line_idx).unwrap_or_default();
-                        start_pos + len
-                    } else {
-                        // Dragging backward: include start of line
-                        buffer.line_to_byte(line_idx).unwrap_or_default()
-                    }
-                }
-            }
-        };
-
-        if let Some(ref mut sel) = self.primary {
-            sel.extend_to(final_cursor);
-        }
-    }
-
-    /// Clear the selection
-    pub fn clear_selection(&mut self) {
-        self.primary = None;
-        self.mode = SelectionMode::None;
-    }
-
-    /// Set the mark
+    /// Set the mark to a byte offset.
     pub fn set_mark(&mut self, pos: usize) {
         self.mark = Some(pos);
     }
 
-    /// Clear the mark
+    /// Clear the mark and reset the drag mode.
     pub fn clear_mark(&mut self) {
         self.mark = None;
+        self.mode = SelectionMode::None;
     }
 
-    /// Get the region between mark and cursor
-    pub fn get_region(&self, cursor: usize) -> Option<Selection> {
-        self.mark.map(|mark| Selection::new(mark, cursor))
+    /// Whether mark and cursor name a non-empty range.
+    pub fn has_selection(&self, cursor_byte: usize) -> bool {
+        self.mark.is_some_and(|m| m != cursor_byte)
     }
 
-    /// Exchange point and mark
+    /// The selection as a byte range, derived from mark and cursor.
+    pub fn selection(&self, cursor_byte: usize) -> Option<Selection> {
+        self.mark
+            .map(|m| Selection::new(m, cursor_byte))
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Exchange point and mark, returning the old mark byte.
     pub fn exchange_point_and_mark(&mut self, cursor: usize) -> Option<usize> {
         if let Some(mark) = self.mark {
             self.mark = Some(cursor);
@@ -300,28 +233,57 @@ impl SelectionManager {
         }
     }
 
-    /// Adjust selection after text insertion
-    pub fn adjust_for_insert(&mut self, insert_pos: usize, insert_len: usize) {
-        if let Some(ref mut sel) = self.primary {
-            sel.adjust_for_insert(insert_pos, insert_len);
-        }
-        if let Some(ref mut mark) = self.mark
-            && insert_pos <= *mark {
-                *mark += insert_len;
+    /// Clamp the mark to the buffer: a mutation can delete the bytes
+    /// it named. Runs in the reconciliation seam, so readers never see
+    /// a mark past the end of the buffer.
+    pub fn ensure_mark_valid(&mut self, buffer: &crate::core::buffer::Buffer) {
+        if let Some(mark) = self.mark {
+            let len = buffer.len();
+            if mark > len {
+                self.mark = Some(len);
             }
+        }
     }
 
-    /// Adjust selection after text deletion
-    pub fn adjust_for_delete(&mut self, delete_start: usize, delete_len: usize) {
-        if let Some(ref mut sel) = self.primary {
-            sel.adjust_for_delete(delete_start, delete_len);
-        }
-        if let Some(ref mut mark) = self.mark {
-            let delete_end = delete_start + delete_len;
-            if delete_end <= *mark {
-                *mark -= delete_len;
-            } else if delete_start < *mark {
-                *mark = delete_start;
+    /// Snap a drag cursor byte to the mode's boundaries, relative to
+    /// the mark anchor. Replaces the old extend-selection: the window
+    /// cursor moves to the returned byte and the selection derives
+    /// from mark↔cursor as always.
+    pub fn snap_drag(
+        &self,
+        raw_cursor: usize,
+        buffer: &crate::core::buffer::Buffer,
+    ) -> usize {
+        let anchor = match self.mark {
+            Some(m) => m,
+            None => return raw_cursor,
+        };
+        match self.mode {
+            SelectionMode::Character | SelectionMode::None | SelectionMode::Rectangle => {
+                raw_cursor
+            }
+            SelectionMode::Word => {
+                // Snap to word boundaries
+                let (w_start, w_end) = Self::find_word_boundaries(buffer, raw_cursor);
+
+                if raw_cursor >= anchor {
+                    w_end // Dragging forward: end of word
+                } else {
+                    w_start // Dragging backward: start of word
+                }
+            }
+            SelectionMode::Line => {
+                let line_idx = buffer.byte_to_line(raw_cursor);
+
+                if raw_cursor >= anchor {
+                    // Dragging forward: include full line (end including newline)
+                    let start_pos = buffer.line_to_byte(line_idx).unwrap_or_default();
+                    let len = buffer.line_len(line_idx).unwrap_or_default();
+                    start_pos + len
+                } else {
+                    // Dragging backward: include start of line
+                    buffer.line_to_byte(line_idx).unwrap_or_default()
+                }
             }
         }
     }
@@ -480,20 +442,23 @@ mod tests {
 
     #[test]
     fn test_selection_manager() {
+        // The selection is mark↔cursor, derived: set the mark, then the
+        // cursor byte names the range. No second stored copy exists.
         let mut mgr = SelectionManager::new();
-        let buffer = crate::core::buffer::Buffer::new(); // Empty buffer is fine for Character mode
-        assert!(!mgr.has_selection());
+        assert!(!mgr.has_selection(20));
 
-        mgr.start_selection(10, SelectionMode::Character);
-        mgr.extend_selection(20, &buffer);
-
-        assert!(mgr.has_selection());
-        if let Some(sel) = mgr.get_selection() {
+        mgr.set_mark(10);
+        assert!(!mgr.has_selection(10));
+        assert!(mgr.has_selection(20));
+        if let Some(sel) = mgr.selection(20) {
             assert_eq!(sel.start(), 10);
             assert_eq!(sel.end(), 20);
         } else {
             panic!("Expected selection");
         }
+        mgr.clear_mark();
+        assert!(!mgr.has_selection(20));
+        assert!(mgr.selection(20).is_none());
     }
 
     #[test]
@@ -501,7 +466,7 @@ mod tests {
         let mut mgr = SelectionManager::new();
         mgr.set_mark(10);
 
-        let region = mgr.get_region(25);
+        let region = mgr.selection(25);
         assert!(region.is_some());
         if let Some(region) = region {
             assert_eq!(region.start(), 10);
@@ -509,5 +474,18 @@ mod tests {
         } else {
             panic!("Expected region");
         }
+    }
+
+    #[test]
+    fn test_ensure_mark_valid_clamps_to_buffer() {
+        let mut buffer = crate::core::buffer::Buffer::new();
+        buffer.insert(0, "hello");
+        let mut mgr = SelectionManager::new();
+        mgr.set_mark(999);
+        mgr.ensure_mark_valid(&buffer);
+        assert_eq!(mgr.mark, Some(5));
+        mgr.set_mark(3);
+        mgr.ensure_mark_valid(&buffer);
+        assert_eq!(mgr.mark, Some(3));
     }
 }

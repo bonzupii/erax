@@ -260,18 +260,17 @@ pub fn capture(app: &EditorApp) -> Option<DocumentSnapshot<'_>> {
         byte,
     };
 
+    // One authority: the selection derives from the manager's mark
+    // and the cursor. The mark byte needs no conversion.
     let selection = window
         .selection_manager
-        .get_selection()
-        .filter(|s| !s.is_empty())
+        .selection(byte)
         .map(|s| ByteRange {
             start: s.start(),
             end: s.end(),
         });
 
-    let mark = window
-        .mark
-        .map(|(x, y)| window.get_byte_offset_at(buffer, x, y).unwrap_or(0));
+    let mark = window.selection_manager.mark;
 
     let mut annotations = Vec::new();
     // Diagnostics: derived from the buffer's diagnostic list at
@@ -396,10 +395,10 @@ pub fn capture_summary(app: &EditorApp) -> Option<SnapshotSummary> {
     let window = app.windows.get(&app.active_window)?;
     let buffer = app.buffers.get(&window.buffer_id)?;
     let diagnostics = diagnostic_summary(buffer);
+    let cursor_byte = window.get_byte_offset(buffer).unwrap_or(0);
     let selection_bytes = window
         .selection_manager
-        .get_selection()
-        .filter(|s| !s.is_empty())
+        .selection(cursor_byte)
         .map(|s| s.end() - s.start())
         .unwrap_or(0);
     Some(SnapshotSummary {

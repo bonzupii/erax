@@ -415,27 +415,10 @@ pub fn process_terminal_event(
 
                                 let mouse_handler = MouseHandler::new();
                                 if mouse_handler.handle_event(&evt, window, buffer) {
+                                    // The mouse writes the mark directly; the
+                                    // selection derives from it. No sync step:
+                                    // there is only one copy of the state.
                                     display.dirty = true;
-
-                                    // Sync window.mark from selection_manager for rendering compatibility
-                                    if let Some(sel) = window.selection_manager.get_selection() {
-                                        // The mark is the anchor of the selection
-                                        let anchor_byte = sel.anchor;
-                                        let line = buffer.byte_to_line(anchor_byte);
-                                        if let Some(line_start) = buffer.line_to_byte(line) {
-                                            let col_byte = anchor_byte.saturating_sub(line_start);
-                                            if let Some(line_text) = buffer.line(line) {
-                                                let col = crate::core::utf8::byte_to_grapheme_col(
-                                                    &line_text, col_byte,
-                                                );
-                                                window.mark = Some((col, line));
-                                            } else {
-                                                window.mark = Some((0, line));
-                                            }
-                                        }
-                                    } else {
-                                        window.mark = None;
-                                    }
                                 }
                             }
                         }
