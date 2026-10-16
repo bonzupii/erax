@@ -66,7 +66,7 @@ pub fn delete_previous_character(app: &mut EditorApp, count: usize) -> DispatchR
 /// [`InputModel`] to exercise model-specific paths.
 pub fn delete_previous_character_in_model(
         app: &mut EditorApp,
-        _count: usize,
+        count: usize,
         model: InputModel,
 ) -> DispatchResult {
         // Standard mode: Backspace with an active selection deletes it first.
@@ -80,7 +80,9 @@ pub fn delete_previous_character_in_model(
         if let Some(buffer_id) = buffer_id
             && let Some(window) = app.windows.get_mut(&active_window_id)
                 && let Some(buffer) = app.buffers.get_mut(&buffer_id) {
-                    window.delete_char(buffer, true);
+                    for _ in 0..count.max(1) {
+                        window.delete_char(buffer, true);
+                    }
                 }
         DispatchResult::Success
     }
@@ -101,7 +103,7 @@ pub fn delete_next_character(app: &mut EditorApp, count: usize) -> DispatchResul
 /// [`InputModel`] to exercise model-specific paths.
 pub fn delete_next_character_in_model(
         app: &mut EditorApp,
-        _count: usize,
+        count: usize,
         model: InputModel,
 ) -> DispatchResult {
         // Standard mode: Delete with an active selection deletes it first.
@@ -115,7 +117,9 @@ pub fn delete_next_character_in_model(
         if let Some(buffer_id) = buffer_id
             && let Some(window) = app.windows.get_mut(&active_window_id)
                 && let Some(buffer) = app.buffers.get_mut(&buffer_id) {
-                    window.delete_char(buffer, false);
+                    for _ in 0..count.max(1) {
+                        window.delete_char(buffer, false);
+                    }
                 }
         DispatchResult::Success
     }
