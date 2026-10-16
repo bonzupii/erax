@@ -184,6 +184,12 @@ pub fn process_terminal_event(
         EditorEvent::Resize(cols, rows) => {
             display.update_size(cols, rows);
 
+            // Keep the PTY dimensions in sync: a terminal spawned at the
+            // old size would otherwise keep its stale grid.
+            if let Some(host) = app.terminal_host.as_mut() {
+                host.resize(cols, rows);
+            }
+
             // The unified frame is the single writer of window dimensions:
             // scroll and clamp logic reads fresh text areas after any
             // resize, split, or split-growth change.

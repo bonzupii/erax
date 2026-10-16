@@ -8,9 +8,8 @@ use std::path::PathBuf;
 pub fn spawn_terminal(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let shell = crate::config::editor::SHELL;
 
-        // Initial dimensions - will be updated by renderer/resize
-        let cols = 80;
-        let rows = 24;
+        // Spawn at the actual terminal size, not a hardcoded 80x24.
+        let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
 
         match TerminalHost::spawn(shell, cols, rows) {
             Ok(host) => {
