@@ -15,7 +15,7 @@ use crossterm::{
     terminal::{Clear, ClearType},
 };
 
-use crate::terminal::capabilities::DisplayMode;
+use crate::cli::ColorMode;
 use crate::terminal::color::Color;
 use crate::terminal::display::Display;
 
@@ -79,12 +79,12 @@ pub fn render_display<W: Write>(
 
             // Resolve colors for the display mode; Ascii emits no color (N-110).
             let (fg, bg) = match display.display_mode {
-                DisplayMode::TrueColor => (new_cell.fg, new_cell.bg),
-                DisplayMode::Ansi => (
+                ColorMode::TrueColor => (new_cell.fg, new_cell.bg),
+                ColorMode::Ansi16 => (
                     new_cell.fg.to_ansi_fallback(),
                     new_cell.bg.to_ansi_fallback(),
                 ),
-                DisplayMode::Ascii => (Color::Reset, Color::Reset),
+                ColorMode::Mono => (Color::Reset, Color::Reset),
             };
             let fg_term: CrosstermColor = fg.to_crossterm();
             let bg_term: CrosstermColor = bg.to_crossterm();

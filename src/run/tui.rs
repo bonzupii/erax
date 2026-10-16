@@ -45,11 +45,7 @@ pub fn run_terminal_mode(
     let mut display =
         terminal::display::Display::new_terminal(inv.theme, inv.wrap).map_err(TuiError::TerminalSize)?;
     // The CLI color mode decides the display's color capability.
-    display.display_mode = match color_mode {
-        ColorMode::TrueColor => terminal::capabilities::DisplayMode::TrueColor,
-        ColorMode::Ansi16 => terminal::capabilities::DisplayMode::Ansi,
-        ColorMode::Mono => terminal::capabilities::DisplayMode::Ascii,
-    };
+    display.display_mode = color_mode;
     {
         // Window dimensions come from the unified frame, the same source
         // the renderer and the resize handler use.

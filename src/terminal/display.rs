@@ -2,7 +2,7 @@
 use crate::core::app::EditorApp;
 use crate::core::spell::SpellChecker;
 use crate::core::syntax::SyntaxHighlighter;
-use crate::terminal::capabilities::DisplayMode;
+use crate::cli::ColorMode;
 use crate::terminal::prompt::PromptState;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -250,7 +250,7 @@ pub struct Display {
     /// Software mouse cursor position (for TTYs)
     pub mouse_cursor: Option<(u16, u16)>,
     /// Display mode (TrueColor, Ansi, Ascii) for color fallback
-    pub display_mode: DisplayMode,
+    pub display_mode: ColorMode,
     /// One frame of prompt-bar screen-model state (N-273/D6): bar ownership,
     /// mode segment, pending keys, command line. Rebuilt from backend state
     /// every frame in [`Display::render`].
@@ -309,7 +309,7 @@ impl Display {
             menu_bar: crate::core::menu::MenuBar::default(),
             show_menu_bar: true,
             mouse_cursor: None,
-            display_mode: DisplayMode::detect(),
+            display_mode: ColorMode::detect(),
             bar: BarState::empty(),
             cursor_style: CursorStyle::Default,
             cursor_style_touched: false,

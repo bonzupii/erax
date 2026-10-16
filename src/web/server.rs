@@ -608,7 +608,7 @@ fn handle_websocket(
     let mut app = EditorApp::initialize(files);
     let mut display = crate::terminal::display::Display::new(width, height, theme, wrap);
     // WebUI renders with full color (the client does its own styling).
-    display.display_mode = crate::terminal::capabilities::DisplayMode::TrueColor;
+    display.display_mode = crate::cli::ColorMode::TrueColor;
 
     // Initial full render.
     display
