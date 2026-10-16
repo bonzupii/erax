@@ -700,9 +700,6 @@ impl Display {
 
         // Click in dropdown area
         if self.menu_bar.is_open() {
-            #[cfg(debug_assertions)]
-            eprintln!("Menu is open, checking dropdown click at x={}, y={}", x, y);
-
             if let Some(active_idx) = self.menu_bar.active_menu {
                 let layout = self.menu_bar.layout();
                 if let Some((_, menu_x, _)) = layout.get(active_idx) {
@@ -1291,6 +1288,45 @@ mod tests {
             .get(2, 1)
             .expect("dropdown item cell");
         assert_eq!(cell.role, CellRole::MenuItem);
+    }
+
+    #[test]
+    fn test_disabled_menu_entry_cannot_be_clicked_or_hovered() {
+        use crate::core::command::Command;
+        use crate::core::menu::{Menu, MenuBar, MenuItem};
+        let mut display = Display::new(80, 24, None, None);
+        let menu = Menu::new(
+            "File",
+            vec![
+                MenuItem::Action {
+                    command: Command::SaveBuffer,
+                    enabled: false,
+                },
+                MenuItem::Action {
+                    command: Command::FindFile,
+                    enabled: true,
+                },
+            ],
+        );
+        display.menu_bar = MenuBar {
+            menus: vec![menu],
+            active_menu: None,
+        };
+        display.show_menu_bar = true;
+        display.menu_bar.open_menu(0);
+        let (_, menu_x, _) = display.menu_bar.layout()[0];
+        // Disabled entries are not painted, so painted row 0 is the
+        // enabled entry: hover must resolve to its item index (1), not
+        // the painted row.
+        display.menu_handle_move(menu_x + 1, 1);
+        assert_eq!(display.menu_bar.menus[0].selected, Some(1));
+        // Clicking that painted row dispatches the enabled command.
+        let clicked = display.menu_handle_click(menu_x + 1, 1);
+        assert_eq!(clicked, Some(Command::FindFile));
+        // Clicking a row below the painted items dispatches nothing.
+        display.menu_bar.open_menu(0);
+        let clicked = display.menu_handle_click(menu_x + 1, 5);
+        assert_eq!(clicked, None);
     }
 
     #[test]
