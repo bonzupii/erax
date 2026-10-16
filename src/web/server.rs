@@ -334,13 +334,19 @@ fn handle_connection(
     let is_websocket = head.to_ascii_lowercase().contains("upgrade: websocket");
 
     if is_websocket && request_line.starts_with("GET /ws ") {
-        // Bound inbound frame size: the default tungstenite cap is 64 MiB,
-        // far beyond anything a legitimate client sends (key/mouse/resize
-        // frames are tens of bytes; IME commits are bounded by what a user
-        // can compose). A hostile 64MB text frame would otherwise reach
-        // serde_json as one giant allocation. (WebSocketConfig is
-        // #[non_exhaustive], so the builder method is used, not a literal.)
-        let config = WebSocketConfig::default().max_message_size(Some(1 << 20));
+        // Bound frame size: the default tungstenite cap is 64 MiB, far
+        // beyond anything legitimate in either direction (inbound:
+        // key/mouse/resize frames are tens of bytes, IME commits bounded
+        // by what a user can compose; outbound: Screen frames scale with
+        // the grid). A hostile 64MB text frame would otherwise reach
+        // serde_json as one giant allocation. Note tungstenite enforces
+        // this cap on OUTGOING messages too, so it must cover the largest
+        // legitimate Screen frame: a big-grid client (4K window, small
+        // font) can exceed 1 MiB, which previously killed the session on
+        // the first frame with a blank canvas client-side.
+        // (WebSocketConfig is #[non_exhaustive], so the builder method is
+        // used, not a literal.)
+        let config = WebSocketConfig::default().max_message_size(Some(16 << 20));
         let ws = accept_with_config(stream, Some(config))
             .map_err(|e| ServerError::Handshake(e.to_string()))?;
         return handle_websocket(ws, token, files, theme, wrap);
@@ -572,6 +578,26 @@ fn handle_websocket(
         return Err(ServerError::Protocol("auth: invalid token".into()));
     }
     send_frame(&mut ws, &ServerFrame::AuthOk)?;
+
+    // The client sends Resize immediately on open (its grid size). Take
+    // it now so the initial frame renders at the right size: otherwise
+    // the first frame is the 120x36 default, the client clips it, and a
+    // second full frame follows on the Resize. A short wait; a slow
+    // client just gets the default and resizes via the main loop. The
+    // client sends nothing but Resize before AuthOk, so any other frame
+    // here is a protocol violation.
+    match read_frame(&mut ws, Duration::from_millis(500))? {
+        Some(ClientFrame::Resize { width: w, height: h }) => {
+            width = w.max(20);
+            height = h.max(10);
+        }
+        Some(_) => {
+            return Err(ServerError::Protocol(
+                "expected Resize after Auth".into(),
+            ));
+        }
+        None => {}
+    }
 
     // --- Headless editor session (Core+TUI, no terminal). ---
     let mut keybind_manager = crate::terminal::keybinds::KeyBindingManager::new();

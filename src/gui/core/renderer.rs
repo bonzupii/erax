@@ -595,6 +595,20 @@ impl std::fmt::Display for RenderError {
 
 impl std::error::Error for RenderError {}
 
+/// Whether a `render` call put pixels on the surface.
+///
+/// A surface acquisition can fail transiently (timeout, occluded tab):
+/// the frame is then skipped, not lost — the screen model already holds
+/// the new cells, so the caller recovers with a bare re-render instead
+/// of waiting for the next screen frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameOutcome {
+    /// The frame was submitted and presented.
+    Presented,
+    /// No surface texture was available; nothing was presented.
+    Skipped,
+}
+
 pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -1229,7 +1243,10 @@ impl Renderer {
         self.metrics.offset_x
     }
 
-    pub fn render(&mut self, screen_buffer: &ScreenBuffer) -> Result<(), RenderError> {
+    pub fn render(
+        &mut self,
+        screen_buffer: &ScreenBuffer,
+    ) -> Result<FrameOutcome, RenderError> {
         let cols = screen_buffer.width as usize;
         let rows = screen_buffer.height as usize;
 
@@ -1430,7 +1447,10 @@ impl Renderer {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                return Ok(())
+                // Transient: the surface is not ready or not visible.
+                // Report the skip so the caller can retry; the cells are
+                // already in the screen model, so no frame is lost.
+                return Ok(FrameOutcome::Skipped)
             }
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 return Err(RenderError::SurfaceLost)
@@ -1554,7 +1574,7 @@ impl Renderer {
         self.queue.submit(std::iter::once(enc.finish()));
         self.queue.present(out);
 
-        Ok(())
+        Ok(FrameOutcome::Presented)
     }
 }
 

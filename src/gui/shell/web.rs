@@ -26,6 +26,7 @@ use web_sys::{
 };
 
 use crate::core::input::{Key, KeyPress, MouseButton, MouseEvent, MouseEventKind};
+use crate::gui::core::renderer::FrameOutcome;
 use crate::terminal::display::{Cell, CellRole, ScreenBuffer};
 use crate::web::protocol::{ClientFrame, CursorState, InputEvent, ServerCue, ServerFrame, PROTOCOL_VERSION};
 use crate::config::cursor_style::CursorStyle;
@@ -51,6 +52,15 @@ struct WebSession {
     dpr: f64,
     /// Last Screen `seq` seen; a gap means a dropped frame (warn, don't die).
     last_seq: u64,
+    /// A `requestAnimationFrame` repaint is already queued. The retry path
+    /// repaints the current screen model when the surface skips a frame;
+    /// at most one retry is ever pending.
+    repaint_pending: bool,
+    /// Consecutive repaint retries. A skipped frame is transient
+    /// (surface timeout, occluded tab); the chain gives up after ~10 s
+    /// of continuous skipping so a permanently broken surface cannot
+    /// burn a render per animation frame forever.
+    repaint_attempts: u32,
     /// Lazily-created WebAudio context for accessibility earcons.
     /// Browsers gate audio behind a user gesture, so this stays `None`
     /// until the first cue frame arrives; a suspended context drops
@@ -318,6 +328,8 @@ pub async fn erax_start(
         },
         dpr,
         last_seq: 0,
+        repaint_pending: false,
+        repaint_attempts: 0,
         audio: None,
     }));
 
@@ -329,6 +341,8 @@ pub async fn erax_start(
     wire_ime(&ime, session.clone())
         .map_err(|e| fail(&document, StartupStage::WireEvents, &js_error(&e)))?;
     wire_resize(&window, session.clone())
+        .map_err(|e| fail(&document, StartupStage::WireEvents, &js_error(&e)))?;
+    wire_visibility(&document, session.clone())
         .map_err(|e| fail(&document, StartupStage::WireEvents, &js_error(&e)))?;
     wire_socket(&document, session.clone())
         .map_err(|e| fail(&document, StartupStage::WireEvents, &js_error(&e)))?;
@@ -707,54 +721,76 @@ fn handle_server_frame(session: &Rc<RefCell<WebSession>>, frame: ServerFrame) {
             // `seq` is consumed for loss detection: frames are contiguous
             // per connection, so a gap means a dropped frame.
             //
-            // `s` derefs the RefMut so the borrow checker sees the
-            // disjoint field borrows below.
-            let s = &mut *session.borrow_mut();
-            // `seq` is consumed for loss detection: frames are contiguous
-            // per connection, so a gap means a dropped frame. The predicate
-            // is pure and unit-tested (`cursor::seq_gap_detected`).
-            if crate::gui::core::cursor::seq_gap_detected(s.last_seq, seq) {
-                web_sys::console::warn_1(
-                    &format!("screen frame gap: {} -> {}", s.last_seq, seq).into(),
-                );
-            }
-            s.last_seq = seq;
-
-            // Track the backend cursor verbatim: shape → presentation core,
-            // position/visibility → IME anchor. Nothing inferred here.
-            s.cursor = cursor;
-            let dpr = s.dpr;
-            s.renderer.set_cursor(cursor.style, dpr as f32);
-
-            for cu in cells {
-                if let Some(cell) = s.screen.get_mut(cu.x, cu.y) {
-                    *cell = cu.cell;
+            // The block scopes the session borrow: it ends before the
+            // skip-retry path below re-borrows the session.
+            let outcome = {
+                // `s` derefs the RefMut so the borrow checker sees the
+                // disjoint field borrows below.
+                let s = &mut *session.borrow_mut();
+                // `seq` is consumed for loss detection: frames are contiguous
+                // per connection, so a gap means a dropped frame. The predicate
+                // is pure and unit-tested (`cursor::seq_gap_detected`).
+                if crate::gui::core::cursor::seq_gap_detected(s.last_seq, seq) {
+                    web_sys::console::warn_1(
+                        &format!("screen frame gap: {} -> {}", s.last_seq, seq).into(),
+                    );
                 }
-            }
+                s.last_seq = seq;
 
-            // Reposition the IME scratchpad at the backend cursor so the OS
-            // composition popup opens at the text cursor (F1). Parked
-            // offscreen while the cursor is hidden. The decision itself is
-            // pure and unit-tested (`cursor::ime_anchor_for_frame`); this is
-            // only the DOM write.
-            let rect = s.canvas.get_bounding_client_rect();
-            let (left_css, top_css) = crate::gui::core::cursor::ime_anchor_for_frame(
-                cursor.visible,
-                cursor.x,
-                cursor.y,
-                rect.left(),
-                rect.top(),
-                f64::from(s.renderer.cell_width()) / dpr,
-                f64::from(s.renderer.cell_height()) / dpr,
-            );
-            let ime_style = s.ime.style();
-            let _ = ime_style.set_property("left", &format!("{left_css}px"));
-            let _ = ime_style.set_property("top", &format!("{top_css}px"));
+                // Track the backend cursor verbatim: shape → presentation core,
+                // position/visibility → IME anchor. Nothing inferred here.
+                s.cursor = cursor;
+                let dpr = s.dpr;
+                s.renderer.set_cursor(cursor.style, dpr as f32);
 
-            // Disjoint field borrows through the &mut.
-            let (renderer, screen) = (&mut s.renderer, &s.screen);
-            if let Err(e) = renderer.render(screen) {
-                web_sys::console::error_1(&format!("render: {e}").into());
+                for cu in cells {
+                    if let Some(cell) = s.screen.get_mut(cu.x, cu.y) {
+                        *cell = cu.cell;
+                    }
+                }
+
+                // Reposition the IME scratchpad at the backend cursor so the OS
+                // composition popup opens at the text cursor (F1). Parked
+                // offscreen while the cursor is hidden. The decision itself is
+                // pure and unit-tested (`cursor::ime_anchor_for_frame`); this is
+                // only the DOM write.
+                let rect = s.canvas.get_bounding_client_rect();
+                let (left_css, top_css) = crate::gui::core::cursor::ime_anchor_for_frame(
+                    cursor.visible,
+                    cursor.x,
+                    cursor.y,
+                    rect.left(),
+                    rect.top(),
+                    f64::from(s.renderer.cell_width()) / dpr,
+                    f64::from(s.renderer.cell_height()) / dpr,
+                );
+                let ime_style = s.ime.style();
+                let _ = ime_style.set_property("left", &format!("{left_css}px"));
+                let _ = ime_style.set_property("top", &format!("{top_css}px"));
+
+                // Disjoint field borrows through the &mut.
+                let (renderer, screen) = (&mut s.renderer, &s.screen);
+                renderer.render(screen)
+            };
+            match outcome {
+                Err(e) => {
+                    web_sys::console::error_1(&format!("render: {e}").into());
+                }
+                Ok(FrameOutcome::Presented) => {
+                    session.borrow_mut().repaint_attempts = 0;
+                }
+                Ok(FrameOutcome::Skipped) => {
+                    // The surface was not ready (or the tab occluded): the
+                    // cells are already in the screen model, so retry the
+                    // paint on the next animation frame instead of waiting
+                    // for the next server frame (an idle editor sends none).
+                    // Loud on purpose: a silently skipped first frame is
+                    // exactly the blank-on-open report.
+                    web_sys::console::warn_1(
+                        &"render: surface not ready, frame skipped; retrying".into(),
+                    );
+                    schedule_repaint(&session);
+                }
             }
         }
         ServerFrame::Bye { reason } => {
@@ -771,6 +807,88 @@ fn handle_server_frame(session: &Rc<RefCell<WebSession>>, frame: ServerFrame) {
             announce(session, &text);
         }
     }
+}
+
+/// Repaint the current screen model on the next animation frame.
+///
+/// A skipped surface frame (timeout, occluded tab) leaves the canvas
+/// blank with no server frame on the way to recover it: an idle editor
+/// sends none. The retry repaints the cells already in the screen model,
+/// so the first flush lands even when the first surface acquisitions
+/// fail. At most one retry is pending at a time; a presented frame ends
+/// the chain, and the chain gives up after ~10 s of continuous skipping.
+fn schedule_repaint(session: &Rc<RefCell<WebSession>>) {
+    /// Retry budget: ~10 s at 60 fps of transient surface skipping.
+    const MAX_REPAINT_ATTEMPTS: u32 = 600;
+    {
+        let mut s = session.borrow_mut();
+        if s.repaint_pending {
+            return;
+        }
+        if s.repaint_attempts >= MAX_REPAINT_ATTEMPTS {
+            web_sys::console::error_1(
+                &"render: surface kept skipping frames; giving up the repaint retry".into(),
+            );
+            return;
+        }
+        s.repaint_pending = true;
+        s.repaint_attempts += 1;
+    }
+    let again = Rc::clone(session);
+    let cb = Closure::<dyn FnMut()>::new(move || repaint_once(&again));
+    if let Some(window) = web_sys::window()
+        && let Err(e) = window.request_animation_frame(cb.as_ref().unchecked_ref())
+    {
+        web_sys::console::error_1(&format!("repaint: request_animation_frame: {e:?}").into());
+    }
+    cb.forget();
+}
+
+/// One repaint attempt: render the screen model as-is. A further skip
+/// re-queues; anything else ends the retry chain and resets the budget.
+fn repaint_once(session: &Rc<RefCell<WebSession>>) {
+    let outcome = {
+        // Deref once so the field borrows below are disjoint (a `RefMut`
+        // method call would borrow through `DerefMut` and conflict).
+        let s = &mut *session.borrow_mut();
+        s.repaint_pending = false;
+        let (renderer, screen) = (&mut s.renderer, &s.screen);
+        renderer.render(screen)
+    };
+    match outcome {
+        Err(e) => {
+            session.borrow_mut().repaint_attempts = 0;
+            web_sys::console::error_1(&format!("render (repaint): {e}").into());
+        }
+        Ok(FrameOutcome::Presented) => {
+            session.borrow_mut().repaint_attempts = 0;
+        }
+        Ok(FrameOutcome::Skipped) => schedule_repaint(session),
+    }
+}
+
+/// Tab visibility → repaint.
+///
+/// A page opened in a background tab never presents: the surface reports
+/// occluded, every frame skips, and `requestAnimationFrame` never fires
+/// while hidden. When the tab becomes visible, paint the current screen
+/// model instead of waiting for input to produce a server frame.
+fn wire_visibility(document: &Document, session: Rc<RefCell<WebSession>>) -> Result<(), JsValue> {
+    let onvisible = {
+        let session = session.clone();
+        Closure::<dyn FnMut()>::new(move || {
+            let visible = web_sys::window()
+                .and_then(|w| w.document())
+                .map(|d| d.visibility_state() == web_sys::VisibilityState::Visible)
+                .unwrap_or(false);
+            if visible {
+                repaint_once(&session);
+            }
+        })
+    };
+    document.add_event_listener_with_callback("visibilitychange", onvisible.as_ref().unchecked_ref())?;
+    onvisible.forget();
+    Ok(())
 }
 
 /// DOM keyboard → KeyPress (same raw types as the native shell).
