@@ -113,6 +113,10 @@ wasm-bindgen-cli-support = "=0.2.129"
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
+# WGSL validation for the live GUI shaders (tests/wgsl_validate.rs).
+# Pinned to the naga wgpu 30 validates with, so the test and the device
+# agree.
+naga = "=30.0.1"
 
 [[bench]]
 name = "hot_paths"

@@ -69,6 +69,7 @@ disabled; see the session 26 PROGRESS entry for the audit table).
 | crate | version | why |
 |---|---|---|
 | criterion | 0.8.2 | benchmark harness (never ships) |
+| naga | 30.0.1 | WGSL validation of the live GUI shaders in tests (never ships); pinned to the naga wgpu 30 validates with |
 
 ## Vendored code (D2/D3/D4)
 

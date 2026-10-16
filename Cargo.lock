@@ -946,6 +946,7 @@ dependencies = [
  "fontdb",
  "js-sys",
  "libc",
+ "naga",
  "ort",
  "pollster",
  "portable-pty",
