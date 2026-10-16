@@ -152,23 +152,27 @@ impl EditorApp {
             window.tab_width = crate::config::editor::TAB_WIDTH;
         }
 
-        // Load initial files. A file that fails to open never becomes a
-        // silent empty buffer: undecodable bytes are opened through
-        // encoding detection (the detection report lands in the message
-        // line), and hard failures (IO, invalid path) are reported in the
-        // message line. The backend is shared by the TUI, the GUI, and the
-        // web server, so all three behave identically.
-        for file_path in files.iter().take(1) {
+        // Load initial files. Every named file becomes a buffer; the
+        // first is shown, the rest wait in the buffer list. A file that
+        // fails to open never becomes a silent empty buffer:
+        // undecodable bytes are opened through encoding detection (the
+        // detection report lands in the message line), and hard failures
+        // (IO, invalid path) are reported in the message line. The
+        // backend is shared by the TUI, the GUI, and the web server, so
+        // all three behave identically.
+        let mut notices = Vec::new();
+        for (i, file_path) in files.iter().enumerate() {
             match crate::core::encoding::load_file_with_encoding(file_path) {
                 Ok(loaded) => {
                     let buffer_id = app.alloc_buffer_id();
                     app.buffers.insert(buffer_id, loaded.buffer);
-                    if let Some(window) = app.windows.get_mut(&WindowId(0)) {
-                        window.buffer_id = buffer_id;
-                    }
+                    if i == 0
+                        && let Some(window) = app.windows.get_mut(&WindowId(0)) {
+                            window.buffer_id = buffer_id;
+                        }
                     if loaded.had_errors || loaded.byte_exact {
                         let detected = loaded.detected;
-                        app.message = Some(format!(
+                        notices.push(format!(
                             "Opened {} as {} ({:?}, {:?} confidence){}; original bytes preserved, saving unmodified writes them back verbatim",
                             file_path.display(),
                             detected.encoding.label(),
@@ -183,9 +187,12 @@ impl EditorApp {
                     }
                 }
                 Err(e) => {
-                    app.message = Some(format!("{}: {e}", file_path.display()));
+                    notices.push(format!("{}: {e}", file_path.display()));
                 }
             }
+        }
+        if !notices.is_empty() {
+            app.message = Some(notices.join("; "));
         }
 
         app
@@ -628,5 +635,34 @@ mod tests {
         let buffer = app.active_buffer().expect("a buffer is open");
         assert!(buffer.filename.is_some());
         assert_eq!(app.message, None);
+    }
+
+    #[test]
+    fn initialize_opens_every_named_file() {
+        // `erax a b` used to open only `a` and silently drop the rest.
+        let dir = std::env::temp_dir();
+        let f1 = dir.join(format!("erax-init-a-{}.txt", std::process::id()));
+        let f2 = dir.join(format!("erax-init-b-{}.txt", std::process::id()));
+        std::fs::write(&f1, "first").expect("write f1");
+        std::fs::write(&f2, "second").expect("write f2");
+        let app = EditorApp::initialize(&[f1.clone(), f2.clone()]);
+        // Scratch plus both files.
+        assert_eq!(app.buffers.len(), 3);
+        let names: Vec<String> = app
+            .buffers
+            .values()
+            .filter_map(|b| b.filename.as_ref())
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        assert!(names.iter().any(|n| n == &f1.to_string_lossy()));
+        assert!(names.iter().any(|n| n == &f2.to_string_lossy()));
+        // The first file is the one shown.
+        let shown = app.active_buffer().expect("active buffer");
+        assert_eq!(
+            shown.filename.as_ref().map(|p| p.as_path()),
+            Some(f1.as_path())
+        );
+        let _ = std::fs::remove_file(&f1);
+        let _ = std::fs::remove_file(&f2);
     }
 }
