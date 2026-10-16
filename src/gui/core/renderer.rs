@@ -29,13 +29,14 @@ use cosmic_text::{
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::config::cursor_style::CursorStyle;
+use crate::config::effects;
 use crate::core::geometry::GridMetrics;
 use crate::terminal::display::{Cell, CellRole, ScreenBuffer};
 
 use super::atlas::{Atlas, CachedGlyph, GlyphKey};
 use super::cursor::{cursor_overlay_rects, PxRect};
 use super::font_manager::{FontManager, FontSource};
-use super::quad_renderer::{BackgroundUniforms, QuadRenderer};
+use super::quad_renderer::{BackgroundUniforms, EffectKnobs, QuadRenderer, resolve_effect_uniforms};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -640,6 +641,9 @@ pub struct Renderer {
 
     // Performance caches
     bg_cache: Vec<u32>,
+    /// Per-cell `CellRole` discriminants, uploaded beside the colors so the
+    /// background pass can treat panel, selection, and cursor roles.
+    role_cache: Vec<u32>,
 }
 
 /// Construction parameters for [`Renderer::new`].
@@ -995,6 +999,7 @@ impl Renderer {
             cursor_vb_cap: 0,
             metrics,
             bg_cache: Vec::new(),
+            role_cache: Vec::new(),
         };
 
         // Pre-warm the atlas with ASCII so the first paint has no shaping
@@ -1244,6 +1249,14 @@ impl Renderer {
         self.bg_cache
             .extend(screen_buffer.cells.iter().map(|c| c.bg.to_packed_rgba()));
 
+        // Roles ride beside the colors so the background pass can treat
+        // panel, selection, and cursor cells without inferring meaning
+        // from glyphs or colors.
+        self.role_cache.clear();
+        self.role_cache.reserve(screen_buffer.cells.len());
+        self.role_cache
+            .extend(screen_buffer.cells.iter().map(|c| c.role as u32));
+
         // Glyphs
         self.instances.clear();
 
@@ -1315,17 +1328,50 @@ impl Renderer {
         self.color_atlas.flush(&self.queue);
 
         // Update GPU
+        //
+        // The theme is the single source of the background: the render pass
+        // clears to it and the shader paints it outside the grid.
+        // Effect magnitudes are signed here from the theme's darkness so the
+        // shader stays theme-agnostic; all zero with effects disabled.
+        let theme = crate::config::theme::THEME.theme();
+        let (tbr, tbg, tbb) = theme.bg.rgb8();
+        let theme_bg = [
+            f32::from(tbr) / 255.0,
+            f32::from(tbg) / 255.0,
+            f32::from(tbb) / 255.0,
+            1.0,
+        ];
+        let fx = resolve_effect_uniforms(
+            EffectKnobs {
+                enabled: effects::EFFECTS_ENABLED,
+                panel: effects::PANEL_DEPTH,
+                panel_shift: effects::PANEL_SHIFT,
+                panel_edge: effects::PANEL_EDGE,
+                panel_edge_delta: effects::PANEL_EDGE_DELTA,
+                selection_edge: effects::SELECTION_EDGE,
+                selection_edge_delta: effects::SELECTION_EDGE_DELTA,
+                cursor_halo: effects::CURSOR_HALO,
+                cursor_halo_alpha: effects::CURSOR_HALO_ALPHA,
+            },
+            theme.is_dark,
+        );
         let uniforms = BackgroundUniforms {
             screen_size: [self.size.0 as f32, self.size.1 as f32],
             cell_size: [cw, ch],
             grid_offset: [self.metrics.offset_x, self.metrics.offset_y],
             grid_dims: [cols as u32, rows as u32],
+            bg: theme_bg,
+            panel_shift: fx[0],
+            panel_edge: fx[1],
+            selection_edge: fx[2],
+            cursor_halo: fx[3],
         };
         self.quad_renderer.update_uniforms(&self.queue, &uniforms);
-        self.quad_renderer.upload_colors(
+        self.quad_renderer.upload_cells(
             &self.device,
             &self.queue,
             &self.bg_cache,
+            &self.role_cache,
             cols as u32,
             rows as u32,
         );
@@ -1407,10 +1453,12 @@ impl Renderer {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
+                        // The theme background: the same value the
+                        // shader paints outside the grid.
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.1,
-                            b: 0.12,
+                            r: f64::from(theme_bg[0]),
+                            g: f64::from(theme_bg[1]),
+                            b: f64::from(theme_bg[2]),
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
