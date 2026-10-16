@@ -79,6 +79,17 @@ pub enum MacroStep {
     Insert(char),
 }
 
+/// Take the pending universal-argument count for the next input action.
+///
+/// A pending C-u prefix supplies the count for the next input action
+/// exactly once — a typed command or a self-inserted character — and
+/// then clears. With no prefix pending the caller's count stands. The
+/// prefix command itself accumulates rather than consuming, so its own
+/// dispatch path does not call this.
+fn take_universal_count(app: &mut EditorApp, count: usize) -> usize {
+    app.universal_argument.take().unwrap_or(count)
+}
+
 /// Dispatch a typed command.
 ///
 /// Records the step when a macro is recording, executes it through the
@@ -90,7 +101,7 @@ pub fn dispatch(app: &mut EditorApp, command: Command, count: usize) -> Dispatch
     let count = if matches!(command, Command::UniversalArgument) {
         count
     } else {
-        app.universal_argument.take().unwrap_or(count)
+        take_universal_count(app, count)
     };
 
     if app.is_recording_macro
@@ -154,6 +165,11 @@ pub fn dispatch_insert_in_model(
     count: usize,
     model: InputModel,
 ) -> DispatchResult {
+    // A pending C-u prefix is consumed by self-insert exactly like by a
+    // typed command: `C-u 4 x` inserts the character four times, then
+    // clears, so the prefix cannot leak into the following command.
+    let count = take_universal_count(app, count);
+
     if app.is_recording_macro {
         app.current_macro.push((MacroStep::Insert(c), count));
     }
@@ -386,6 +402,41 @@ mod tests {
         dispatch(&mut app, Command::UniversalArgument, 1);
         dispatch(&mut app, Command::UniversalArgument, 1);
         assert_eq!(app.universal_argument, Some(16));
+    }
+
+    #[test]
+    fn universal_argument_applies_to_self_insert() {
+        // A pending C-u prefix is consumed by the next self-insert
+        // exactly once: `C-u 4 x` inserts the character four times and
+        // the prefix clears, like the Emacs digit argument.
+        let mut app = setup_test_app();
+        dispatch(&mut app, Command::UniversalArgument, 1);
+        assert_eq!(app.universal_argument, Some(4));
+        dispatch_insert(&mut app, 'x', 1);
+        let text = app.active_buffer().unwrap().content_string();
+        assert_eq!(text, "xxxx");
+        assert_eq!(app.universal_argument, None);
+    }
+
+    #[test]
+    fn self_insert_consumes_prefix_exactly_once() {
+        // The leaked-prefix repro: C-u, x, then C-f. Before the fix
+        // the insert bypassed the prefix, inserting one x and leaving
+        // the prefix pending, so the motion consumed it and moved 4
+        // instead of 1.
+        let mut app = setup_test_app();
+        app.active_buffer_mut().unwrap().insert(0, "hello world");
+        dispatch(&mut app, Command::UniversalArgument, 1);
+        dispatch_insert(&mut app, 'x', 1);
+        dispatch(&mut app, Command::ForwardCharacter, 1);
+        // Four inserts plus a single-character motion; the motion did
+        // not inherit the prefix.
+        assert_eq!(
+            app.active_buffer().unwrap().content_string(),
+            "xxxxhello world"
+        );
+        assert_eq!(app.active_window_ref().unwrap().cursor_x, 5);
+        assert_eq!(app.universal_argument, None);
     }
 
     #[test]
