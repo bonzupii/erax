@@ -3,7 +3,7 @@ use crate::core::app::EditorApp;
 /// Application control commands
 use crate::core::dispatcher::{DispatchResult, InputAction};
 
-pub fn exit_eras(app: &mut EditorApp, _count: usize) -> DispatchResult {
+pub fn exit_erax(app: &mut EditorApp, _count: usize) -> DispatchResult {
     // L-008: never silently discard unsaved work. The pristine docs promised
     // Ctrl+x-Ctrl+c prompts on unsaved work; the old default binding pointed
     // at `quit-without-saving` instead, quitting with data loss. Now
@@ -58,16 +58,38 @@ pub fn keyboard_quit(app: &mut EditorApp, _count: usize) -> DispatchResult {
 pub fn exit_and_save(app: &mut EditorApp, _count: usize) -> DispatchResult {
         // Save all modified buffers
         let mut save_errors = Vec::new();
+        let mut nameless = 0usize;
 
         // Collect buffer IDs to avoid borrow issues
         let buffer_ids: Vec<crate::core::id::BufferId> = app.buffers.keys().cloned().collect();
 
         for id in buffer_ids {
             if let Some(buffer) = app.buffers.get_mut(&id)
-                && buffer.modified && buffer.filename.is_some()
-                    && let Err(e) = buffer.save() {
+                && buffer.modified {
+                    if buffer.filename.is_none() {
+                        // An untitled buffer has no destination: exiting
+                        // would destroy its content. Refuse instead, in
+                        // the same family as exit_erax's refusal, naming
+                        // the save command so the way out is visible.
+                        nameless += 1;
+                        continue;
+                    }
+                    if let Err(e) = buffer.save() {
                         save_errors.push(format!("Error saving buffer {:?}: {}", id, e));
                     }
+                }
+        }
+
+        if nameless > 0 {
+            return DispatchResult::Info(format!(
+                "{nameless} modified buffer{} {} no filename; exit refused. \
+                 Save {} first ({}) or {} to discard.",
+                if nameless == 1 { "" } else { "s" },
+                if nameless == 1 { "has" } else { "have" },
+                if nameless == 1 { "it" } else { "them" },
+                crate::core::command::Command::SaveBuffer.name(),
+                crate::core::command::Command::ExitWithoutSave.name(),
+            ));
         }
 
         if save_errors.is_empty() {
@@ -98,7 +120,7 @@ mod tests {
     #[test]
     fn exit_eras_exits_when_clean() {
         let mut app = EditorApp::new();
-        let result = exit_eras(&mut app, 1);
+        let result = exit_erax(&mut app, 1);
         assert_eq!(result, DispatchResult::Exit);
     }
 
@@ -111,7 +133,7 @@ mod tests {
         } else {
             panic!("test app has no active buffer");
         }
-        let result = exit_eras(&mut app, 1);
+        let result = exit_erax(&mut app, 1);
         assert_eq!(result, DispatchResult::Success);
         let message = app.message.as_deref().unwrap_or("");
         assert!(
@@ -122,6 +144,35 @@ mod tests {
             message.contains("quit-without-saving"),
             "message names the explicit-discard alternative, got: {message}"
         );
+    }
+
+    /// `exit-and-save` must NOT silently discard a modified buffer that
+    /// has no filename: there is nowhere to save it to, so the exit is
+    /// refused and the message names the way out.
+    #[test]
+    fn exit_and_save_refuses_with_untitled_modified_buffer() {
+        let mut app = EditorApp::new();
+        if let Some(buffer) = app.active_buffer_mut() {
+            buffer.insert(0, "unsaved work");
+        } else {
+            panic!("test app has no active buffer");
+        }
+        // The default scratch buffer has no filename.
+        assert!(app
+            .active_buffer()
+            .is_some_and(|b| b.filename.is_none()));
+        let result = exit_and_save(&mut app, 1);
+        match result {
+            DispatchResult::Info(msg) => {
+                assert!(msg.contains("no filename"), "got: {msg}");
+                assert!(msg.contains("exit refused"), "got: {msg}");
+            }
+            other => panic!("expected refusal Info, got {other:?}"),
+        }
+        // The content is still there: nothing was destroyed.
+        assert!(app
+            .active_buffer()
+            .is_some_and(|b| b.content_string().contains("unsaved work")));
     }
 
     /// Explicit discard still exits even with unsaved work.
