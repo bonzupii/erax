@@ -112,6 +112,10 @@
                 # code no test can reach is restructured until it can
                 # be reached, or removed.
                 pkgs.cargo-llvm-cov
+                # build.rs provisions pinned speech weights with curl
+                # when the speech backend is enabled in config; the
+                # fetcher must be present in the dev environment.
+                pkgs.curl
               ]
               ++ fontPackages
               ++ lib.optionals isLinux linuxLibs
