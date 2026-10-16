@@ -553,8 +553,8 @@ impl Display {
         // 5. Cursor: the model's verdict, painted verbatim. When the
         // modal `:` command line owns the bar, the hardware cursor lives
         // on the command line; otherwise the model cursor cell is used.
-        // An out-of-viewport cursor hides here (cursor_pos = None):
-        // the model never clamps a cursor to a viewport edge.
+        // The pane cursor is clamped to the text rect by the layout, so
+        // it is always visible when the text rect is non-empty.
         let model_cursor = if cmdline_cursor.is_some() {
             None
         } else {

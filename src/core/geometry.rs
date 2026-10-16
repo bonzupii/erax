@@ -339,9 +339,10 @@ pub struct PaneGeometry {
     pub v_scrollbar: Option<ScrollbarGeom>,
     /// Horizontal scrollbar geometry, when shown.
     pub h_scrollbar: Option<ScrollbarGeom>,
-    /// Absolute cell of the text cursor, or `None` when the cursor is
-    /// outside the visible text area. The model hides; it never clamps
-    /// an out-of-viewport cursor to an edge.
+    /// Absolute cell of the text cursor, clamped to the text rect. The
+    /// cursor is `None` only when the text rect is empty; otherwise it
+    /// is always inside the visible text area, even when the model
+    /// cursor is scrolled out of view.
     pub cursor: Option<(usize, usize)>,
 }
 
@@ -364,9 +365,9 @@ pub struct PaneGeometry {
 ///   above the status row), reserved unconditionally. A bar appearing
 ///   or disappearing never moves the text rect and never covers the
 ///   cursor.
-/// - The cursor is `Some` exactly when the model cursor sits inside
-///   the pane's text rect. Out-of-viewport cursors are hidden, never
-///   clamped to a viewport edge.
+/// - The cursor is `Some` exactly when the text rect is non-empty, and
+///   the cell is always inside the text rect. Out-of-viewport model
+///   cursors clamp to the nearest viewport edge, never hide.
 #[derive(Debug, Clone)]
 pub struct FrameLayout {
     pub menu_rows: usize,
@@ -586,14 +587,21 @@ fn pane_geometry(
 /// inside the text rect. Anything else (above, below, or past the right
 /// edge) is `None`: hidden, never clamped.
 fn cursor_cell(text: &Rect, input: &WindowGeomInput) -> Option<(usize, usize)> {
-    let rel_y = input.cursor_y.checked_sub(input.scroll_offset)?;
-    if rel_y >= text.height {
+    if text.width == 0 || text.height == 0 {
         return None;
     }
-    let rel_x = input.visual_cursor_x.checked_sub(input.scroll_x)?;
-    if rel_x >= text.width {
-        return None;
-    }
+    // Clamp to the text region: the cursor never leaves the visible
+    // viewport, even when the model position is scrolled out of view.
+    // The saturating_sub handles cursor above/left of the viewport;
+    // the min handles cursor below/right of the viewport.
+    let rel_y = input
+        .cursor_y
+        .saturating_sub(input.scroll_offset)
+        .min(text.height - 1);
+    let rel_x = input
+        .visual_cursor_x
+        .saturating_sub(input.scroll_x)
+        .min(text.width - 1);
     Some((text.x + rel_x, text.y + rel_y))
 }
 
