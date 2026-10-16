@@ -294,7 +294,10 @@ mod tests {
         wait_for_output(&mut app, "stty -echo", Duration::from_secs(10));
         if let Some(host) = app.terminal_host.as_mut() {
             while host.read().is_some() {}
-            // Two bytes that are not valid UTF-8, no newline echo.
+            // Two bytes that are not valid UTF-8, no newline echo. The
+            // literal's doubled backslashes are consumed by Rust
+            // itself; the shell receives `\377`, which printf renders
+            // as the raw byte 0xFF (likewise `\376` as 0xFE).
             host.write(b"printf '\\377\\376'\n");
         }
         let start = Instant::now();
