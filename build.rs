@@ -21,6 +21,9 @@ include!("build/speech_artifacts.rs");
 
 fn main() {
     println!("cargo:rerun-if-changed=src/config/accessibility/blindness.rs");
+    // The artifact pins are include!d: cargo does not watch them on
+    // its own, so a pin change would silently keep stale weights.
+    println!("cargo:rerun-if-changed=build/speech_artifacts.rs");
     println!("cargo:rustc-check-cfg=cfg(speech_provisioned)");
     println!("cargo:rustc-check-cfg=cfg(speech_misconfigured)");
 
@@ -114,6 +117,10 @@ fn download(url: &str, dest: &Path) {
 
 fn hash_file(path: &Path) -> String {
     use sha2::{Digest, Sha256};
-    let bytes = fs::read(path).expect("build.rs: cannot read downloaded file");
-    format!("{:x}", Sha256::digest(bytes))
+    // Stream in chunks: the whisper weights are 574 MB and whole-file
+    // reads double peak build-script RSS for no reason.
+    let file = fs::File::open(path).expect("build.rs: cannot read downloaded file");
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut &file, &mut hasher).expect("build.rs: cannot hash downloaded file");
+    format!("{:x}", hasher.finalize())
 }
