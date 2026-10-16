@@ -157,12 +157,6 @@ mod tests {
     }
 
     #[test]
-    fn special_keys_map_by_position() {
-        // Special keys are mapped in winit_key_to_press; the mapping logic
-        // is verified by the function's structure. Chord base is tested above.
-    }
-
-    #[test]
     fn mouse_pos_to_grid_converts() {
         use crate::core::geometry::GridMetrics;
         let metrics = GridMetrics::new(10.0, 20.0, 800.0, 600.0);

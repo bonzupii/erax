@@ -96,60 +96,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_display_mode_detection() {
-        // Test that detection returns a valid mode
-        let mode = DisplayMode::detect();
-        match mode {
-            DisplayMode::TrueColor | DisplayMode::Ansi | DisplayMode::Ascii => {
-                // Success - at least one mode should be detected
-            }
+    fn detection_returns_a_known_mode() {
+        // The match is exhaustive: adding a DisplayMode variant breaks
+        // this test at compile time until the new variant is classified.
+        match DisplayMode::detect() {
+            DisplayMode::TrueColor | DisplayMode::Ansi | DisplayMode::Ascii => {}
         }
     }
 
     #[test]
-    fn test_color_support() {
-        // Test that detection returns a valid mode
-        let mode = DisplayMode::detect();
-        match mode {
-            DisplayMode::TrueColor | DisplayMode::Ansi => {
-                // These modes support color
-            }
-            DisplayMode::Ascii => {
-                // Ascii mode does not support color
-            }
-        }
-    }
-
-    #[test]
-    fn test_advanced_formatting_support() {
-        // Test that detection returns a valid mode
-        let mode = DisplayMode::detect();
-        match mode {
-            DisplayMode::TrueColor => {
-                // This mode supports advanced formatting
-            }
-            DisplayMode::Ansi | DisplayMode::Ascii => {
-                // These modes do not support advanced formatting
-            }
-        }
-    }
-
-
-    #[test]
-    fn test_has_true_color_support() {
-        // This test may vary based on actual environment
-        let has_true_color = has_true_color_support();
-        // We can't make assumptions about the test environment,
-        // but the function should not panic
-        assert!(has_true_color == has_true_color); // Just verifying it doesn't panic
-    }
-
-    #[test]
-    fn test_has_ansi_support() {
-        // This test may vary based on actual environment
-        let has_ansi = has_ansi_support();
-        // We can't make assumptions about the test environment,
-        // but the function should not panic
-        assert!(has_ansi == has_ansi); // Just verifying it doesn't panic
+    fn color_support_queries_do_not_panic() {
+        let _ = has_true_color_support();
+        let _ = has_ansi_support();
     }
 }

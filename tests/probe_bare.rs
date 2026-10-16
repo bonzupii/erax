@@ -5,7 +5,11 @@ use std::sync::Arc;
 
 #[test]
 fn probe_bare_cosmic_synthetic() {
-    let bytes: Vec<u8> = std::fs::read("/tmp/DejaVuLigaTest.ttf").expect("synthetic font");
+    // Probe, not a regression test: skip when the synthetic font is absent.
+    let bytes: Vec<u8> = match std::fs::read("/tmp/DejaVuLigaTest.ttf") {
+        Ok(b) => b,
+        Err(_) => return,
+    };
     let fonts = [fontdb::Source::Binary(Arc::new(bytes))];
     let mut font_system = cosmic_text::FontSystem::new_with_fonts(fonts);
     let metrics = Metrics::new(16.0, 19.0);

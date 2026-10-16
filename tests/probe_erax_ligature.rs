@@ -17,8 +17,11 @@ fn cell(ch: char) -> Cell {
 
 #[test]
 fn probe_erax_path_forms_fi_ligature() {
-    let bytes: Arc<Vec<u8>> =
-        Arc::new(std::fs::read("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf").expect("synthetic font"));
+    // Probe, not a regression test: skip when the system font is absent.
+    let bytes: Arc<Vec<u8>> = match std::fs::read("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf") {
+        Ok(b) => Arc::new(b),
+        Err(_) => return,
+    };
     let mut fm = FontManager::from_font_stack(16.0, 19.0, &[erax::gui::core::font_manager::FontSource { bytes, family: Some("DejaVu Sans Mono".to_string()) }]);
 
     // Build the row exactly like the renderer does.

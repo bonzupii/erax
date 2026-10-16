@@ -969,11 +969,6 @@ mod tests {
 
     #[test]
     fn test_display_new() {
-        // Construction from typed config; terminal may be absent in CI.
-        let result = Display::new_terminal(None, None);
-        // Don't assert success since terminal may not be available
-        let _ = result;
-        // Direct construction always works.
         let display = Display::new(80, 24, None, None);
         assert_eq!(display.terminal_size, (80, 24));
         assert_eq!(display.show_line_numbers, crate::config::display::LINE_NUMBERS);

@@ -383,14 +383,6 @@ mod tests {
     }
 
     #[test]
-    fn test_should_use_gpm_with_display() {
-        // This test checks the logic, actual env vars may vary
-        // When DISPLAY is set, should_use_gpm returns false
-        // We can't easily test this without modifying env, so just verify it compiles
-        let _ = GpmClient::should_use_gpm();
-    }
-
-    #[test]
     fn test_new_client_not_connected() {
         let client = GpmClient::new();
         assert!(!client.is_connected());

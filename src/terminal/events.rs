@@ -180,12 +180,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_event_handler_structure() {
-        // Just verify the struct and functions exist
-        let _ = EventHandler::new();
-    }
-
-    #[test]
     fn test_double_click_detection() {
         let mut handler = EventHandler::new();
 

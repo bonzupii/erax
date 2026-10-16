@@ -86,22 +86,3 @@ fn restore_terminal() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // We can't easily test actual raw mode in unit tests without messing up the test runner's terminal.
-    // But we can test that the struct can be created and dropped (mocking would be better but crossterm is hard to mock).
-    // For now, we'll skip aggressive unit testing of the actual terminal syscalls and rely on manual verification
-    // as stated in the plan.
-
-    #[test]
-    fn test_raw_mode_structure() {
-        // Just verify the struct exists and compiles.
-        // Actual behavior verified manually.
-        let _ = RawMode {
-            original_hook: None,
-        };
-    }
-}
