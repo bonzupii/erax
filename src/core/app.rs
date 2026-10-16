@@ -281,17 +281,28 @@ impl EditorApp {
             Some(w) => w.buffer_id,
             None => return,
         };
-        // Disjoint field borrows: the buffer is read, the window is
-        // written; no command needs to do this itself.
+        self.reconcile_windows_for_buffer(buffer_id);
+    }
+
+    /// Clamp cursor and mark for every window viewing `buffer_id`.
+    ///
+    /// Split windows can share one buffer; reconciling only the active
+    /// window would leave an inactive window's mark past the end after a
+    /// shrink until that window became active (its highlight would be
+    /// wrong in the interim — readers clamp, so no panic, but the
+    /// display lies). The buffer is read, the windows written; disjoint
+    /// field borrows, no command needs to do this itself.
+    pub fn reconcile_windows_for_buffer(&mut self, buffer_id: BufferId) {
         let Some(buffer) = self.buffers.get(&buffer_id) else {
             return;
         };
-        let Some(window) = self.windows.get_mut(&active) else {
-            return;
-        };
-        window.ensure_cursor_valid(buffer);
-        window.selection_manager.ensure_mark_valid(buffer);
-        window.update_visual_cursor(buffer);
+        for window in self.windows.values_mut() {
+            if window.buffer_id == buffer_id {
+                window.ensure_cursor_valid(buffer);
+                window.selection_manager.ensure_mark_valid(buffer);
+                window.update_visual_cursor(buffer);
+            }
+        }
     }
 
     /// Per-window model inputs for the unified geometry computation.
