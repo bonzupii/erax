@@ -1,0 +1,53 @@
+# erax CI: full test suite + clippy on the three desktop platforms.
+#
+# Rust is pinned to exactly 1.99.0 (the repo's flake pin); the
+# wasm32-unknown-unknown target is required because build.rs runs a
+# nested wasm build of the web shell (it fails without the target).
+# The registry cache must be warm before the build: the nested build
+# runs --offline, so both the workspace and the standalone web-shell
+# crate are fetched first.
+name: CI
+
+on:
+  push:
+    branches: [dev-branch]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install system dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcups2-dev
+
+      - name: Install Rust 1.99.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.0
+          components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Warm the registry cache (nested wasm build is --offline)
+        run: |
+          cargo fetch
+          cargo fetch --manifest-path web-shell/Cargo.toml
+
+      - name: cargo test --all-targets
+        run: cargo test --all-targets
+
+      - name: cargo clippy --all-targets
+        run: cargo clippy --all-targets

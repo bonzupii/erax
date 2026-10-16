@@ -1,0 +1,32 @@
+# erax on FreeBSD: weekly run inside a FreeBSD VM (vmactions), plus
+# manual dispatch. Rust 1.99.0 + the wasm32 target are installed via
+# rustup in the VM's prepare step; libcups comes from the cups package
+# (the printers crate links libcups natively on unix). Same warm-cache
+# discipline as CI: the nested web-shell wasm build runs --offline.
+name: FreeBSD
+
+on:
+  schedule:
+    # Mondays 09:00 UTC.
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: vmactions/freebsd-vm@v1
+        with:
+          prepare: |
+            pkg install -y curl cups
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.0
+            /root/.cargo/bin/rustup component add clippy rustfmt
+            /root/.cargo/bin/rustup target add wasm32-unknown-unknown
+          run: |
+            export PATH="$HOME/.cargo/bin:$PATH"
+            cargo fetch
+            cargo fetch --manifest-path web-shell/Cargo.toml
+            cargo test --all-targets
+            cargo clippy --all-targets
