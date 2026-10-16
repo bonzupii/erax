@@ -299,9 +299,10 @@ pub fn process_terminal_event(
 
                             // Check if click is on the horizontal scrollbar.
                             // Bounds derive from the model bar's painted
-                            // strip on its dedicated row.
+                            // strip; the strip row exists only while the
+                            // bar is present (dynamic presence).
                             if let Some(hbar) = &pane.h_scrollbar
-                                && mouse_y == pane.hscroll_row
+                                && mouse_y == hbar.cross
                                 && mouse_x >= hbar.strip_start()
                                 && mouse_x < hbar.strip_start() + hbar.strip_len()
                             {

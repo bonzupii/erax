@@ -311,30 +311,51 @@ impl ScrollbarGeom {
     }
 }
 
+/// One cell region of a pane frame, in absolute cell coordinates.
+///
+/// The pane's regions tile the pane frame exactly: every cell of the
+/// frame belongs to exactly one region, so a renderer painting each
+/// region with its owner's background can never leave an unpainted
+/// cell. There is no representable "nobody owns this cell" state; a
+/// region with no owner is a model bug, fixed in the model, never
+/// swept after at render time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegionOwner {
+    /// Editable text area (the gutter is a separate region).
+    Text,
+    /// Line-number gutter, `gutter_width` columns at the text rect's
+    /// left (after the vertical strip when the bar is on the left).
+    Gutter,
+    /// Vertical scrollbar strip (only when the bar is present).
+    VScrollbar,
+    /// Horizontal scrollbar strip (only when the bar is present).
+    HScrollbar,
+    /// The pane's status row.
+    Status,
+}
+
 /// One pane's derived geometry, in absolute cell coordinates.
 ///
 /// `frame` is the whole pane (status row included). `text` is the
-/// editable area: gutter included, status row and both scrollbar
-/// strips excluded. Each scrollbar owns a dedicated strip outside the
-/// text rect (the placement law): the vertical strip is one column on
-/// the configured side, the horizontal strip is the row above the
-/// status row. The strips are reserved unconditionally, so a bar
-/// appearing or disappearing never moves the text rect and can never
-/// cover the cursor.
+/// editable area: the gutter is a separate owned region to its left,
+/// the status row is excluded, and each scrollbar strip is excluded
+/// only while its bar is present (the presence law). A bar that is
+/// absent owns no strip: its cells are text cells, painted by the text
+/// renderer. The text rect therefore grows and shrinks as bars appear
+/// and disappear; it never wastes a row or column on a bar that is not
+/// there, and no bar ever paints over the text rect.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PaneGeometry {
     pub window: WindowId,
     /// Whole pane, status row included.
     pub frame: Rect,
-    /// Text area: gutter included, status row and scrollbar strips
-    /// excluded.
+    /// Text area: the gutter is a separate owned region to its left;
+    /// the status row is excluded; scrollbar strips are excluded only
+    /// while their bar is present.
     pub text: Rect,
     pub gutter_width: usize,
     /// Absolute y of the pane's status row.
     pub status_row: usize,
-    /// Absolute y of the horizontal scrollbar strip row. Always
-    /// reserved; the bar itself paints only when derived.
-    pub hscroll_row: usize,
     /// Vertical scrollbar geometry, when shown.
     pub v_scrollbar: Option<ScrollbarGeom>,
     /// Horizontal scrollbar geometry, when shown.
@@ -344,6 +365,73 @@ pub struct PaneGeometry {
     /// is always inside the visible text area, even when the model
     /// cursor is scrolled out of view.
     pub cursor: Option<(usize, usize)>,
+}
+
+impl PaneGeometry {
+    /// The pane's owned cell regions in a fixed order: text, gutter,
+    /// vertical strip, horizontal strip, status row. A bar that is
+    /// absent contributes no region — its cells are text cells then,
+    /// which is exactly why no post-render sweep is needed: presence
+    /// is computed, and the text rect owns whatever the bars do not
+    /// take. The present regions tile `frame` exactly (pairwise
+    /// disjoint, union equals the frame);
+    /// `pane_regions_tile_frame_exactly` proves it over a sweep of
+    /// frames and contents. Each region's owner paints its background
+    /// as part of constructing the frame: text and gutter by the
+    /// window renderer, strips by the scrollbar painters, the status
+    /// row by the status renderer.
+    pub fn owned_regions(&self) -> [Option<(RegionOwner, Rect)>; 5] {
+        use crate::config::scrollbar::{VERTICAL_SIDE, VerticalSide};
+        // The gutter sits after the vertical strip when the bar is on
+        // the left; the strip exists only while the bar is present
+        // (dynamic presence), so the gutter origin follows it. The
+        // region clamps to the frame like the painter does, and stays
+        // clear of a right-side vertical strip: a gutter wider than a
+        // degenerate pane owns only the cells strictly left of it.
+        // Vertical chrome spans the horizontal strip's row (the same
+        // corner rule that gives the vertical bar the strip-corner
+        // cell), so the gutter covers the strip row when the bar is
+        // present.
+        let v_present = self.v_scrollbar.is_some();
+        let gutter_x =
+            self.frame.x + usize::from(v_present && VERTICAL_SIDE == VerticalSide::Left);
+        let gutter_end = (gutter_x + self.gutter_width)
+            .min(self.frame.x + self.frame.width)
+            .min(self.frame.x + self.frame.width - usize::from(v_present && VERTICAL_SIDE == VerticalSide::Right));
+        let gutter_height = self
+            .text
+            .height
+            .saturating_add(usize::from(self.h_scrollbar.is_some()));
+        let gutter_region = (gutter_end > gutter_x).then_some((
+            RegionOwner::Gutter,
+            Rect::new(gutter_x, self.frame.y, gutter_end - gutter_x, gutter_height),
+        ));
+        let v_region = self.v_scrollbar.map(|bar| {
+            (
+                RegionOwner::VScrollbar,
+                Rect::new(bar.cross, bar.strip_start(), 1, bar.strip_len()),
+            )
+        });
+        let h_region = self.h_scrollbar.map(|bar| {
+            (
+                RegionOwner::HScrollbar,
+                Rect::new(bar.strip_start(), bar.cross, bar.strip_len(), 1),
+            )
+        });
+        // A zero-height pane owns nothing: it has no cells, so the
+        // status region is vacuous and the union stays exact.
+        let status_region = (self.frame.height >= 1).then_some((
+            RegionOwner::Status,
+            Rect::new(self.frame.x, self.status_row, self.frame.width, 1),
+        ));
+        [
+            Some((RegionOwner::Text, self.text)),
+            gutter_region,
+            v_region,
+            h_region,
+            status_region,
+        ]
+    }
 }
 
 /// One frame's complete derived geometry.
@@ -360,11 +448,20 @@ pub struct PaneGeometry {
 ///   computes to zero size. The tiling handles zero-size leaves with
 ///   no special case, so the minimize command only needs to mark
 ///   panes collapsed in the layout tree; the geometry follows.
-/// - Scrollbar placement law: each scrollbar owns a dedicated strip
+/// - Scrollbar presence law: each scrollbar owns a dedicated strip
 ///   outside the text rect (one column on the configured side, one row
-///   above the status row), reserved unconditionally. A bar appearing
-///   or disappearing never moves the text rect and never covers the
-///   cursor.
+///   above the status row) only while it is present. The text rect
+///   surrenders exactly one column for a present vertical bar and
+///   exactly one row for a present horizontal bar, nothing otherwise;
+///   an absent bar owns no cells, so its strip row/column is text.
+///   Presence is a pure fixed point of (frame size, content metrics)
+///   (`scrollbar_presence`, same module): no oscillation, no
+///   per-frontend geometry, and no bar ever paints over the text rect.
+/// - Cell ownership: the pane's [`PaneGeometry::owned_regions`] tile
+///   the pane frame exactly, and the pane frames tile the editor area
+///   exactly, so every frame cell has exactly one owner. Each owner
+///   paints its background as part of constructing the frame; there
+///   is no unowned cell for a renderer to sweep after.
 /// - The cursor is `Some` exactly when the text rect is non-empty, and
 ///   the cell is always inside the text rect. Out-of-viewport model
 ///   cursors clamp to the nearest viewport edge, never hide.
@@ -473,55 +570,115 @@ pub fn thumb_range(
     (thumb_start, thumb_size)
 }
 
+/// Scrollbar presence as a pure fixed point of (frame extent, content
+/// metrics). Returns (vertical, horizontal).
+///
+/// The vertical bar shrinks the width, which can create horizontal
+/// need; the horizontal bar shrinks the height, which can create
+/// vertical need. With the gutter fixed (see `pane_geometry`), each
+/// need predicate is monotone non-decreasing in the shrinking rect: a
+/// bar appearing can only add bars, never remove one. The width floor
+/// for the horizontal bar is evaluated against the pre-bar width
+/// (`avail_w`), not the post-vertical-bar width, for the same reason:
+/// a bar appearing must not un-appear another. The state space is four
+/// (v, h) pairs, so iterating from (false, false) converges in at most
+/// two transitions and cannot oscillate between frames for boundary
+/// content. The loop cap is a backstop; reaching it would be a logic
+/// bug, not a longer search.
+fn scrollbar_presence(
+    avail_w: usize,
+    avail_h: usize,
+    vbar_rows: usize,
+    line_count: usize,
+    content_width: usize,
+    scroll_x: usize,
+) -> (bool, bool) {
+    use crate::config::scrollbar::{SHOW_ARROWS, SHOW_WHEN_FITS};
+    // Minimum pre-bar width that can host a horizontal bar: the bar is
+    // suppressed on narrower panes (same thresholds the painter
+    // needs, plus the column a vertical bar may take).
+    let min_host_w = if SHOW_ARROWS { 6 } else { 4 };
+    let (mut v, mut h) = (false, false);
+    for _ in 0..4 {
+        let text_w = avail_w.saturating_sub(usize::from(v));
+        let text_h = avail_h.saturating_sub(usize::from(h));
+        let v_next = vbar_rows >= 4 && (SHOW_WHEN_FITS || line_count > text_h);
+        // The horizontal bar needs its own row distinct from the status
+        // row: it appears only when at least one text row survives it.
+        let h_next = avail_h >= 2
+            && avail_w >= min_host_w
+            && (content_width > text_w || scroll_x > 0);
+        if (v_next, h_next) == (v, h) {
+            return (v, h);
+        }
+        v = v_next;
+        h = h_next;
+    }
+    (v, h)
+}
+
 /// Derive one pane's full geometry from its frame rect and model inputs.
 ///
-/// Both scrollbar strips are reserved unconditionally: one column for
-/// the vertical strip on the configured side, one row above the status
-/// row for the horizontal strip. The text rect excludes both by
-/// construction, so the gutter resolves in a single pass (no
-/// estimate/refine cycle) and a bar appearing or disappearing never
-/// shifts text or covers the cursor.
+/// Scrollbar presence is computed, never reserved: the text rect keeps
+/// the full pane extent minus the status row, surrendering exactly one
+/// column when the vertical bar is present and exactly one row when the
+/// horizontal bar is present. A bar that is absent owns no strip — its
+/// cells are text cells, painted by the text renderer — so a bar
+/// appearing or disappearing moves the text rect by exactly its strip,
+/// and no bar ever covers the cursor: the cursor clamps to the text
+/// rect by construction (see `cursor_cell`).
+///
+/// The gutter resolves in a single pass from the pre-bar candidate
+/// height (an overestimate of the visible lines, so the digit width
+/// never underestimates the range the text rect can show). Fixing the
+/// gutter before the presence iteration is what keeps the iteration
+/// monotone (see `scrollbar_presence`).
 fn pane_geometry(
     frame: Rect,
     input: &WindowGeomInput,
     show_line_numbers: bool,
 ) -> PaneGeometry {
-    use crate::config::scrollbar::{SHOW_ARROWS, SHOW_WHEN_FITS, VERTICAL_SIDE, VerticalSide};
+    use crate::config::scrollbar::{SHOW_ARROWS, VERTICAL_SIDE, VerticalSide};
 
     let status_row = frame.y + frame.height.saturating_sub(1);
-    let hscroll_row = status_row.saturating_sub(1);
-    let text_height = frame.height.saturating_sub(2);
+    // Rows available to text plus the horizontal bar; the status row is
+    // the only permanent reservation in the frame.
+    let avail_h = frame.height.saturating_sub(1);
     let gutter = gutter_width(
         show_line_numbers,
         input.line_count,
-        input.scroll_offset + text_height,
+        input.scroll_offset + avail_h,
     );
+    let avail_w = frame.width.saturating_sub(gutter);
     let vbar_left = VERTICAL_SIDE == VerticalSide::Left;
+    // The vertical strip spans the pane minus the status row.
+    let vbar_rows = frame.height.saturating_sub(1);
+
+    let (v_present, h_present) = scrollbar_presence(
+        avail_w,
+        avail_h,
+        vbar_rows,
+        input.line_count,
+        input.content_width,
+        input.scroll_x,
+    );
+
+    let text_w = avail_w.saturating_sub(usize::from(v_present));
+    let text_h = avail_h.saturating_sub(usize::from(h_present));
     // Degenerate panes (gutter wider than the frame) keep the text
     // rect inside the frame: the origin clamps, the size saturates.
-    let text_x = (frame.x + gutter + usize::from(vbar_left)).min(frame.x + frame.width);
-    let text = Rect::new(
-        text_x,
-        frame.y,
-        frame.width.saturating_sub(gutter + 1),
-        text_height,
-    );
+    let text_x =
+        (frame.x + gutter + usize::from(v_present && vbar_left)).min(frame.x + frame.width);
+    let text = Rect::new(text_x, frame.y, text_w, text_h);
 
-    // The horizontal-scroll decision sees the final text width: the
-    // vertical strip is already excluded, so no estimation pass.
-    let needs_hscroll = input.content_width > text.width || input.scroll_x > 0;
-
-    // The vertical strip spans the pane minus the status row; the
-    // horizontal strip's row is the strip's last cell.
-    let vbar_rows = frame.height.saturating_sub(1);
-    let v_scrollbar = if vbar_rows >= 4 && (SHOW_WHEN_FITS || input.line_count > text_height) {
+    let v_scrollbar = if v_present {
         let (track_start, track_len) = if SHOW_ARROWS {
             (frame.y + 1, vbar_rows.saturating_sub(2))
         } else {
             (frame.y, vbar_rows)
         };
         let (thumb_start, thumb_len) = thumb_range(
-            text_height,
+            text_h,
             input.line_count.max(1),
             input.scroll_offset,
             track_len,
@@ -541,31 +698,25 @@ fn pane_geometry(
         None
     };
 
-    let h_scrollbar = if needs_hscroll && frame.height >= 3 {
-        // The strip needs its own row: with fewer than 3 rows (text +
-        // hscroll + status) the derived hscroll_row would collide with
-        // the status row, so no bar is derived.
+    let h_scrollbar = if h_present {
+        let hscroll_row = status_row.saturating_sub(1);
         // The bar spans the text width; the corner cell under the
         // vertical strip belongs to the vertical bar.
-        let (track_start, track_len, paint) = if SHOW_ARROWS {
-            (text.x + 1, text.width.saturating_sub(2), text.width >= 5)
+        let (track_start, track_len) = if SHOW_ARROWS {
+            (text.x + 1, text.width.saturating_sub(2))
         } else {
-            (text.x, text.width, text.width >= 3)
+            (text.x, text.width)
         };
-        if paint {
-            let content = input.content_width.max(input.scroll_x + text.width);
-            let (thumb_start, thumb_len) =
-                thumb_range(text.width, content, input.scroll_x, track_len);
-            Some(ScrollbarGeom {
-                cross: hscroll_row,
-                track_start,
-                track_len,
-                thumb_start,
-                thumb_len,
-            })
-        } else {
-            None
-        }
+        let content = input.content_width.max(input.scroll_x + text.width);
+        let (thumb_start, thumb_len) =
+            thumb_range(text.width, content, input.scroll_x, track_len);
+        Some(ScrollbarGeom {
+            cross: hscroll_row,
+            track_start,
+            track_len,
+            thumb_start,
+            thumb_len,
+        })
     } else {
         None
     };
@@ -576,16 +727,18 @@ fn pane_geometry(
         text,
         gutter_width: gutter,
         status_row,
-        hscroll_row,
         v_scrollbar,
         h_scrollbar,
         cursor: cursor_cell(&text, input),
     }
 }
 
-/// The model cursor cell: `Some` exactly when the window cursor sits
-/// inside the text rect. Anything else (above, below, or past the right
-/// edge) is `None`: hidden, never clamped.
+/// The model cursor cell: `Some` exactly when the text rect is
+/// non-empty and the model names a live cursor. The cell always lands
+/// inside the text rect: a model cursor above/left of the viewport
+/// clamps to the top/left edge, one below/right clamps to the
+/// bottom/right edge. Unknown windows (cursor_y = MAX) and empty text
+/// rects carry no cursor.
 fn cursor_cell(text: &Rect, input: &WindowGeomInput) -> Option<(usize, usize)> {
     if text.width == 0 || text.height == 0 {
         return None;
@@ -1019,7 +1172,10 @@ mod frame_tests {
                 pane.text.x + pane.text.width
             );
         }
-        let row = pane.hscroll_row;
+        let row = pane
+            .h_scrollbar
+            .map(|bar| bar.cross)
+            .expect("fixture must need the horizontal bar");
         assert!(
             row < pane.text.y || row >= pane.text.y + pane.text.height,
             "horizontal bar row {row} lies inside the text rect y={}..{}",
@@ -1059,6 +1215,285 @@ mod frame_tests {
             after, before,
             "cursor on the bottom text row was swallowed by the horizontal bar"
         );
+    }
+
+    /// Construction proof for the ownership invariant: the pane's
+    /// owned regions tile the pane frame exactly — pairwise disjoint,
+    /// union equals the frame. Every cell of the frame therefore has
+    /// exactly one owner, and each owner paints its background as part
+    /// of constructing the frame (text and gutter by the window
+    /// renderer, strips by the scrollbar painters, the status row by
+    /// the status renderer). There is no representable "nobody owns
+    /// this cell" state for a renderer to patch; a hole is a model bug.
+    /// The sweep covers frame sizes (including degenerate narrow and
+    /// short panes), menu rows, scroll offsets, and content shapes at
+    /// and past the presence thresholds.
+    #[test]
+    fn pane_regions_tile_frame_exactly() {
+        fn area(r: &Rect) -> usize {
+            r.width * r.height
+        }
+        fn within(inner: &Rect, outer: &Rect) -> bool {
+            inner.x >= outer.x
+                && inner.y >= outer.y
+                && inner.x + inner.width <= outer.x + outer.width
+                && inner.y + inner.height <= outer.y + outer.height
+        }
+        fn disjoint(a: &Rect, b: &Rect) -> bool {
+            a.x + a.width <= b.x
+                || b.x + b.width <= a.x
+                || a.y + a.height <= b.y
+                || b.y + b.height <= a.y
+        }
+        let tree = leaf(0);
+        for (cols, rows) in [
+            (80usize, 24usize),
+            (3, 12),
+            (5, 5),
+            (10, 3),
+            (40, 10),
+            (200, 60),
+        ] {
+            for menu_rows in [0usize, 1] {
+                let opts = FrameOptions {
+                    cols,
+                    rows,
+                    menu_rows,
+                    show_line_numbers: true,
+                };
+                // Content shapes: narrow/wide × short/tall, plus the exact
+                // boundary values where presence flips.
+                for line_count in [0usize, 1, 10, 21, 22, 23, 100, 2_000_000] {
+                    for content_width in [0usize, 1, 40, 76, 77, 78, 200, 10_000] {
+                        for scroll_x in [0usize, 1] {
+                            for scroll_offset in [0usize, 1_000_000] {
+                                let input = WindowGeomInput {
+                                    window: WindowId(0),
+                                    scroll_offset,
+                                    scroll_x,
+                                    cursor_y: 0,
+                                    visual_cursor_x: 0,
+                                    line_count,
+                                    content_width,
+                                };
+                                let frame = compute_frame(opts, &tree, &[input]);
+                                let pane = &frame.panes[0];
+                                let regions: Vec<(RegionOwner, Rect)> = pane
+                                    .owned_regions()
+                                    .into_iter()
+                                    .flatten()
+                                    .collect();
+                                for (owner, rect) in &regions {
+                                    assert!(
+                                        within(rect, &pane.frame),
+                                        "{owner:?} region {rect:?} escapes pane frame {:?} (cols={cols} rows={rows} lc={line_count} cw={content_width})",
+                                        pane.frame
+                                    );
+                                }
+                                for (i, (_, a)) in regions.iter().enumerate() {
+                                    for (_, b) in regions.iter().skip(i + 1) {
+                                        assert!(
+                                            disjoint(a, b) || area(a) == 0 || area(b) == 0,
+                                            "owned regions overlap: {a:?} vs {b:?} (cols={cols} rows={rows} lc={line_count} cw={content_width})"
+                                        );
+                                    }
+                                }
+                                let union: usize =
+                                    regions.iter().map(|(_, r)| area(r)).sum();
+                                assert_eq!(
+                                    union,
+                                    area(&pane.frame),
+                                    "owned regions do not tile the frame: {regions:?} vs {:?} (cols={cols} rows={rows} lc={line_count} cw={content_width})",
+                                    pane.frame
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The derived presence is a fixed point of the need predicates
+    /// evaluated at the final text rect: re-deriving need from the
+    /// pane's public outputs must reproduce the derived presence.
+    /// This is the no-oscillation proof — a non-converged iteration
+    /// would flip a predicate here. Boundary contents (exactly one
+    /// line/column past the threshold, and the cross-triggering
+    /// pairs) are swept explicitly.
+    #[test]
+    fn scrollbar_presence_is_a_stable_fixed_point() {
+        use crate::config::scrollbar::{SHOW_ARROWS, SHOW_WHEN_FITS};
+        let tree = leaf(0);
+        let opts = FrameOptions {
+            cols: 80,
+            rows: 24,
+            menu_rows: 0,
+            show_line_numbers: false,
+        };
+        // Same host-width floor the implementation uses: the bar the
+        // painter needs, plus the column a vertical bar may take.
+        let min_host_w = if SHOW_ARROWS { 6 } else { 4 };
+        for line_count in [0usize, 1, 22, 23, 24, 25, 100] {
+            for content_width in [0usize, 1, 78, 79, 80, 81, 200] {
+                for scroll_x in [0usize, 3] {
+                    let input = WindowGeomInput {
+                        window: WindowId(0),
+                        scroll_offset: 0,
+                        scroll_x,
+                        cursor_y: 0,
+                        visual_cursor_x: 0,
+                        line_count,
+                        content_width,
+                    };
+                    let frame = compute_frame(opts, &tree, &[input]);
+                    let pane = &frame.panes[0];
+                    // Re-derive from public outputs only.
+                    let avail_h = pane.frame.height.saturating_sub(1);
+                    let avail_w = pane
+                        .frame
+                        .width
+                        .saturating_sub(pane.gutter_width);
+                    let vbar_rows = pane.frame.height.saturating_sub(1);
+                    let v_need = vbar_rows >= 4
+                        && (SHOW_WHEN_FITS || line_count > pane.text.height);
+                    let h_need = avail_h >= 2
+                        && avail_w >= min_host_w
+                        && (content_width > pane.text.width || scroll_x > 0);
+                    assert_eq!(
+                        pane.v_scrollbar.is_some(),
+                        v_need,
+                        "vertical presence not a fixed point: lc={line_count} cw={content_width} sx={scroll_x}"
+                    );
+                    assert_eq!(
+                        pane.h_scrollbar.is_some(),
+                        h_need,
+                        "horizontal presence not a fixed point: lc={line_count} cw={content_width} sx={scroll_x}"
+                    );
+                    // Purity: same inputs, identical rects.
+                    let again = compute_frame(opts, &tree, &[input]);
+                    assert_eq!(frame.panes[0], again.panes[0]);
+                }
+            }
+        }
+    }
+
+    /// Presence rules: an absent bar surrenders nothing; a present bar
+    /// surrenders exactly one row/column; no bar ever intersects the
+    /// text rect.
+    #[test]
+    fn presence_surrenders_exactly_its_strip() {
+        let tree = leaf(0);
+        let opts = FrameOptions {
+            cols: 80,
+            rows: 24,
+            menu_rows: 0,
+            show_line_numbers: false,
+        };
+        // Tall and narrow: vertical bar only.
+        let tall = WindowGeomInput {
+            window: WindowId(0),
+            scroll_offset: 0,
+            scroll_x: 0,
+            cursor_y: 0,
+            visual_cursor_x: 0,
+            line_count: 500,
+            content_width: 10,
+        };
+        let pane = &compute_frame(opts, &tree, &[tall]).panes[0];
+        assert!(pane.v_scrollbar.is_some());
+        assert!(pane.h_scrollbar.is_none());
+        assert_eq!((pane.text.width, pane.text.height), (79, 23));
+        // Short and wide: horizontal bar only.
+        let wide = WindowGeomInput {
+            window: WindowId(0),
+            scroll_offset: 0,
+            scroll_x: 0,
+            cursor_y: 0,
+            visual_cursor_x: 0,
+            line_count: 5,
+            content_width: 500,
+        };
+        let pane = &compute_frame(opts, &tree, &[wide]).panes[0];
+        assert!(pane.v_scrollbar.is_none());
+        assert!(pane.h_scrollbar.is_some());
+        assert_eq!((pane.text.width, pane.text.height), (80, 22));
+        // Neither: full extent.
+        let small = WindowGeomInput {
+            window: WindowId(0),
+            scroll_offset: 0,
+            scroll_x: 0,
+            cursor_y: 0,
+            visual_cursor_x: 0,
+            line_count: 5,
+            content_width: 10,
+        };
+        let pane = &compute_frame(opts, &tree, &[small]).panes[0];
+        assert!(pane.v_scrollbar.is_none() && pane.h_scrollbar.is_none());
+        assert_eq!((pane.text.width, pane.text.height), (80, 23));
+        // Strips never intersect the text rect. Orientation is
+        // definitional: the horizontal bar's cross is the row above the
+        // status row; the vertical bar's is the frame's edge column.
+        for p in [&tall, &wide] {
+            let pane = &compute_frame(opts, &tree, &[*p]).panes[0];
+            for bar in pane.v_scrollbar.iter().chain(pane.h_scrollbar.iter()) {
+                let (rx, ry, rw, rh) = if bar.cross == pane.status_row.saturating_sub(1) {
+                    (bar.strip_start(), bar.cross, bar.strip_len(), 1)
+                } else {
+                    (bar.cross, bar.strip_start(), 1, bar.strip_len())
+                };
+                let t = pane.text;
+                let overlap = rx < t.x + t.width
+                    && t.x < rx + rw
+                    && ry < t.y + t.height
+                    && t.y < ry + rh;
+                assert!(!overlap, "scrollbar strip intersects the text rect");
+            }
+        }
+    }
+
+    /// Appearance/disappearance transitions: widening the content
+    /// summons the horizontal bar, surrendering exactly one row; the
+    /// cursor stays on its cell and the top line (the scroll input,
+    /// which the pure geometry never rewrites) does not move. Narrowing
+    /// reverses it; the cursor is still inside the regrown text rect.
+    #[test]
+    fn bar_transitions_keep_cursor_and_top_line() {
+        let tree = leaf(0);
+        let opts = FrameOptions {
+            cols: 80,
+            rows: 24,
+            menu_rows: 0,
+            show_line_numbers: false,
+        };
+        let narrow = WindowGeomInput {
+            window: WindowId(0),
+            scroll_offset: 5,
+            scroll_x: 0,
+            cursor_y: 25,
+            visual_cursor_x: 5,
+            line_count: 100,
+            content_width: 40,
+        };
+        let before = compute_frame(opts, &tree, &[narrow]).panes[0];
+        assert!(before.h_scrollbar.is_none());
+        let mut wide = narrow;
+        wide.content_width = 500;
+        let after = compute_frame(opts, &tree, &[wide]).panes[0];
+        let bar = after.h_scrollbar.expect("wide content needs the bar");
+        assert_eq!(after.text.height, before.text.height - 1);
+        assert_eq!(after.text.y, before.text.y, "top line must not move");
+        assert_eq!(after.text.width, before.text.width);
+        assert_eq!(after.cursor, before.cursor, "cursor must not move");
+        assert_eq!(bar.cross, after.status_row - 1);
+        // And back: the bar disappears, the text rect regrows by exactly
+        // its row, the cursor is still inside.
+        let back = compute_frame(opts, &tree, &[narrow]).panes[0];
+        assert!(back.h_scrollbar.is_none());
+        assert_eq!(back.text.height, before.text.height);
+        let (cx, cy) = back.cursor.expect("cursor visible");
+        let t = back.text;
+        assert!(cx >= t.x && cx < t.x + t.width && cy >= t.y && cy < t.y + t.height);
     }
 
     #[test]

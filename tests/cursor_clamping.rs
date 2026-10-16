@@ -171,11 +171,13 @@ fn cursor_clamps_with_vertical_split_and_scrollbars() {
     let pane = frame.pane_for(WindowId(2)).expect("bottom pane exists");
     let text = pane.text;
     let (cx, cy) = pane.cursor.expect("cursor must exist");
-    // The cursor must be strictly above the hscroll row and status row.
+    // The cursor must be strictly above the horizontal bar's row and
+    // the status row. The bar is present here (wide content), so its
+    // row exists; when absent there is no strip row at all.
+    let hbar_row = pane.h_scrollbar.expect("bar present").cross;
     assert!(
-        cy < pane.hscroll_row,
-        "cursor y {cy} escaped into hscroll row {}",
-        pane.hscroll_row
+        cy < hbar_row,
+        "cursor y {cy} escaped into hscroll row {hbar_row}"
     );
     assert!(
         cy < pane.status_row,
