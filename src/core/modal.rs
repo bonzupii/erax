@@ -473,7 +473,19 @@ impl ModalEngine {
     /// focus manager like the TUI event loop does, so `/` and `?` start
     /// incremental search instead of dying silently.
     fn run(&mut self, app: &mut EditorApp, cmd: Command, count: usize) -> ModalOutcome {
-        match dispatch(app, cmd, count) {
+        let result = dispatch(app, cmd, count);
+        self.convert_result(app, result)
+    }
+
+    /// Surface a dispatch result the way a single command would: Info
+    /// reaches the echo area, NeedsInput/AwaitKey open their prompts,
+    /// Exit propagates.
+    fn convert_result(
+        &mut self,
+        app: &mut EditorApp,
+        result: DispatchResult,
+    ) -> ModalOutcome {
+        match result {
             DispatchResult::Exit => ModalOutcome::ExitRequested,
             DispatchResult::Info(msg) => {
                 app.message = Some(msg);
@@ -1636,11 +1648,26 @@ impl ModalEngine {
         match EX_COMMANDS.iter().find(|(name, _)| *name == cmd).map(|(_, a)| *a) {
             Some(ExAction::Run(command)) => self.run(app, command, 1),
             Some(ExAction::RunSequence(commands)) => {
-                let mut outcome = ModalOutcome::Consumed;
+                // A sequence stops at the first step that does not
+                // cleanly succeed: `:wq` with a failed or impossible
+                // save must not run the quit. Only the last outcome
+                // used to survive, so a NeedsInput (SaveAs prompt) or
+                // an Info ("Save failed") from the save was silently
+                // overwritten by the quit that followed it.
                 for command in commands.iter() {
-                    outcome = self.run(app, *command, 1);
+                    let result = dispatch(app, *command, 1);
+                    let stop = !matches!(
+                        result,
+                        DispatchResult::Success
+                            | DispatchResult::Redraw
+                            | DispatchResult::NotHandled
+                    );
+                    let outcome = self.convert_result(app, result);
+                    if stop {
+                        return outcome;
+                    }
                 }
-                outcome
+                ModalOutcome::Consumed
             }
             Some(ExAction::ConditionalQuit) => {
                 let modified = app.buffers.values().any(|b| b.modified);
@@ -4151,6 +4178,42 @@ mod parity_end_to_end {
 
     fn fresh_engine_app() -> (ModalEngine, EditorApp) {
         (ModalEngine::new(), EditorApp::new())
+    }
+
+    #[test]
+    fn wq_stops_when_save_needs_a_filename() {
+        // `:wq` on an untitled modified buffer: the save returns
+        // NeedsInput (SaveAs prompt). The sequence must stop there;
+        // the old code ran the quit anyway and overwrote the outcome.
+        let (mut engine, mut app) = fresh_engine_app();
+        app.active_buffer_mut().unwrap().insert(0, "unsaved");
+        let outcome = engine.execute_cmdline(&mut app, "wq");
+        assert_ne!(outcome, ModalOutcome::ExitRequested);
+        assert!(app
+            .focus_manager
+            .current_state()
+            .is_some_and(|s| s.prompt == "Save as: "));
+        assert!(app.active_buffer().is_some_and(|b| b.modified));
+    }
+
+    #[test]
+    fn wq_quits_when_save_succeeds() {
+        // `:wq` on a named modified buffer: the save succeeds and the
+        // quit runs.
+        let (mut engine, mut app) = fresh_engine_app();
+        let path = std::env::temp_dir().join(format!("erax-wq-{}.txt", std::process::id()));
+        std::fs::write(&path, "").expect("write temp file");
+        if let Some(buffer) = app.active_buffer_mut() {
+            buffer.filename = Some(path.clone());
+            buffer.insert(0, "saved by :wq");
+        }
+        let outcome = engine.execute_cmdline(&mut app, "wq");
+        assert_eq!(outcome, ModalOutcome::ExitRequested);
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read back"),
+            "saved by :wq"
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     fn feed(engine: &mut ModalEngine, app: &mut EditorApp, keys: &[KeyPress]) -> ModalOutcome {
