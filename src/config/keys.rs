@@ -1,18 +1,18 @@
-//! Keybindings and input model: typed `pub const`s (N-008, N-270).
+//! Keybindings and input model: typed `pub const`s.
 //!
 //! Every binding is a [`KeyBinding`]: a typed key sequence to a typed
-//! [`Command`]. There is one canonical key representation (N-010, N-060) —
-//! ESC-prefix normalization happens once in the keybinding trie, so the old
-//! duplicated `"ESC-x"` / `"Esc x"` spellings are gone: each binding is
-//! written once with [`KeyPress::alt`].
+//! [`Command`]. There is one canonical key representation: ESC-prefix
+//! normalization happens once in the keybinding trie, so each binding is
+//! written once with [`KeyPress::alt`] and no `"ESC-x"` / `"Esc x"`
+//! duplicate spellings exist.
 //!
 //! A binding that is both a leaf command and a prefix of a longer binding
-//! declares its [`PrefixPolicy`] explicitly (N-013): `^C` waits for a possible
+//! declares its [`PrefixPolicy`] explicitly: `^C` waits for a possible
 //! `^C Tab`, while every other leaf executes immediately.
 //!
-//! The input model is a compile-time switch (N-268): [`INPUT_MODEL`] selects
-//! the key-trie model or the modal model. Both are real, implemented input
-//! paths behind the one switch.
+//! The input model is a compile-time switch: [`INPUT_MODEL`] selects the
+//! key-trie model or the modal model. Both are implemented input paths
+//! behind the one switch.
 //!
 //! Binding doctrine: every key, key sequence, and command-line word that
 //! invokes a command is data in this module. Engines interpret the tables
@@ -35,7 +35,7 @@ use crate::core::input::{Key, KeyPress, PrefixPolicy};
 pub const INPUT_MODEL: InputModel = InputModel::KeyTrie;
 
 /// How long an `AwaitLonger` leaf waits for a longer sequence before the leaf
-/// command executes (N-013).
+/// command executes.
 pub const KEY_SEQUENCE_TIMEOUT_MS: u64 = 500;
 
 // ---------------------------------------------------------------------------
@@ -56,8 +56,8 @@ const fn plain(key: Key) -> KeyPress {
 
 /// The default keybindings, in uemacs-faithful arrangement.
 ///
-/// Each binding appears exactly once (N-010): no duplicate ESC spellings.
-/// Leaf-and-prefix conflicts declare their policy explicitly (N-013).
+/// Each binding appears exactly once: no duplicate ESC spellings.
+/// Leaf-and-prefix conflicts declare their policy explicitly.
 pub const KEYBINDINGS: &[KeyBinding] = &[
     // -- movement --
     KeyBinding { keys: &[ctrl('f')], command: Command::ForwardCharacter, policy: PrefixPolicy::ExecuteLeaf },
@@ -112,8 +112,8 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
     KeyBinding { keys: &[plain(Key::Backspace)], command: Command::DeletePreviousCharacter, policy: PrefixPolicy::ExecuteLeaf },
     KeyBinding { keys: &[plain(Key::Enter)], command: Command::InsertNewline, policy: PrefixPolicy::ExecuteLeaf },
     KeyBinding { keys: &[plain(Key::Tab)], command: Command::InsertTab, policy: PrefixPolicy::ExecuteLeaf },
-    // ^C is both insert-space and the prefix of ^C Tab: wait for the longer
-    // sequence (N-013).
+    // ^C is both insert-space and the prefix of ^C Tab: wait for the
+    // longer sequence.
     KeyBinding { keys: &[ctrl('c'), plain(Key::Tab)], command: Command::ExpandSnippet, policy: PrefixPolicy::ExecuteLeaf },
     KeyBinding { keys: &[ctrl('k')], command: Command::KillToEndOfLine, policy: PrefixPolicy::ExecuteLeaf },
     KeyBinding { keys: &[ctrl('y')], command: Command::Yank, policy: PrefixPolicy::ExecuteLeaf },
@@ -200,7 +200,7 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
     // -- diagnostics navigation --
     KeyBinding { keys: &[alt('n')], command: Command::DiagnosticsNext, policy: PrefixPolicy::ExecuteLeaf },
     KeyBinding { keys: &[alt('p')], command: Command::DiagnosticsPrevious, policy: PrefixPolicy::ExecuteLeaf },
-    // -- menu (N-043: bound in config, not hardcoded in the handler) --
+    // -- menu --
     KeyBinding { keys: &[plain(Key::F(10))], command: Command::ToggleMenu, policy: PrefixPolicy::ExecuteLeaf },
 ];
 
@@ -223,12 +223,12 @@ pub const fn bindings_for_model(model: InputModel) -> &'static [KeyBinding] {
 
 /// Normal/visual-mode keymap: motions, operators, registers, mode switches.
 ///
-/// Phase 1 (N-268): counts, operators d/y/c with motions, dd/yy/cc linewise,
-/// x/X/r/s/S/D/C, p/P with registers, visual v/V, command line `:`,
-/// search `/`, find-char f/F/t/T with `;`/`,`, `.` repeat, `"` registers.
-/// Phase 2 (N-268): `e`/`E`/`ge`/`gE` word-end motions, `W`/`B` WORD motions,
-/// `(`/`)` sentence motions, and text objects (`iw`, `a(`, `i"`, …) —
-/// all served by one shared word/text-object primitive.
+/// Counts, operators d/y/c with motions, dd/yy/cc linewise, x/X/r/s/S/D/C,
+/// p/P with registers, visual v/V, command line `:`, search `/`, find-char
+/// f/F/t/T with `;`/`,`, `.` repeat, `"` registers, `e`/`E`/`ge`/`gE`
+/// word-end motions, `W`/`B` WORD motions, `(`/`)` sentence motions, and
+/// text objects (`iw`, `a(`, `i"`, …) — all served by one shared
+/// word/text-object primitive.
 pub const MODAL_BINDINGS: &[ModalBinding] = &[
     // -- motions --
     ModalBinding { mode: ModalMode::Normal, key: plain(Key::Char('h')), action: ModalAction::Command(Command::BackwardCharacter) },
@@ -421,7 +421,7 @@ pub const MODAL_TEXT_OBJECTS: &[(KeyPress, ModalTextObject)] = &[
 ];
 
 // ---------------------------------------------------------------------------
-// Standard bindings (N-268): modeless Notepad/VS Code style.
+// Standard bindings: modeless Notepad/VS Code style.
 // ---------------------------------------------------------------------------
 
 /// Standard (CUA-style) bindings: typing inserts; Ctrl+C/X/V clipboard,
