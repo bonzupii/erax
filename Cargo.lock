@@ -959,6 +959,7 @@ dependencies = [
  "sys-locale",
  "tempfile",
  "tungstenite",
+ "unicode-script",
  "unicode-segmentation",
  "unicode-width",
  "vte",

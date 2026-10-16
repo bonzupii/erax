@@ -15,7 +15,7 @@ use crate::gui::core::Renderer;
 /// Resolve the configured font stack to bytes via the platform font
 /// database. This is the ONE place that decides *which* fonts the editor
 /// uses: the presentation core never selects fonts, it only shapes with
-/// the bytes it is given (plus the platform fallback as a last resort for
+/// the bytes it is given (plus the system fonts as a last resort for
 /// scripts the stack cannot cover).
 ///
 /// Returns one entry per `FONT_STACK` family found on the system, in
@@ -23,7 +23,8 @@ use crate::gui::core::Renderer;
 /// with no system match are skipped: the stack is a preference list, not
 /// a requirement. An empty return means no configured font is available
 /// (the core then shapes with an empty database plus its system
-/// last-resort).
+/// last-resort). The core turns this order into the shaper's fallback
+/// lists, so config order is the fallback order.
 pub fn resolve_config_fonts() -> Vec<FontSource> {
     let mut db = fontdb::Database::new();
     // Platform font lookup is a shell concern, not a core concern.

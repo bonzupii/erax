@@ -9,18 +9,22 @@
 //!   configured stack) and passes the bytes in.
 //!
 //! The shaping database holds the whole stack in order, then the system
-//! fonts as a last resort: the configured fallback wins ties, and glyphs
-//! the stack cannot cover (emoji, CJK, historic scripts) still resolve
-//! through the platform fallback instead of shaping as tofu. Loading the
-//! system fonts last is not font *selection* — selection already happened
-//! in the stack order above; it only keeps uncovered scripts renderable.
-//! The primary family (the stack head) is the shaping family; every entry
-//! is a real fallback candidate, which is what makes ligatures, Braille,
-//! box drawing, and multi-script text work instead of depending on which
+//! fonts as a last resort: the fallback lists handed to the shaper are
+//! the resolved stack families in order, so a configured entry (the color
+//! emoji font, the CJK font) wins its script over whatever the platform
+//! happens to have. Glyphs the stack cannot cover still resolve through
+//! the system fonts instead of shaping as tofu. Loading the system fonts
+//! last is not font *selection* — selection already happened in the stack
+//! order above; it only keeps uncovered scripts renderable. The primary
+//! family (the stack head) is the shaping family; every entry is a real
+//! fallback candidate, which is what makes ligatures, Braille, box
+//! drawing, and multi-script text work instead of depending on which
 //! single font happened to resolve.
 
+use cosmic_text::fallback::Fallback;
 use cosmic_text::{Align, Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache};
 use std::sync::Arc;
+use unicode_script::Script;
 
 /// One font file for the shaping database: bytes plus the family name the
 /// shaper selects it by. The stack order is the fallback order.
@@ -42,14 +46,42 @@ pub struct FontManager {
     pub ascent: f32,
 }
 
+/// Font fallback driven by the configured stack, not the platform's
+/// hardcoded lists.
+///
+/// cosmic-text's `PlatformFallback` carries static family lists (e.g.
+/// "DejaVu Sans" ahead of "Noto Color Emoji") that shadow configured
+/// stack entries for any script the primary font lacks — the stack order
+/// then does not decide the winner. Returning the resolved stack
+/// families in order makes selection stay configuration: a stack entry
+/// wins its script, and the system fonts loaded after the stack remain
+/// only the last resort. Script-specific lists are empty on purpose; the
+/// stack already encodes the owner's per-script choices.
+struct StackFallback {
+    families: &'static [&'static str],
+}
+
+impl Fallback for StackFallback {
+    fn common_fallback(&self) -> &[&'static str] {
+        self.families
+    }
+
+    fn forbidden_fallback(&self) -> &[&'static str] {
+        &[]
+    }
+
+    fn script_fallback(&self, _script: Script, _locale: &str) -> &[&'static str] {
+        &[]
+    }
+}
+
 impl FontManager {
     /// System locale for shaping, in BCP 47 form.
     ///
     /// cosmic-text keeps its locale query private, so the core asks the
-    /// same source directly. Only the language subtag matters here (CJK
-    /// han-unification in the platform fallback lists); anything
-    /// unparseable falls back to `en-US`, matching cosmic-text's own
-    /// fallback.
+    /// same source directly. Only the language subtag matters here (it
+    /// drives script shaping features); anything unparseable falls back
+    /// to `en-US`, matching cosmic-text's own fallback.
     fn locale() -> String {
         sys_locale::get_locale()
             .and_then(|tag| {
@@ -66,17 +98,18 @@ impl FontManager {
     /// Create a font manager from the configured font stack.
     ///
     /// Every entry is loaded into the shaping database in order, then the
-    /// system fonts as a last resort: stack entries sort before system
-    /// fonts on ties, so the configured fallback wins over the arbitrary
-    /// system pick. An empty stack means "no fonts" (empty database, no
-    /// system scan either); callers should always provide the stack.
+    /// system fonts as a last resort. The shaper's fallback lists are the
+    /// resolved stack families in that same order ([`StackFallback`]), so
+    /// a configured entry wins its script instead of the platform's
+    /// hardcoded lists shadowing it. An empty stack means "no fonts"
+    /// (empty database, no system scan either); callers should always
+    /// provide the stack.
     pub fn from_font_stack(font_size: f32, line_height: f32, fonts: &[FontSource]) -> Self {
         let mut db = fontdb::Database::new();
         for font in fonts {
             db.load_font_source(fontdb::Source::Binary(font.bytes.clone()));
         }
-        // Last resort only: the stack above sorts first, so configured
-        // families win over whatever the platform happens to have.
+        // Last resort only, reached after the whole stack.
         db.load_system_fonts();
         // Generic-family settings mirror cosmic-text's own defaults so a
         // `Family::Monospace` query behaves the same as through
@@ -85,10 +118,22 @@ impl FontManager {
         db.set_sans_serif_family("Open Sans");
         db.set_serif_family("DejaVu Serif");
 
+        // The fallback lists must borrow for the font system's lifetime;
+        // the leak is bounded (one small slice per manager construction,
+        // which happens once per renderer, not per frame).
+        let owned: Vec<String> = fonts
+            .iter()
+            .filter_map(|f| f.family.clone())
+            .collect();
+        let leaked: &'static mut [String] = Box::leak(owned.into_boxed_slice());
+        let refs: Vec<&'static str> =
+            leaked.iter().map(String::as_str).collect();
+        let families: &'static [&'static str] =
+            Box::leak(refs.into_boxed_slice());
         let mut font_system = FontSystem::new_with_locale_and_db_and_fallback(
             Self::locale(),
             db,
-            cosmic_text::fallback::PlatformFallback,
+            StackFallback { families },
         );
         let swash_cache = SwashCache::new();
         let metrics = Metrics::new(font_size, line_height);

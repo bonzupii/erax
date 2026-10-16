@@ -15,8 +15,19 @@
 pub const FONT_STACK: &[&str] = &[
     "JetBrainsMono Nerd Font Mono",
     "Noto Sans Mono",
+    // Emoji: after Noto Sans Mono (its ASCII digits resolve there, so the
+    // color font's digit glyphs never hijack text) and before DejaVu Sans
+    // Mono (its monochrome U+2764 would shadow the color heart).
+    "Noto Color Emoji",
     "DejaVu Sans Mono",
     "Liberation Mono",
+    // CJK: last. Nothing earlier covers CJK, so placing it here changes
+    // no existing resolution (box drawing and blocks still resolve to the
+    // fonts above). The monospaced CJK variant preserves the cell model;
+    // SC is the conventional default regional variant. No Nerd Fonts
+    // patched CJK family exists upstream, so a Nerd Font name here would
+    // be unverifiable and silently fall back.
+    "Noto Sans Mono CJK SC",
 ];
 
 /// Font size in pixels. Used exactly as given (N-025: no magic `+ 1.0`).

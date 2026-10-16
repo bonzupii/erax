@@ -203,6 +203,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sys-locale",
+ "unicode-script",
  "unicode-segmentation",
  "wasm-bindgen",
  "wasm-bindgen-futures",

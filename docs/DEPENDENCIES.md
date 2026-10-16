@@ -21,6 +21,7 @@ Cargo.lock: 354 packages.
 | wgpu | 30.0.1 | GPU renderer (native shell + future wasm web shell) | No — GPU abstraction is a high-impact subsystem |
 | winit | 0.30.13 | native window/event loop | No — platform windowing |
 | cosmic-text | 0.19.0 | font shaping, layout, rasterization (N-120/N-259/N-260) | No — text shaping is a high-impact subsystem |
+| unicode-script | 0.5.8 | Script enum for the stack-driven shaping fallback (`Fallback` trait impl in `font_manager.rs`) | Low priority — tiny, tables are Unicode data |
 | regex | 1.13.1 | sed patterns, search | No — correct regex engines are hard; differential-test before any in-house attempt |
 | crossterm | 0.29.0 | terminal I/O, events, cursor styles | Unlikely — terminal handling is platform-fiddly |
 | clap | 4.6.7 | CLI parsing (derive) | Low priority — small but correct; evaluate later |
