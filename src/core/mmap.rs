@@ -38,13 +38,18 @@
 //! - All derefs go through `read_guarded`, which validates bounds first and
 //!   arms the SIGBUS guard around the deref window.
 //!
-//! Platform note: Unix-only (`#[cfg(unix)]` at the `mod` declaration).
-//! The `libc` crate does not expose `sigsetjmp`/`siglongjmp` on this
-//! platform, so they are declared here via `extern "C"` (see `guard`).
+//! Platform note: Unix and Windows. The OS veneer (mapping creation via
+//! `mmap`/`CreateFileMappingW`, fault trapping via a `SIGBUS` handler / a
+//! vectored exception handler) is the only OS-specific code; everything
+//! above it — the region, the branded guard, the snapshot revalidation —
+//! is shared. The `libc` crate does not expose `sigsetjmp`/`siglongjmp` on
+//! unix, so they are declared via `extern "C"` (see `guard`); the Windows
+//! kernel32 and CRT imports are hand-declared the same way (no new
+//! dependency).
 
 use crate::core::btext::PagerError;
 use std::fs::File;
-#[cfg(not(miri))]
+#[cfg(all(unix, not(miri)))]
 use std::os::unix::io::AsRawFd;
 use std::time::SystemTime;
 
@@ -57,7 +62,7 @@ use std::time::SystemTime;
 /// SAFETY: `fd` must be a valid open file descriptor, `map_len > 0`, offset
 /// 0 is page-aligned. Returns `MAP_FAILED` on error (checked by caller).
 /// The mapping is valid until `raw_munmap`; the caller keeps `fd` open.
-#[cfg(not(miri))]
+#[cfg(all(unix, not(miri)))]
 #[allow(unsafe_code)]
 fn raw_mmap(fd: libc::c_int, map_len: usize) -> *mut libc::c_void {
     unsafe {
@@ -76,11 +81,99 @@ fn raw_mmap(fd: libc::c_int, map_len: usize) -> *mut libc::c_void {
 ///
 /// SAFETY: `ptr`/`len` must be the exact values from `raw_mmap`, not
 /// already unmapped.
-#[cfg(not(miri))]
+#[cfg(all(unix, not(miri)))]
 #[allow(unsafe_code)]
 fn raw_munmap(ptr: *mut libc::c_void, len: usize) {
     unsafe {
         libc::munmap(ptr, len);
+    }
+}
+
+// -- Windows veneer: hand-declared kernel32 + CRT imports (no new
+// dependency, matching the unix hand-declared `__sigsetjmp`). Only mapping
+// creation/destruction lives here; the guard's VEH trapping is in
+// `guard::os`. --
+
+#[cfg(windows)]
+type Handle = *mut std::ffi::c_void;
+#[cfg(windows)]
+type Dword = u32;
+
+/// Win32 API surface used by the mapping veneer and the VEH guard.
+/// `extern "system"` is the WinAPI calling convention; the CRT
+/// (`setjmp`/`longjmp`) uses `extern "C"`.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+unsafe extern "system" {
+    fn CreateFileMappingW(
+        h_file: Handle,
+        lp_file_mapping_attributes: *mut std::ffi::c_void,
+        fl_protect: Dword,
+        dw_maximum_size_high: Dword,
+        dw_maximum_size_low: Dword,
+        lp_name: *const u16,
+    ) -> Handle;
+    fn MapViewOfFile(
+        h_file_mapping_object: Handle,
+        dw_desired_access: Dword,
+        dw_file_offset_high: Dword,
+        dw_file_offset_low: Dword,
+        dw_number_of_bytes_to_map: usize,
+    ) -> *mut std::ffi::c_void;
+    fn UnmapViewOfFile(lp_base_address: *mut std::ffi::c_void) -> i32;
+    fn CloseHandle(h_object: Handle) -> i32;
+    fn AddVectoredExceptionHandler(
+        first: u32,
+        vectored_handler: *const std::ffi::c_void,
+    ) -> *mut std::ffi::c_void;
+}
+
+#[cfg(windows)]
+const PAGE_READONLY: Dword = 0x02;
+#[cfg(windows)]
+const FILE_MAP_READ: Dword = 0x0004;
+
+/// Create a read-only file mapping of `map_len` bytes of `handle` and map
+/// a view of it. Returns the view base and the mapping handle (closed in
+/// `raw_munmap`).
+///
+/// SAFETY: `handle` must be a valid open file handle, `map_len > 0`. The
+/// view is valid until `raw_munmap`; the caller keeps `handle` open.
+#[cfg(all(windows, not(miri)))]
+#[allow(unsafe_code)]
+fn raw_mmap(handle: Handle, map_len: usize) -> Result<(*mut std::ffi::c_void, Handle), std::io::Error> {
+    unsafe {
+        let mapping = CreateFileMappingW(
+            handle,
+            std::ptr::null_mut(),
+            PAGE_READONLY,
+            0,
+            0,
+            std::ptr::null(),
+        );
+        if mapping.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
+        let ptr = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, map_len);
+        if ptr.is_null() {
+            let e = std::io::Error::last_os_error();
+            CloseHandle(mapping);
+            return Err(e);
+        }
+        Ok((ptr, mapping))
+    }
+}
+
+/// Unmap a view and close its file-mapping object.
+///
+/// SAFETY: `ptr`/`mapping` must be the exact values from `raw_mmap`, not
+/// already unmapped/closed.
+#[cfg(all(windows, not(miri)))]
+#[allow(unsafe_code)]
+fn raw_munmap(ptr: *mut std::ffi::c_void, mapping: Handle) {
+    unsafe {
+        UnmapViewOfFile(ptr);
+        CloseHandle(mapping);
     }
 }
 
@@ -174,10 +267,11 @@ mod guard {
     #[cfg(not(miri))]
     use std::sync::Once;
 
-    /// Opaque storage for the C `sigjmp_buf`. glibc needs 320 bytes on
-    /// x86_64 and 432 on aarch64; musl needs less. 512 bytes at 16-byte
-    /// alignment covers all realistic Linux targets with margin. Rust never
-    /// inspects the contents — only `sigsetjmp`/`siglongjmp` touch it.
+    /// Opaque storage for the jump buffer. Unix: C `sigjmp_buf` (glibc needs
+    /// 320 bytes on x86_64 and 432 on aarch64; musl needs less). Windows:
+    /// the CRT `_JUMP_BUFFER` (256 bytes on x86_64). 512 bytes at 16-byte
+    /// alignment covers all targets with margin. Rust never inspects the
+    /// contents — only the setjmp/longjmp primitives touch it.
     #[repr(C, align(16))]
     struct JmpBuf([std::mem::MaybeUninit<u8>; 512]);
 
@@ -186,11 +280,22 @@ mod guard {
     // `sigsetjmp` as a *macro* expanding to `__sigsetjmp` — the exported
     // symbol is `__sigsetjmp`, so that is what we link against.
     // Under Miri these are never called (`guarded` is a pass-through there).
-    #[cfg(not(miri))]
+    #[cfg(all(unix, not(miri)))]
     #[allow(unsafe_code)]
     unsafe extern "C" {
         fn __sigsetjmp(env: *mut JmpBuf, savemask: libc::c_int) -> libc::c_int;
         fn siglongjmp(env: *mut JmpBuf, val: libc::c_int) -> !;
+    }
+
+    // Windows CRT recovery primitives, declared directly (no new
+    // dependency). `setjmp`/`longjmp` are async-signal-safe for the VEH
+    // handler's purposes: the handler runs on the faulting thread, and
+    // `longjmp` diverges without returning through the exception dispatcher.
+    #[cfg(all(windows, not(miri)))]
+    #[allow(unsafe_code)]
+    unsafe extern "C" {
+        fn setjmp(env: *mut JmpBuf) -> std::ffi::c_int;
+        fn longjmp(env: *mut JmpBuf, val: std::ffi::c_int) -> !;
     }
 
     // -- Unsafe leaves: each holds exactly one unsafe operation and no
@@ -226,12 +331,45 @@ mod guard {
     /// Jump back to the recovery point. Diverges.
     ///
     /// SAFETY: `env` must be a live `JmpBuf` on the calling thread's stack,
-    /// previously initialized by `__sigsetjmp`. `siglongjmp` is
+    /// previously initialized by `raw_setjmp`. The jump primitive is
     /// async-signal-safe.
-    #[cfg(not(miri))]
+    #[cfg(all(unix, not(miri)))]
     #[allow(unsafe_code)]
     fn jump_to_recovery(env: *mut JmpBuf) -> ! {
         unsafe { siglongjmp(env, 1) }
+    }
+
+    /// Jump back to the recovery point (Windows). Diverges.
+    ///
+    /// SAFETY: `env` must be a live `JmpBuf` on the calling thread's stack,
+    /// previously initialized by `raw_setjmp`. The VEH handler runs on the
+    /// faulting thread; `longjmp` diverges without returning through the
+    /// exception dispatcher.
+    #[cfg(all(windows, not(miri)))]
+    #[allow(unsafe_code)]
+    fn jump_to_recovery(env: *mut JmpBuf) -> ! {
+        unsafe { longjmp(env, 1) }
+    }
+
+    /// Checkpoint the stack for recovery. Unix: `__sigsetjmp` with
+    /// `savemask = 1`; Windows: CRT `setjmp`.
+    ///
+    /// SAFETY: `env` must be a live `JmpBuf` stack slot on the calling
+    /// thread, kept alive for the whole guarded window (see `guarded`).
+    #[cfg(all(unix, not(miri)))]
+    #[allow(unsafe_code)]
+    fn raw_setjmp(env: *mut JmpBuf) -> libc::c_int {
+        unsafe { __sigsetjmp(env, 1) }
+    }
+
+    /// Checkpoint the stack for recovery (Windows: CRT `setjmp`).
+    ///
+    /// SAFETY: `env` must be a live `JmpBuf` stack slot on the calling
+    /// thread, kept alive for the whole guarded window (see `guarded`).
+    #[cfg(all(windows, not(miri)))]
+    #[allow(unsafe_code)]
+    fn raw_setjmp(env: *mut JmpBuf) -> std::ffi::c_int {
+        unsafe { setjmp(env) }
     }
 
     /// Reinterpret a captured handler address as a 3-arg `SA_SIGINFO` fn.
@@ -361,18 +499,21 @@ mod guard {
     /// `sa_handler`). Written once inside `INSTALL.call_once` before any
     /// signal can reach the new handler on a guarded thread (guards can
     /// only arm after `ensure_installed` returns); read-only afterwards.
-    /// Atomics keep the handler free of `static mut`.
-    #[cfg(not(miri))]
+    /// Atomics keep the handler free of `static mut`. Unix only; the
+    /// Windows VEH chain needs no previous-disposition capture (foreign
+    /// faults get `EXCEPTION_CONTINUE_SEARCH`, so the system's handlers run
+    /// exactly as without us).
+    #[cfg(all(unix, not(miri)))]
     static PREV_KIND: AtomicU8 = AtomicU8::new(0);
-    #[cfg(not(miri))]
+    #[cfg(all(unix, not(miri)))]
     static PREV_HANDLER: AtomicUsize = AtomicUsize::new(0);
     /// Whether the previous handler used `SA_SIGINFO` (3-arg) or is a plain
     /// 1-arg `sa_handler`. Only meaningful when `PREV_KIND == 2`.
-    #[cfg(not(miri))]
+    #[cfg(all(unix, not(miri)))]
     static PREV_SIGINFO: AtomicU8 = AtomicU8::new(0);
 
     /// Our `SIGBUS` handler (`SA_SIGINFO`).
-    #[cfg(not(miri))]
+    #[cfg(all(unix, not(miri)))]
     extern "C" fn on_sigbus(
         sig: libc::c_int,
         info: *mut libc::siginfo_t,
@@ -401,7 +542,7 @@ mod guard {
 
     /// Previous-disposition chaining for foreign `SIGBUS`es.
     /// Only called from the signal handler; async-signal-safe.
-    #[cfg(not(miri))]
+    #[cfg(all(unix, not(miri)))]
     fn delegate(sig: libc::c_int, info: *mut libc::siginfo_t, ctx: *mut libc::c_void) {
         match PREV_KIND.load(Ordering::Relaxed) {
             1 => {} // previously ignored: keep ignoring
@@ -425,6 +566,75 @@ mod guard {
         }
     }
 
+    // -- Windows VEH fault trapping: the `EXCEPTION_IN_PAGE_ERROR`
+    // (0xC0000006) counterpart of the unix SIGBUS handler. A vectored
+    // exception handler registered once for the process; it checks the
+    // fault address against the armed range exactly like `on_sigbus` and
+    // recovers via the CRT `longjmp`, with the same contract. --
+
+    /// Win32 `EXCEPTION_RECORD` (only the fields we read).
+    #[cfg(all(windows, not(miri)))]
+    #[repr(C)]
+    struct ExceptionRecord {
+        exception_code: u32,
+        exception_flags: u32,
+        exception_record: *mut ExceptionRecord,
+        exception_address: *mut std::ffi::c_void,
+        number_parameters: u32,
+        exception_information: [usize; 15],
+    }
+
+    /// Win32 `EXCEPTION_POINTERS` (context record is opaque to us).
+    #[cfg(all(windows, not(miri)))]
+    #[repr(C)]
+    struct ExceptionPointers {
+        exception_record: *mut ExceptionRecord,
+        context_record: *mut std::ffi::c_void,
+    }
+
+    #[cfg(all(windows, not(miri)))]
+    const EXCEPTION_IN_PAGE_ERROR: u32 = 0xC000_0006;
+    /// Tell the dispatcher to keep searching: foreign faults behave as if
+    /// we were never installed (the `delegate` counterpart).
+    #[cfg(all(windows, not(miri)))]
+    const EXCEPTION_CONTINUE_SEARCH: i32 = -1;
+
+    /// Our vectored exception handler. Checks an in-page-error's fault
+    /// address (`ExceptionInformation[1]`) against the armed range and
+    /// `longjmp`s back on a match; every other exception continues the
+    /// search. Runs on the faulting thread; async-signal-safe body (a
+    /// thread-local read, integer arithmetic, `longjmp`).
+    #[cfg(all(windows, not(miri)))]
+    unsafe extern "system" fn veh_handler(
+        info: *mut ExceptionPointers,
+    ) -> i32 {
+        // SAFETY: the OS provides a valid `EXCEPTION_POINTERS` to a
+        // vectored handler; we read only `ExceptionRecord` and its
+        // `ExceptionInformation[1]` (the fault address for in-page errors).
+        unsafe {
+            let record = (*info).exception_record;
+            if (*record).exception_code == EXCEPTION_IN_PAGE_ERROR {
+                let fault_addr = (*record).exception_information[1];
+                let ours = ACTIVE.try_with(|slot| {
+                    let p = slot.get();
+                    if p.is_null() {
+                        return false;
+                    }
+                    let g = guard_from_raw(p);
+                    // Branchless range check: `addr in [base, end)`.
+                    if fault_addr.wrapping_sub(g.base) < g.end.wrapping_sub(g.base) {
+                        jump_to_recovery(g.env);
+                    }
+                    false
+                });
+                // `jump_to_recovery` diverges; reaching here means the
+                // fault is not inside our window.
+                let _ = ours;
+            }
+            EXCEPTION_CONTINUE_SEARCH
+        }
+    }
+
     /// Install the process-wide `SIGBUS` handler (once). Called before any
     /// guarded read.
     pub(super) fn ensure_installed() {
@@ -433,7 +643,7 @@ mod guard {
             // Miri cannot install or deliver real signals.
             return;
         }
-        #[cfg(not(miri))]
+        #[cfg(all(unix, not(miri)))]
         INSTALL.call_once(|| {
             // Zeroed `sigaction`, then every field initialized below;
             // `SA_SIGINFO` selects the 3-argument handler.
@@ -460,6 +670,26 @@ mod guard {
                 u8::from(old.sa_flags & libc::SA_SIGINFO != 0),
                 Ordering::Relaxed,
             );
+        });
+        #[cfg(all(windows, not(miri)))]
+        INSTALL.call_once(|| {
+            // First handler in the VEH chain; foreign exceptions get
+            // `EXCEPTION_CONTINUE_SEARCH`, so the system's handlers run
+            // exactly as without us (no previous-disposition capture needed).
+            //
+            // SAFETY: `veh_handler` is a valid vectored handler; the
+            // process-lifetime registration is never removed.
+            let h = unsafe {
+                super::AddVectoredExceptionHandler(
+                    1,
+                    veh_handler as *const () as *const std::ffi::c_void,
+                )
+            };
+            if h.is_null() {
+                // A failed VEH install is a broken-OS situation; fail fast
+                // rather than run unprotected.
+                panic!("erax mmap: AddVectoredExceptionHandler failed");
+            }
         });
     }
 
@@ -497,16 +727,16 @@ mod guard {
         let mut env: JmpBuf = jmp_buf_zeroed();
         #[cfg(miri)]
         let jmp_val = 0;
-        // `savemask = 1`: restore the signal mask on `siglongjmp`, so the
-        // SIGBUS blocked during handler execution doesn't leak into normal
-        // execution.
+        // Unix `savemask = 1` (inside `raw_setjmp`): restore the signal mask
+        // on recovery, so the SIGBUS blocked during handler execution
+        // doesn't leak into normal execution.
         //
         // SAFETY: `env` is a live stack slot for the whole guarded window
         // (kept alive past the fault window by the `black_box` below); this
-        // call executes in `guarded`'s own frame, which is where
-        // `siglongjmp` returns to.
+        // call executes in `guarded`'s own frame, which is where recovery
+        // returns to.
         #[cfg(not(miri))]
-        let jmp_val = unsafe { __sigsetjmp(&mut env as *mut JmpBuf, 1) };
+        let jmp_val = raw_setjmp(&mut env as *mut JmpBuf);
         if jmp_val == 0 {
             // Arm: push onto this thread's guard stack (linked `prev`
             // gives stack discipline for nested guards).
@@ -629,6 +859,10 @@ pub struct MmapRegion {
     map_len: usize,
     /// Kept open: pins the inode behind the mapping.
     _file: File,
+    /// Windows only: the file-mapping object behind the view, closed in
+    /// `Drop` (the unix mapping dies with `munmap` alone).
+    #[cfg(windows)]
+    _mapping: Handle,
     /// Miri stand-in for the OS mapping (see `new`): Miri cannot execute
     /// `mmap`, so the "mapping" is a heap allocation. `ptr` points into it;
     /// Miri then checks every `from_raw_parts` in `read_guarded` for
@@ -662,6 +896,8 @@ impl MmapRegion {
                 len: 0,
                 map_len: 0,
                 _file: file,
+                #[cfg(windows)]
+                _mapping: std::ptr::null_mut(),
                 #[cfg(miri)]
                 _backing: Vec::new(),
                 open_mtime,
@@ -695,7 +931,7 @@ impl MmapRegion {
                 cached_len: std::cell::Cell::new(len),
             });
         }
-        #[cfg(not(miri))]
+        #[cfg(all(unix, not(miri)))]
         {
             let page = 4096usize; // OS page size (x86_64)
             let map_len = (len as usize).div_ceil(page) * page;
@@ -711,6 +947,29 @@ impl MmapRegion {
                 len,
                 map_len,
                 _file: file,
+                open_mtime,
+                cached_len: std::cell::Cell::new(len),
+            })
+        }
+        #[cfg(all(windows, not(miri)))]
+        {
+            use std::os::windows::io::AsRawHandle;
+            // Windows page size is 4 KiB on all supported targets; the view
+            // only needs covering `len`, like the unix page-rounding above.
+            let page = 4096usize;
+            let map_len = (len as usize).div_ceil(page) * page;
+            // `len > 0`; the handle is valid and open. The view is valid
+            // until `raw_munmap` in Drop; `File` (and the mapping object)
+            // are kept open.
+            let handle = file.as_raw_handle() as Handle;
+            let (ptr, mapping) =
+                raw_mmap(handle, map_len).map_err(|source| PagerError::Io { offset: 0, source })?;
+            Ok(MmapRegion {
+                ptr: ptr as *const u8,
+                len,
+                map_len,
+                _file: file,
+                _mapping: mapping,
                 open_mtime,
                 cached_len: std::cell::Cell::new(len),
             })
@@ -941,10 +1200,15 @@ impl MmapRegion {
 impl Drop for MmapRegion {
     fn drop(&mut self) {
         // Under Miri there is no mapping: `_backing` drops itself.
-        #[cfg(not(miri))]
+        #[cfg(all(unix, not(miri)))]
         if self.map_len > 0 {
             // `ptr`/`map_len` are the exact values from `raw_mmap`.
             raw_munmap(self.ptr as *mut libc::c_void, self.map_len);
+        }
+        #[cfg(all(windows, not(miri)))]
+        if self.map_len > 0 {
+            // `ptr`/`_mapping` are the exact values from `raw_mmap`.
+            raw_munmap(self.ptr as *mut std::ffi::c_void, self._mapping);
         }
     }
 }

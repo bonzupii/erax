@@ -377,7 +377,7 @@ impl Pager {
 /// The mmap backend is Unix-only; on other platforms only `Pager` exists.
 enum Backend {
     Pager(Pager),
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     Mmap(crate::core::mmap::MmapRegion),
 }
 
@@ -394,7 +394,7 @@ impl Backend {
     fn len(&self) -> u64 {
         match self {
             Backend::Pager(p) => p.len(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Backend::Mmap(m) => m.len(),
         }
     }
@@ -402,12 +402,12 @@ impl Backend {
     fn read(&mut self, offset: u64, len: usize) -> Result<Vec<u8>, PagerError> {
         match self {
             Backend::Pager(p) => p.read(offset, len),
-            // The copy happens INSIDE the SIGBUS guard but into
+            // The copy happens INSIDE the fault guard but into
             // caller-owned storage: `read_guarded_into` reserves before
             // arming, so a fault mid-copy cannot strand an allocation
             // (the old `|s| s.to_vec()` shape allocated inside the window
             // and leaked it on the fault path — see mmap.rs).
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Backend::Mmap(m) => {
                 let mut out = Vec::new();
                 m.read_guarded_into(offset, len, &mut out)?;
@@ -443,7 +443,7 @@ impl Backend {
             }
             // Pure byte scan: no allocation, no locks — safe inside the
             // guarded window by construction.
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Backend::Mmap(m) => {
                 if len == 0 {
                     return Ok(0);
@@ -459,7 +459,7 @@ impl SharedPager {
         SharedPager(Rc::new(RefCell::new(Backend::Pager(pager))))
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn new_mmap(mmap: crate::core::mmap::MmapRegion) -> Self {
         SharedPager(Rc::new(RefCell::new(Backend::Mmap(mmap))))
     }
@@ -799,14 +799,14 @@ impl BText {
     /// typed `PagerError`, never process death; a same-length content
     /// replacement becomes `FileChanged` on both backends (the pager
     /// revalidates the snapshot on every read — see `open_mapped_pager`).
-    /// On non-Unix, and via `open_mapped_pager` everywhere, the syscall
-    /// pager is used.
+    /// On other platforms, and via `open_mapped_pager` everywhere, the
+    /// syscall pager is used.
     pub fn open_mapped(path: &Path) -> Result<Self, PagerError> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             Self::open_mapped_mmap(path)
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             let pager = Pager::open(path)?;
             let len = pager.len();
@@ -818,18 +818,18 @@ impl BText {
         }
     }
 
-    /// Open with the mmap backend (Unix only). This is what `open_mapped`
-    /// uses on Unix (session-7 adoption decision).
+    /// Open with the mmap backend (Unix and Windows). This is what
+    /// `open_mapped` uses on those platforms (session-7 adoption decision).
     ///
     /// 29–61x faster random reads than the pager on the large-file suite.
     /// The full mitigation stack is implemented (`crate::core::mmap`):
-    /// fstat-validated length, a SIGBUS handler with scoped recovery (a
+    /// fstat-validated length, a fault handler with scoped recovery (a
     /// fault becomes `PagerError::Truncated`, never process death),
     /// post-read snapshot validation (a same-length replacement becomes
-    /// `PagerError::FileChanged`, never silent substitution), immutable
-    /// `PROT_READ` mapping, and fault-injection tests. External-mutation
+    /// `PagerError::FileChanged`, never silent substitution), an immutable
+    /// read-only mapping, and fault-injection tests. External-mutation
     /// semantics match the pager exactly (see `open_mapped_pager`).
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn open_mapped_mmap(path: &Path) -> Result<Self, PagerError> {
         let file = std::fs::File::open(path)
             .map_err(|source| PagerError::Io { offset: 0, source })?;

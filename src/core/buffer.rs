@@ -277,12 +277,10 @@ impl Buffer {
     /// metadata only (O(1)), and file bytes are materialized on demand.
     /// This is how erax opens files larger than available RAM.
     ///
-    /// Backend (session-7 adoption decision): on Unix this uses the mmap
-    /// backend (29–61x faster random reads than the pager, fully hardened —
-    /// see `crate::core::mmap`); on non-Unix it uses the pager's bounded
-    /// LRU cache. A same-length content replacement surfaces as a recorded
-    /// `PagerError::FileChanged` under mmap (the pager serves its cache
-    /// silently instead).
+    /// Backend (session-7 adoption decision): on Unix and Windows this uses
+    /// the mmap backend (29–61x faster random reads than the pager, fully
+    /// hardened — see `crate::core::mmap`); elsewhere it uses the pager's
+    /// bounded LRU cache.
     ///
     /// Unlike [`Buffer::from_file`], no whole-file UTF-8 validation happens
     /// at open — content is validated lazily as it is read. I/O failures and
@@ -360,7 +358,7 @@ impl Buffer {
     /// Same contract as [`Buffer::open_mapped`]. See `crate::core::mmap`
     /// for the mitigation stack and the documented semantic difference
     /// from the pager on content replacement.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn open_mapped_mmap(path: impl AsRef<Path>) -> Result<Self, LoadError> {
         let path = path.as_ref();
         let validated_path =
