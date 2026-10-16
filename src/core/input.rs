@@ -577,4 +577,36 @@ mod tests {
         assert_eq!(KeyPress::alt(Key::Char('x')).to_string(), "Alt+x");
         assert_eq!(KeyPress::plain(Key::Char('a')).to_string(), "a");
     }
+
+    #[test]
+    fn current_sequence_renders_the_canonical_notation() {
+        let mut trie = KeyTrie::new();
+        let cx = ctrl('x');
+        trie.insert(&[cx, ctrl('f')], Command::FindFile, PrefixPolicy::ExecuteLeaf);
+
+        assert_eq!(trie.current_sequence(), "");
+        assert_eq!(trie.process_key(cx), LookupResult::Prefix);
+        assert_eq!(trie.current_sequence(), "Ctrl+x-");
+        // Completing the sequence clears it.
+        assert_eq!(
+            trie.process_key(ctrl('f')),
+            LookupResult::Command(Command::FindFile)
+        );
+        assert_eq!(trie.current_sequence(), "");
+    }
+
+    #[test]
+    fn current_sequence_shows_a_pending_esc_prefix() {
+        let mut trie = KeyTrie::new();
+        trie.insert(
+            &[KeyPress::alt(Key::Char('x'))],
+            Command::ExecuteNamedCommand,
+            PrefixPolicy::ExecuteLeaf,
+        );
+        assert_eq!(
+            trie.process_key(KeyPress::plain(Key::Esc)),
+            LookupResult::Prefix
+        );
+        assert_eq!(trie.current_sequence(), "Esc-");
+    }
 }

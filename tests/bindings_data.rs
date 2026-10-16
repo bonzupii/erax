@@ -53,6 +53,11 @@ const ALLOWLIST: &[(&str, usize, &str)] = &[
         "macro replay rejects nested ExecuteMacro",
     ),
     (
+        "src/core/commands/kill_ring.rs",
+        3,
+        "cycle-paste info messages derive their command-name prefix via \\\n         Command::name(); derivation from the typed table, never \\\n         hardcoded name strings",
+    ),
+    (
         "src/core/dispatcher.rs",
         128,
         "the dispatcher: the one place mapping commands to implementations",
