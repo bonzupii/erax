@@ -115,13 +115,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Neighbor roles for run-edge detection. An out-of-grid neighbor reads
     // as the cell's own role, so no edge paints at the screen boundary.
+    // The fetches are skipped entirely when both edge effects are off.
     var above_role = role;
-    if (cell.y > 0u) {
-        above_role = textureLoad(role_tex, coord + vec2<i32>(0, -1), 0).x;
-    }
     var below_role = role;
-    if (cell.y + 1u < uniforms.grid_dims.y) {
-        below_role = textureLoad(role_tex, coord + vec2<i32>(0, 1), 0).x;
+    if (uniforms.panel_edge > 0.0 || uniforms.selection_edge > 0.0) {
+        if (cell.y > 0u) {
+            above_role = textureLoad(role_tex, coord + vec2<i32>(0, -1), 0).x;
+        }
+        if (cell.y + 1u < uniforms.grid_dims.y) {
+            below_role = textureLoad(role_tex, coord + vec2<i32>(0, 1), 0).x;
+        }
     }
 
     // Panel run edges: a stronger luminance step on the first and last rows
