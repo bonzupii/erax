@@ -381,7 +381,7 @@ impl PaneGeometry {
     /// window renderer, strips by the scrollbar painters, the status
     /// row by the status renderer.
     pub fn owned_regions(&self) -> [Option<(RegionOwner, Rect)>; 5] {
-        use crate::config::scrollbar::{VERTICAL_SIDE, VerticalSide};
+        use crate::config::scrollbar::VERTICAL_SIDE;
         // The gutter sits after the vertical strip when the bar is on
         // the left; the strip exists only while the bar is present
         // (dynamic presence), so the gutter origin follows it. The
@@ -638,7 +638,7 @@ fn pane_geometry(
     input: &WindowGeomInput,
     show_line_numbers: bool,
 ) -> PaneGeometry {
-    use crate::config::scrollbar::{SHOW_ARROWS, VERTICAL_SIDE, VerticalSide};
+    use crate::config::scrollbar::{SHOW_ARROWS, VERTICAL_SIDE};
 
     let status_row = frame.y + frame.height.saturating_sub(1);
     // Rows available to text plus the horizontal bar; the status row is
@@ -868,6 +868,98 @@ pub fn compute_frame(
         rows: options.rows,
         panes,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Scrollbar presentation vocabulary.
+// ---------------------------------------------------------------------------
+// The strip contents are config data (`crate::config::scrollbar`); this is
+// the vocabulary those constants are written in. The frame model consumes
+// both: presence decides whether a strip exists, these decide what it
+// looks like.
+
+/// Which frame edge carries the vertical scrollbar strip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerticalSide {
+    /// Strip is the pane's first column; the text rect starts after it.
+    Left,
+    /// Strip is the pane's last column; the text rect ends before it.
+    Right,
+}
+
+/// Glyphs painted on the scrollbar strips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScrollbarGlyphs {
+    /// Vertical track cell.
+    pub track_v: char,
+    /// Horizontal track cell.
+    pub track_h: char,
+    /// Thumb cell (both orientations).
+    pub thumb: char,
+    /// Arrow heads; painted only when the arrow config is on.
+    pub arrow_up: char,
+    pub arrow_down: char,
+    pub arrow_left: char,
+    pub arrow_right: char,
+}
+
+impl ScrollbarGlyphs {
+    /// Heavy set: box-drawing track, full-block thumb, triangular arrows.
+    pub const HEAVY: Self = Self {
+        track_v: '┃',
+        track_h: '━',
+        thumb: '█',
+        arrow_up: '▲',
+        arrow_down: '▼',
+        arrow_left: '◀',
+        arrow_right: '▶',
+    };
+
+    /// Light set: thin box-drawing track, shaded thumb, hollow arrows.
+    pub const LIGHT: Self = Self {
+        track_v: '│',
+        track_h: '─',
+        thumb: '▓',
+        arrow_up: '△',
+        arrow_down: '▽',
+        arrow_left: '◁',
+        arrow_right: '▷',
+    };
+
+    /// Shade set: the track is a shade ramp cell, the thumb a full
+    /// block; reads on low-contrast themes.
+    pub const SHADE: Self = Self {
+        track_v: '░',
+        track_h: '░',
+        thumb: '█',
+        arrow_up: '▲',
+        arrow_down: '▼',
+        arrow_left: '◀',
+        arrow_right: '▶',
+    };
+
+    /// Minimal set: no visible track, block thumb, plain arrow glyphs.
+    pub const MINIMAL: Self = Self {
+        track_v: ' ',
+        track_h: ' ',
+        thumb: '█',
+        arrow_up: '^',
+        arrow_down: 'v',
+        arrow_left: '<',
+        arrow_right: '>',
+    };
+
+    /// Braille set: the thumb is a braille dot pattern, the track a
+    /// single dot; compact on narrow strips.
+    pub const BRAILLE: Self = Self {
+        track_v: '⠁',
+        track_h: '⠁',
+        thumb: '⣿',
+        arrow_up: '⠉',
+        arrow_down: '⠒',
+        arrow_left: '⠤',
+        arrow_right: '⠦',
+    };
 }
 
 #[cfg(test)]

@@ -12,7 +12,8 @@
 //! shared-core tests at the bottom prove everything else is byte-identical
 //! across models: one editing core, three input models.
 
-use erax::config::keys::{INPUT_MODEL, InputModel, STANDARD_BINDINGS};
+use erax::config::keys::{INPUT_MODEL, STANDARD_BINDINGS};
+use erax::core::bindings::InputModel;
 use erax::core::app::EditorApp;
 use erax::core::command::Command;
 use erax::core::commands::editing::{

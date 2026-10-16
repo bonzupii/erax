@@ -1,5 +1,6 @@
 //! Mark commands (set, jump, exchange).
-use crate::config::keys::{INPUT_MODEL, InputModel};
+use crate::config::keys::INPUT_MODEL;
+use crate::core::bindings::InputModel;
 use crate::core::app::EditorApp;
 /// Mark and region manipulation commands
 use crate::core::dispatcher::DispatchResult;

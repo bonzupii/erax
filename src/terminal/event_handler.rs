@@ -117,7 +117,7 @@ pub fn process_terminal_event(
                     // N-268: the vim modal engine owns key handling when the
                     // compile-time input model is Modal. Insert-mode special
                     // keys and ctrl/alt chords fall through to the trie.
-                    if crate::config::keys::INPUT_MODEL == crate::config::keys::InputModel::Modal
+                    if crate::config::keys::INPUT_MODEL == crate::core::bindings::InputModel::Modal
                     {
                         match crate::terminal::modal::handle_modal_key(app, display, &key) {
                             crate::core::modal::ModalOutcome::Consumed => {

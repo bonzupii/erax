@@ -1,5 +1,5 @@
 //! Core text-editing commands (insert, delete, transpose).
-use crate::config::keys::InputModel;
+use crate::core::bindings::InputModel;
 use crate::core::app::EditorApp;
 /// Basic editing commands (insert, delete, newline)
 use crate::core::dispatcher::DispatchResult;

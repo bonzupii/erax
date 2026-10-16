@@ -72,7 +72,7 @@ mod tests {
         // Even emitting directly cannot reach the sink: the bus drops.
         app.cue_bus.emit(Cue::Error);
         app.cue_bus.emit(Cue::ModeEntered(
-            crate::config::keys::ModalMode::Insert,
+            crate::core::bindings::ModalMode::Insert,
         ));
         // Display::new starts dirty; the test cares about what the
         // sink changes, not the constructor.
@@ -98,7 +98,7 @@ mod tests {
     fn mode_cue_flashes_and_dirties_when_enabled() {
         let (mut app, mut display) = rig(true);
         app.cue_bus.emit(Cue::ModeEntered(
-            crate::config::keys::ModalMode::Insert,
+            crate::core::bindings::ModalMode::Insert,
         ));
         display.dirty = false;
         drain_cues_to_tui(&mut app, &mut display, true, true);
@@ -110,7 +110,7 @@ mod tests {
     fn flash_policy_off_leaves_display_alone() {
         let (mut app, mut display) = rig(true);
         app.cue_bus.emit(Cue::ModeEntered(
-            crate::config::keys::ModalMode::Insert,
+            crate::core::bindings::ModalMode::Insert,
         ));
         display.dirty = false;
         drain_cues_to_tui(&mut app, &mut display, true, false);

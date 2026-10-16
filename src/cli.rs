@@ -10,7 +10,7 @@ use clap::Parser;
 use std::path::PathBuf;
 
 use crate::terminal::theme::ThemeId;
-use crate::config::frontend::{ShellMode, SHELL_MODE, WEB_ALLOW_REMOTE, WEB_BIND};
+use crate::config::frontend::{SHELL_MODE, WEB_ALLOW_REMOTE, WEB_BIND};
 
 /// erax command-line arguments, as parsed by clap.
 #[derive(Debug, Parser)]
@@ -111,6 +111,20 @@ pub struct Invocation {
     pub web_bind: String,
     /// Acknowledging flag for non-loopback `--web-bind`.
     pub web_allow_remote: bool,
+}
+
+/// Which frontend erax starts when no CLI mode flag selects one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellMode {
+    /// Terminal UI; piped stdin still selects stream-editor mode, as with
+    /// no configuration at all.
+    Tui,
+    /// UTF-8 terminal UI (full color per environment detection).
+    Utf8,
+    /// WebUI server: Core+TUI run headless here, the presentation core
+    /// runs in the browser. Non-loopback binds require the
+    /// `--web-allow-remote` acknowledgement.
+    WebUi,
 }
 
 /// Which top-level mode to run.

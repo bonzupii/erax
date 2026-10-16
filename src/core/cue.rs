@@ -13,7 +13,7 @@
 //! through the same seam the config feeds, without asserting the
 //! constant's value.
 
-use crate::config::keys::ModalMode;
+use crate::core::bindings::ModalMode;
 use std::collections::VecDeque;
 
 /// One accessibility cue: a typed event the core emits for sinks.

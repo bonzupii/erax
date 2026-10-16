@@ -2,7 +2,7 @@
 //!
 //! Edit the values and rebuild. A wrong type is a compile error (principle 1).
 
-use crate::config::keys::ModalMode;
+use crate::core::bindings::ModalMode;
 
 /// Show line numbers in the gutter.
 pub const LINE_NUMBERS: bool = true;
@@ -34,11 +34,11 @@ pub const SCROLLBAR_ARROW_STEP_COLS: usize = 5;
 // ---------------------------------------------------------------------------
 // Cursor styles (N-268 mode-aware UI, D6).
 // ---------------------------------------------------------------------------
-// The `CursorStyle` type itself lives in `cursor_style` (a leaf module, so
-// the wire protocol and the wasm web shell can include it via `#[path]`
-// without the whole display config); it is re-exported here so existing
+// The `CursorStyle` type lives in `crate::core::cursor_style` (a leaf
+// module, so the wire protocol and the wasm web shell can include it via
+// `#[path]` without the display config); it is re-exported here so
 // `config::display::CursorStyle` paths keep working.
-pub use super::cursor_style::CursorStyle;
+pub use crate::core::cursor_style::CursorStyle;
 
 /// Cursor style for the emacs-style key-trie model (the default): steady
 /// block, the historical erax cursor.

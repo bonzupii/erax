@@ -176,7 +176,7 @@ impl StatusRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::keys::{InputModel, ModalMode};
+    use crate::core::bindings::{InputModel, ModalMode};
     use crate::core::id::{BufferId, WindowId};
     use crate::terminal::display::{
         bar_owner_for, compose_bar_state, cursor_style_for, mode_segment_for,

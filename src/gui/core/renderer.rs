@@ -28,7 +28,7 @@ use cosmic_text::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::config::cursor_style::CursorStyle;
+use crate::core::cursor_style::CursorStyle;
 use crate::config::effects;
 use crate::core::geometry::GridMetrics;
 use crate::terminal::display::{Cell, CellRole, ScreenBuffer};

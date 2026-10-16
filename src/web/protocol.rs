@@ -15,7 +15,7 @@
 //! types (`KeyPress`, `MouseEvent`), and the screen model is the backend's
 //! `ScreenBuffer`. All input models and mode-aware UI live in the backend.
 
-use crate::config::cursor_style::CursorStyle;
+use crate::core::cursor_style::CursorStyle;
 use crate::core::input::{KeyPress, MouseEvent};
 use crate::terminal::display::{Cell, CellRole};
 use serde::{Deserialize, Serialize};

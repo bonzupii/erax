@@ -36,7 +36,8 @@
 //! event handler fails `mx_exit_commands_propagate_exit`; removing the
 //! `:` entry binding fails `named_facilities_are_bound`.
 
-use erax::config::keys::{KEYBINDINGS, STANDARD_BINDINGS, KeyBinding};
+use erax::config::keys::{KEYBINDINGS, STANDARD_BINDINGS};
+use erax::core::bindings::KeyBinding;
 use erax::core::app::EditorApp;
 use erax::core::command::Command;
 use erax::core::dispatcher::{DispatchResult, dispatch};

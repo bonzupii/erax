@@ -746,7 +746,7 @@ fn handle_websocket(
 
 /// Map a core cue event to its wire projection.
 fn server_cue(cue: crate::core::cue::Cue) -> ServerCue {
-    use crate::config::keys::ModalMode;
+    use crate::core::bindings::ModalMode;
     use crate::core::cue::Cue;
     match cue {
         Cue::ModeEntered(mode) => ServerCue::ModeEntered {

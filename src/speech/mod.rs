@@ -28,10 +28,10 @@ pub mod kokoro;
 pub mod whisper;
 
 pub use provider::{
-    LanguageCode, Pcm16k, RecognizeError, SpeechRecognizer, SpeechSynthesizer, SynthesizeError,
-    SynthesisStream, Transcript, TranscriptEvent, WordTiming, PCM16K_SAMPLE_RATE,
+    LanguageCode, Pcm16k, RecognizeError, SpeechBackend, SpeechRecognizer, SpeechSynthesizer,
+    SynthesizeError, SynthesisStream, Transcript, TranscriptEvent, VoiceId, WordTiming,
+    PCM16K_SAMPLE_RATE,
 };
-pub use crate::config::accessibility::blindness::{SpeechBackend, VoiceId};
 
 use crate::config::accessibility::blindness::SPEECH_BACKEND;
 #[cfg(feature = "speech")]

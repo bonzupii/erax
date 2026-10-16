@@ -14,7 +14,7 @@
 //! - Bar / Underline / HollowBlock: a thin overlay in the cursor cell's
 //!   foreground color (the theme's `cursor_fg`), drawn over the cell.
 
-use crate::config::cursor_style::CursorStyle;
+use crate::core::cursor_style::CursorStyle;
 
 /// A solid rectangle in physical pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]

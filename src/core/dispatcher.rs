@@ -6,7 +6,7 @@
 //! rejected at the lookup (`Command::from_name`) and reported through the
 //! typed message path by the caller.
 
-use crate::config::keys::InputModel;
+use crate::core::bindings::InputModel;
 use crate::core::app::EditorApp;
 use crate::core::command::Command;
 use crate::core::id::BufferId;

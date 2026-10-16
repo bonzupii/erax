@@ -481,8 +481,9 @@ fn references_command(src: &str, needle: &str) -> bool {
 /// silently lack a key binding in a model.
 #[test]
 fn every_command_bound_or_facility_recorded_per_model() {
+    use erax::core::bindings::{ExAction, ExArgAction, ModalAction};
     use erax::config::keys::{
-        ExAction, ExArgAction, ModalAction, EX_ARG_COMMANDS, EX_COMMANDS, FACILITY_BINDINGS,
+        EX_ARG_COMMANDS, EX_COMMANDS, FACILITY_BINDINGS,
         KEYBINDINGS, MODAL_BINDINGS, STANDARD_BINDINGS,
     };
     use erax::core::command::Command;
@@ -521,15 +522,15 @@ fn every_command_bound_or_facility_recorded_per_model() {
         }
     }
 
-    let bound = |model: erax::config::keys::InputModel, cmd: Command| -> bool {
+    let bound = |model: erax::core::bindings::InputModel, cmd: Command| -> bool {
         match model {
-            erax::config::keys::InputModel::KeyTrie => keytrie.contains(&cmd),
-            erax::config::keys::InputModel::Modal => modal.contains(&cmd),
-            erax::config::keys::InputModel::Standard => standard.contains(&cmd),
+            erax::core::bindings::InputModel::KeyTrie => keytrie.contains(&cmd),
+            erax::core::bindings::InputModel::Modal => modal.contains(&cmd),
+            erax::core::bindings::InputModel::Standard => standard.contains(&cmd),
         }
     };
     let facility_recorded =
-        |model: erax::config::keys::InputModel, cmd: Command| -> bool {
+        |model: erax::core::bindings::InputModel, cmd: Command| -> bool {
             FACILITY_BINDINGS
                 .iter()
                 .any(|(m, _, cmds)| *m == model && cmds.contains(&cmd))
@@ -538,9 +539,9 @@ fn every_command_bound_or_facility_recorded_per_model() {
     let mut failures = Vec::new();
     for cmd in Command::ALL {
         for model in [
-            erax::config::keys::InputModel::KeyTrie,
-            erax::config::keys::InputModel::Modal,
-            erax::config::keys::InputModel::Standard,
+            erax::core::bindings::InputModel::KeyTrie,
+            erax::core::bindings::InputModel::Modal,
+            erax::core::bindings::InputModel::Standard,
         ] {
             if !bound(model, *cmd) && !facility_recorded(model, *cmd) {
                 failures.push(format!("{cmd:?} in {model:?}"));

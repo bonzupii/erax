@@ -1,9 +1,8 @@
 //! Terminal/GUI cursor shape, as a typed config value.
 //!
 //! A leaf module (no imports) so the wire protocol and the presentation
-//! core — including the wasm web shell, which includes this file via
-//! `#[path]` — can name the type without pulling in the whole display
-//! config.
+//! core (including the wasm web shell, which includes this file via
+//! `#[path]`) can name the type without pulling in the display config.
 
 /// Terminal/GUI cursor shape, as a typed config value.
 ///
@@ -12,9 +11,10 @@
 /// [`CursorStyle::HollowBlock`], which has no DECSCUSR equivalent and degrades
 /// to a steady block on terminals (GUI shaders may render it hollow).
 ///
-/// The style is backend-derived screen-model state: `Display::cursor_style`
-/// carries it to the terminal emit path and to the GUI/WebUI as N-273
-/// metadata (presentation only — no input model reads it back).
+/// The style is backend-derived screen-model state: the display model
+/// carries it to the terminal emit path and to the GUI/WebUI as
+/// presentation metadata (presentation only; no input model reads it
+/// back).
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum CursorStyle {

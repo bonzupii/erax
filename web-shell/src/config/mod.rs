@@ -7,11 +7,6 @@
 #[path = "../../../src/config/font.rs"]
 pub mod font;
 
-/// Leaf cursor-shape enum (same source as native): the wire `CursorState`
-/// and the presentation core name it without the whole display config.
-#[path = "../../../src/config/cursor_style.rs"]
-pub mod cursor_style;
-
 /// Scrollbar constants (same source as native).
 #[path = "../../../src/config/scrollbar.rs"]
 pub mod scrollbar;

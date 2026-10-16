@@ -29,7 +29,7 @@ use crate::core::input::{Key, KeyPress, MouseButton, MouseEvent, MouseEventKind}
 use crate::gui::core::renderer::FrameOutcome;
 use crate::terminal::display::{Cell, CellRole, ScreenBuffer};
 use crate::web::protocol::{ClientFrame, CursorState, InputEvent, ServerCue, ServerFrame, PROTOCOL_VERSION};
-use crate::config::cursor_style::CursorStyle;
+use crate::core::cursor_style::CursorStyle;
 use crate::gui::shell::startup::{StartupStage, startup_failure};
 
 /// The web client's session state.

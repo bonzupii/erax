@@ -3,6 +3,11 @@
 #[path = "../../../src/core/command.rs"]
 pub mod command;
 
+/// Leaf cursor-shape enum (same source as native): the wire `CursorState`
+/// and the presentation core name it without the display config.
+#[path = "../../../src/core/cursor_style.rs"]
+pub mod cursor_style;
+
 #[path = "../../../src/core/geometry.rs"]
 pub mod geometry;
 

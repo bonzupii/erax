@@ -8,7 +8,7 @@
 //! selection and marks from the window), so they track edits with no
 //! incremental bookkeeping and can never go stale.
 
-use erax::config::keys::{ModalMode, ModalOperator};
+use erax::core::bindings::{ModalMode, ModalOperator};
 use erax::core::app::EditorApp;
 use erax::core::cue::{Cue, CueBus};
 use erax::core::diagnostics::{Diagnostic, DiagnosticSeverity};

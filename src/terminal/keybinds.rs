@@ -5,7 +5,7 @@
 //! configuration as `&[KeyPress]`; there is exactly one canonical key
 //! representation (N-056, N-060).
 
-use crate::config::keys::KeyBinding;
+use crate::core::bindings::KeyBinding;
 use crate::core::command::Command;
 use crate::core::input::{KeyPress, KeyTrie, LookupResult};
 

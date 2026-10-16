@@ -2,7 +2,8 @@
 //! keybindings. The old implementation only printed a message claiming
 //! the event loop would handle the capture; no such handling existed.
 //! These tests drive the real TUI event handler end to end.
-use erax::config::keys::{KEYBINDINGS, KeyBinding};
+use erax::config::keys::KEYBINDINGS;
+use erax::core::bindings::KeyBinding;
 use erax::core::app::EditorApp;
 use erax::core::focus::FocusTarget;
 use erax::core::input::{Key, KeyPress};

@@ -22,7 +22,6 @@
 
 pub mod accessibility;
 pub mod display;
-pub mod cursor_style;
 pub mod editor;
 pub mod effects;
 pub mod font;

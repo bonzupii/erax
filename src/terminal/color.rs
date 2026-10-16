@@ -34,6 +34,17 @@ pub enum Color {
     Rgb { r: u8, g: u8, b: u8 },
 }
 
+/// Terminal truecolor (24-bit) mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TrueColorMode {
+    /// Detect from the environment.
+    Auto,
+    /// Always emit 24-bit color.
+    Always,
+    /// Never emit 24-bit color; use the 16-color fallback.
+    Never,
+}
+
 impl Color {
     /// Map to the crossterm color used by the TUI render path.
     ///

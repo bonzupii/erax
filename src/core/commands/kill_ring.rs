@@ -1,5 +1,5 @@
 //! Kill-ring commands (kill, yank, yank-pop).
-use crate::config::keys::InputModel;
+use crate::core::bindings::InputModel;
 use crate::core::app::EditorApp;
 /// Kill ring and yank (clipboard) commands
 use crate::core::dispatcher::DispatchResult;

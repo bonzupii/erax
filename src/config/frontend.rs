@@ -6,19 +6,7 @@
 //! defaults per invocation; the override is a typed invocation parameter
 //! and never mutates the constants.
 
-/// Which frontend erax starts when no CLI mode flag selects one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ShellMode {
-    /// Terminal UI; piped stdin still selects stream-editor mode, as with
-    /// no configuration at all.
-    Tui,
-    /// UTF-8 terminal UI (full color per environment detection).
-    Utf8,
-    /// WebUI server: Core+TUI run headless here, the presentation core
-    /// runs in the browser. Requires `--web-allow-remote` (or
-    /// [`WEB_ALLOW_REMOTE`]) for non-loopback binds, as always.
-    WebUi,
-}
+use crate::cli::ShellMode;
 
 /// Default frontend when no CLI flag selects one.
 pub const SHELL_MODE: ShellMode = ShellMode::Tui;

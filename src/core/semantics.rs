@@ -25,7 +25,7 @@
 //!   source to derive from. When tracking lands, it populates the
 //!   loop and the kind is already in the API.
 
-use crate::config::keys::{InputModel, ModalMode, ModalOperator};
+use crate::core::bindings::{InputModel, ModalMode, ModalOperator};
 use crate::core::app::EditorApp;
 use crate::core::buffer::Buffer;
 use crate::core::diagnostics::DiagnosticSeverity;

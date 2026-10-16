@@ -15,10 +15,12 @@
 //! never touched, so the per-model clipboard separation on `EditorApp`
 //! (`kill_ring` vs `clipboard` vs vim registers) holds.
 
-use crate::config::keys::{
+use crate::core::bindings::{
     ExAction, ExArgAction, FindDir, FindEdge, InputModel, ModalAction, ModalGAction, ModalMode,
-    ModalOperator, ModalTextObject, EX_ARG_COMMANDS, EX_COMMANDS, INPUT_MODEL, MODAL_BINDINGS,
-    MODAL_PREFIX_G, MODAL_TEXT_OBJECTS,
+    ModalOperator, ModalTextObject,
+};
+use crate::config::keys::{
+    EX_ARG_COMMANDS, EX_COMMANDS, INPUT_MODEL, MODAL_BINDINGS, MODAL_PREFIX_G, MODAL_TEXT_OBJECTS,
 };
 use crate::core::app::EditorApp;
 use crate::core::buffer::Buffer;

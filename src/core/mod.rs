@@ -3,6 +3,7 @@
 //! command dispatch, syntax parsing, and search functionality.
 
 pub mod app;
+pub mod bindings;
 pub mod btext;
 #[cfg(unix)]
 pub mod mmap;
@@ -12,6 +13,7 @@ pub mod command;
 pub mod commands;
 pub mod completion;
 pub mod cue;
+pub mod cursor_style;
 pub mod diagnostics;
 pub mod dispatcher;
 pub mod encoding;

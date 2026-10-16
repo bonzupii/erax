@@ -110,7 +110,7 @@ impl WindowRenderer {
                         + usize::from(
                             geom.v_scrollbar.is_some()
                                 && crate::config::scrollbar::VERTICAL_SIDE
-                                    == crate::config::scrollbar::VerticalSide::Left,
+                                    == crate::core::geometry::VerticalSide::Left,
                         );
                     let gutter_h = text_height + usize::from(geom.h_scrollbar.is_some());
                     let blank_gutter = format!("{}│", " ".repeat(gutter_width - 1));
@@ -248,7 +248,7 @@ impl WindowRenderer {
                     + usize::from(
                         geom.v_scrollbar.is_some()
                             && crate::config::scrollbar::VERTICAL_SIDE
-                                == crate::config::scrollbar::VerticalSide::Left,
+                                == crate::core::geometry::VerticalSide::Left,
                     );
                 for (i, ch) in line_num_str.chars().enumerate() {
                     let gx = gutter_x as u16 + i as u16;
@@ -577,7 +577,7 @@ impl WindowRenderer {
                     + usize::from(
                         geom.v_scrollbar.is_some()
                             && crate::config::scrollbar::VERTICAL_SIDE
-                                == crate::config::scrollbar::VerticalSide::Left,
+                                == crate::core::geometry::VerticalSide::Left,
                     );
                 for (i, ch) in format!("{}│", " ".repeat(gutter_width - 1))
                     .chars()

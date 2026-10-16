@@ -16,7 +16,8 @@ pub use super::model::{Cell, CellRole, ClusterText, ScreenBuffer};
 
 use crate::terminal::theme::Theme;
 use crate::config::display::CursorStyle;
-use crate::config::keys::{InputModel, ModalMode, INPUT_MODEL};
+use crate::config::keys::INPUT_MODEL;
+use crate::core::bindings::{InputModel, ModalMode};
 use crate::core::modal::ModalEngine;
 
 // ---------------------------------------------------------------------------
@@ -1331,7 +1332,7 @@ mod tests {
 
     #[test]
     fn test_bar_state_syncs_from_backend() {
-        use crate::config::keys::{InputModel, ModalMode};
+        use crate::core::bindings::{InputModel, ModalMode};
         use crate::core::app::EditorApp;
         use crate::core::input::{Key, KeyPress};
 
@@ -1371,7 +1372,7 @@ mod tests {
 
     #[test]
     fn test_bar_owner_priority() {
-        use crate::config::keys::InputModel;
+        use crate::core::bindings::InputModel;
         use crate::core::modal::ModalEngine;
         let engine = ModalEngine::new();
         // Prompt outranks everything…
