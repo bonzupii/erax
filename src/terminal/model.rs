@@ -177,8 +177,9 @@ impl Cell {
 
     /// A cell covered by the previous wide character: invisible text,
     /// but the cluster's background continues through it. The
-    /// background is a construction parameter, so a continuation cell
-    /// cannot exist without inheriting it.
+    /// background is a required construction parameter — all
+    /// in-tree construction sites pass the cluster's background —
+    /// so a continuation cell built via this constructor inherits it.
     pub fn hidden_with_bg(bg: Color) -> Self {
         Self {
             text: ClusterText::new(" "),

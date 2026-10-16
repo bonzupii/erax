@@ -123,18 +123,30 @@ fn corpus_rows_keep_chrome_on_its_columns() {
                     "[{section}] glyph clip [{x0}, {y0}, {x1}, {y1}] leaves the grid [{grid_left}, {grid_right}] (row text: {text:?})"
                 ));
             }
+            // The glyph origin itself stays near the grid: a glyph placed
+            // at a wildly wrong column (combining-mark pileup, bidi
+            // displacement) fails here even if its clip is contained.
+            // Unligated sequences (ZWJ emoji) legitimately overflow the
+            // model's cell allocation — the clip contains their paint —
+            // so two cells of slack are allowed for shaper reality.
+            let gx = g.x as f32;
+            if gx < grid_left - 2.0 * cell_w || gx > grid_right + 2.0 * cell_w {
+                failures.push(format!(
+                    "[{section}] glyph origin x={gx} leaves the grid [{grid_left}, {grid_right}] (row text: {text:?})"
+                ));
+            }
         }
 
         // The gutter digits/border stay on the gutter columns: a glyph
-        // within half a cell of each visible gutter column's center.
+        // whose origin falls within the column's cell (left edge plus
+        // one cell width). The origin is the pen position, so it sits
+        // near the column's left edge, not its center.
         for (c, ch) in ['1', '│'].iter().enumerate() {
-            if *ch == ' ' {
-                continue;
-            }
-            let center = origin_x + (c as f32 + 0.5) * cell_w;
-            let found = glyphs
-                .iter()
-                .any(|g| (g.x as f32 - center).abs() < cell_w * 0.75);
+            let col_left = origin_x + c as f32 * cell_w;
+            let found = glyphs.iter().any(|g| {
+                let gx = g.x as f32;
+                gx >= col_left - 1.0 && gx < col_left + cell_w
+            });
             if !found {
                 failures.push(format!(
                     "[{section}] gutter char {ch:?} missing from column {c} (row text: {text:?})"
@@ -143,19 +155,15 @@ fn corpus_rows_keep_chrome_on_its_columns() {
         }
 
         // The scrollbar glyph stays on the last column.
-        let bar_center = origin_x + (cols as f32 - 0.5) * cell_w;
-        if !glyphs
-            .iter()
-            .any(|g| (g.x as f32 - bar_center).abs() < cell_w * 0.75)
-        {
+        let bar_left = origin_x + (cols as f32 - 1.0) * cell_w;
+        if !glyphs.iter().any(|g| {
+            let gx = g.x as f32;
+            gx >= bar_left - 1.0 && gx < bar_left + cell_w
+        }) {
             failures.push(format!(
                 "[{section}] scrollbar glyph missing from last column (row text: {text:?})"
             ));
         }
-
-        // Text glyphs cannot invade the gutter by construction: their
-        // x is text_origin + snapped_column + non-negative intra-cluster
-        // offset, so the gutter columns are unreachable.
     }
 
     assert!(

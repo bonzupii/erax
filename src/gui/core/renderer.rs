@@ -229,17 +229,30 @@ pub fn clusters_from_runs(runs: &[LayoutRun<'_>]) -> Vec<ShapedCluster> {
     clusters
 }
 
-/// First grid column whose character falls inside a cluster's byte range.
+/// First grid column whose byte range overlaps a cluster's byte range.
 ///
-/// `col_to_byte` runs in visual (left-to-right) order, so the minimum
-/// matching column is the cluster's visual left edge in either text
-/// direction. The integer-grid snap site uses this to place the
-/// cluster's origin.
-fn cluster_first_col(col_to_byte: &[usize], start: usize, end: usize) -> usize {
-    col_to_byte
-        .iter()
-        .position(|&b| b >= start && b < end)
-        .unwrap_or(0)
+/// First, a column that starts inside the cluster's `[start, end)` —
+/// the common case; for wide chars (duplicate byte entries) the
+/// leftmost column wins. If none matches, the cluster starts
+/// mid-grapheme (a combining mark): fall back to the last column whose
+/// start byte is at or before the cluster's start, which is the base's
+/// column. A start beyond the text is degenerate (caller bug); it maps
+/// to column 0. `col_to_byte` runs in visual (left-to-right) order, so
+/// the result is the cluster's visual left edge. The integer-grid snap
+/// site uses this to place the cluster's origin.
+fn cluster_first_col(
+    col_to_byte: &[usize],
+    text_len: usize,
+    start: usize,
+    end: usize,
+) -> usize {
+    if let Some(i) = col_to_byte.iter().position(|&b| b >= start && b < end) {
+        return i;
+    }
+    if start >= text_len {
+        return 0;
+    }
+    col_to_byte.iter().rposition(|&b| b <= start).unwrap_or(0)
 }
 
 /// Caret x-offset for a logical byte offset into a shaped line, in pixels
@@ -335,18 +348,20 @@ pub fn layout_row(
     let origin_x = metrics.offset_x;
     let baseline = row_y + ascent;
 
-    // Partition: the gutter is the leading run of gutter-role cells;
-    // scrollbar-role cells are chrome wherever they sit; the rest is
-    // text. Chrome glyphs place literally and never shape with text.
-    let gutter_len = cells
+    // Partition: chrome is the leading run of gutter/scrollbar-role
+    // cells (the scrollbar strip sits outside the gutter on the
+    // configured side) plus any scrollbar-role cell elsewhere (the
+    // right-side strip); the rest is text. Chrome glyphs place literally
+    // and never shape with text.
+    let chrome_len = cells
         .iter()
-        .take_while(|c| c.role == CellRole::Gutter)
+        .take_while(|c| c.role == CellRole::Gutter || c.role == CellRole::Scrollbar)
         .count();
     let mut text_cells: Vec<Cell> = Vec::with_capacity(cols);
     let mut text_index_of: Vec<Option<usize>> = vec![None; cols];
     let mut chrome: Vec<(usize, Cell)> = Vec::new();
     for (i, cell) in cells.iter().enumerate() {
-        if i < gutter_len || cell.role == CellRole::Scrollbar {
+        if i < chrome_len || cell.role == CellRole::Scrollbar {
             chrome.push((i, *cell));
         } else {
             text_index_of[i] = Some(text_cells.len());
@@ -355,7 +370,7 @@ pub fn layout_row(
     }
 
     // Shape the text region alone, with full run shaping.
-    let text_origin = origin_x + gutter_len as f32 * cw;
+    let text_origin = origin_x + chrome_len as f32 * cw;
     // The text region's clip rectangle: the shaper's natural width can
     // exceed the model's cell allocation (unligated ZWJ sequences), so
     // fragments clip here instead of painting over chrome or neighbors.
@@ -388,7 +403,9 @@ pub fn layout_row(
     // independently, so drift cannot accumulate down the frame.
     let snapped: Vec<f32> = clusters
         .iter()
-        .map(|c| cluster_first_col(&input.col_to_byte, c.start, c.end) as f32 * cw)
+        .map(|c| {
+            cluster_first_col(&input.col_to_byte, input.text.len(), c.start, c.end) as f32 * cw
+        })
         .collect();
     // Clusters and glyphs walk in the same order, so a cursor finds
     // each glyph's cluster.
@@ -410,18 +427,24 @@ pub fn layout_row(
                 // shaper's position; drift is bounded to this glyph.
                 None => text_origin + glyph.x,
             };
-            let physical = glyph.physical((0.0, baseline), 1.0);
-            // Integer pixel grid: the cluster origin is whole by
-            // construction; the shaped intra-cluster offset rounds once
-            // against that stable origin, so the rounding cannot drift
-            // across rows.
+            // Integer pixel grid: the pen is the rounded placed_x, so the
+            // rasterization subpixel bin must be derived from that same
+            // integer position, not the shaper's fractional x. Shifting
+            // the physical offset by (rounded - glyph.x) makes the cache
+            // key's x_bin correspond to the drawn pen; the bitmap is no
+            // longer pre-shifted for a position the quad does not sit at.
+            let rounded_x = placed_x.round();
+            let physical = glyph.physical((rounded_x - glyph.x, baseline), 1.0);
+            // The cluster origin is whole by construction; the shaped
+            // intra-cluster offset rounds once against that stable origin,
+            // so the rounding cannot drift across rows.
             placed.push(ShapedGlyph {
                 key: GlyphKey {
                     font_id: physical.cache_key.font_id,
                     glyph_index: physical.cache_key.glyph_id as u32,
                 },
                 cache_key: physical.cache_key,
-                x: placed_x.round() as i32,
+                x: rounded_x as i32,
                 y: physical.y,
                 color: glyph_color_f32(glyph.color_opt),
                 clip: text_clip,
@@ -457,14 +480,17 @@ pub fn layout_row(
         let chrome_runs: Vec<LayoutRun<'_>> = shape_buffer.layout_runs().collect();
         for run in &chrome_runs {
             for glyph in run.glyphs {
-                let physical = glyph.physical((0.0, baseline), 1.0);
+                // Chrome lands on integer grid columns; the raster bin
+                // follows the drawn pen, as in the text region.
+                let chrome_x = (col_x + glyph.x).round();
+                let physical = glyph.physical((chrome_x - glyph.x, baseline), 1.0);
                 placed.push(ShapedGlyph {
                     key: GlyphKey {
                         font_id: physical.cache_key.font_id,
                         glyph_index: physical.cache_key.glyph_id as u32,
                     },
                     cache_key: physical.cache_key,
-                    x: (col_x + glyph.x).round() as i32,
+                    x: chrome_x as i32,
                     y: physical.y,
                     color: glyph_color_f32(glyph.color_opt),
                     clip: chrome_clip,
@@ -485,7 +511,7 @@ pub fn layout_row(
         .iter()
         .map(|&byte| caret_x_for_byte_offset(&snapped_clusters, &input.text, byte))
         .collect();
-    let gutter_offset = gutter_len as f32 * cw;
+    let gutter_offset = chrome_len as f32 * cw;
     let mut caret_row = vec![0.0f32; cols + 1];
     for (full_col, text_idx) in text_index_of.iter().enumerate() {
         caret_row[full_col] = match text_idx {
@@ -1020,11 +1046,14 @@ impl Renderer {
                             }
                         }
                     };
-                    debug_assert_eq!(
-                        data.len(),
-                        px * if is_color { 4 } else { 1 },
-                        "atlas upload size must match the texel format"
-                    );
+                    // The atlas upload requires an exact-size buffer;
+                    // a malformed font image is skipped rather than
+                    // panicking inside wgpu. (This is a real guard, not
+                    // debug-only: font files are user input.)
+                    let expected = px * if is_color { 4 } else { 1 };
+                    if data.len() != expected {
+                        return None;
+                    }
                     atlas.insert(
                         key,
                         slot,
@@ -1492,15 +1521,19 @@ mod tests {
 
     #[test]
     fn cluster_first_col_finds_visual_left_edge() {
-        // col_to_byte runs in visual order; the minimum matching column
-        // is the cluster's visual left edge in either direction.
+        // col_to_byte runs in visual order; the minimum overlapping
+        // column is the cluster's visual left edge in either direction.
         // Wide char at cols 1-2 (bytes 3..4), RTL cluster at cols 4-5
-        // (bytes 5..9, logical order reversed visually).
+        // (bytes 5..9, logical order reversed visually). A combining
+        // mark (bytes 4..6, inside the 'e' at col 3 covering bytes
+        // 3..7) lands on its base's column, not column 0.
         let col_to_byte = vec![0, 3, 3, 4, 5, 5, 9];
-        assert_eq!(cluster_first_col(&col_to_byte, 0, 1), 0);
-        assert_eq!(cluster_first_col(&col_to_byte, 3, 4), 1);
-        assert_eq!(cluster_first_col(&col_to_byte, 5, 9), 4);
-        assert_eq!(cluster_first_col(&col_to_byte, 99, 100), 0);
+        let text_len = 9;
+        assert_eq!(cluster_first_col(&col_to_byte, text_len, 0, 1), 0);
+        assert_eq!(cluster_first_col(&col_to_byte, text_len, 3, 4), 1);
+        assert_eq!(cluster_first_col(&col_to_byte, text_len, 5, 9), 4);
+        assert_eq!(cluster_first_col(&col_to_byte, text_len, 4, 6), 3);
+        assert_eq!(cluster_first_col(&col_to_byte, text_len, 99, 100), 0);
     }
 
     #[test]
@@ -1511,12 +1544,14 @@ mod tests {
         // accumulate fractional drift across rows.
         let cell_w = 11.0f32;
         let col_to_byte = vec![0, 1, 2, 3, 5, 5, 6];
+        let text_len = 6;
         let clusters = vec![
             ShapedCluster { start: 0, end: 1, x: 0.4, w: 10.6, rtl: false },
             ShapedCluster { start: 5, end: 6, x: 43.7, w: 21.3, rtl: false },
         ];
         for c in &clusters {
-            let snapped = cluster_first_col(&col_to_byte, c.start, c.end) as f32 * cell_w;
+            let snapped =
+                cluster_first_col(&col_to_byte, text_len, c.start, c.end) as f32 * cell_w;
             assert_eq!(snapped.fract(), 0.0);
             assert_eq!(snapped % cell_w, 0.0);
         }

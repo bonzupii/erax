@@ -387,9 +387,11 @@ fn gutter_width(show_line_numbers: bool, line_count: usize, max_visible_line: us
 /// Scrollbar thumb position and size within a track.
 ///
 /// Returns (thumb_start, thumb_size) with thumb_start + thumb_size <=
-/// track_size always. The thumb is proportional to the visible/total
-/// ratio, never smaller than 2 cells, and fills the track when all
-/// content is visible.
+/// track_size for track_size > 0. (A zero track is degenerate: the
+/// function returns (0, 1) as a no-paint sentinel; callers guard the
+/// track size before deriving.) The thumb is proportional to the
+/// visible/total ratio, never smaller than 2 cells, and fills the track
+/// when all content is visible.
 pub fn thumb_range(
     visible: usize,
     total: usize,
@@ -495,7 +497,10 @@ fn pane_geometry(
         None
     };
 
-    let h_scrollbar = if needs_hscroll {
+    let h_scrollbar = if needs_hscroll && frame.height >= 3 {
+        // The strip needs its own row: with fewer than 3 rows (text +
+        // hscroll + status) the derived hscroll_row would collide with
+        // the status row, so no bar is derived.
         // The bar spans the text width; the corner cell under the
         // vertical strip belongs to the vertical bar.
         let (track_start, track_len, paint) = if SHOW_ARROWS {

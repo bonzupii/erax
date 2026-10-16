@@ -181,8 +181,16 @@ impl WindowRenderer {
                 } else {
                     format!("{}│", " ".repeat(gutter_width - 1))
                 };
+                // The gutter sits after the left scrollbar strip when the
+                // vertical bar is on the left; the geometry's text rect
+                // already excludes the strip.
+                let gutter_x = geom.frame.x
+                    + usize::from(
+                        crate::config::scrollbar::VERTICAL_SIDE
+                            == crate::config::scrollbar::VerticalSide::Left,
+                    );
                 for (i, ch) in line_num_str.chars().enumerate() {
-                    let gx = geom.frame.x as u16 + i as u16;
+                    let gx = gutter_x as u16 + i as u16;
                     if gx < (geom.frame.x + geom.frame.width) as u16 {
                         screen_buffer.set(
                             gx,
