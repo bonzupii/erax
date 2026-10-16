@@ -29,9 +29,17 @@ fn handle_dispatch_result(
         }
         DispatchResult::Info(msg) => {
             // A command carrying its own message (list-buffers,
-            // exit-and-save refusing on save errors, yank-pop): the
-            // message is the result. Dropping it left bound keys that
-            // ran fine but said nothing.
+            // yank-pop): the message is the result. Dropping it left
+            // bound keys that ran fine but said nothing.
+            app.message = Some(msg);
+            display.dirty = true;
+            Ok(false)
+        }
+        DispatchResult::Refused(msg) => {
+            // A declined state change reports the same way as an
+            // informational message: the message names the way out,
+            // and the sequence executors (not the event layer) own
+            // the halt decision.
             app.message = Some(msg);
             display.dirty = true;
             Ok(false)

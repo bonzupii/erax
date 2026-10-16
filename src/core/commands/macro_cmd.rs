@@ -9,7 +9,9 @@
 
 use crate::core::app::EditorApp;
 use crate::core::command::Command;
-use crate::core::dispatcher::{dispatch, dispatch_insert, DispatchResult, MacroStep};
+use crate::core::dispatcher::{
+    dispatch, dispatch_insert, sequence_halts_after, DispatchResult, MacroStep,
+};
 
 /// Start recording a macro.
 pub fn begin_macro(app: &mut EditorApp, _count: usize) -> DispatchResult {
@@ -57,36 +59,28 @@ pub fn execute_macro(app: &mut EditorApp, count: usize) -> DispatchResult {
                 MacroStep::Command(Command::ExecuteMacro) => {
                     // Nested execution is rejected, not recursive: the
                     // flag above guards the direct case, this guards
-                    // macro-contained nesting. NotHandled (not Info) is
-                    // the stop signal, so the rejection still halts the
-                    // replay instead of being folded in by the Info rule.
-                    app.message =
-                        Some("Macros cannot invoke execute-macro".to_string());
-                    DispatchResult::NotHandled
+                    // macro-contained nesting. The rejection is a
+                    // refusal, so the shared sequence stop rule below
+                    // halts the replay on it.
+                    DispatchResult::Refused("Macros cannot invoke execute-macro".to_string())
                 }
                 MacroStep::Command(cmd) => dispatch(app, *cmd, *cnt),
                 MacroStep::Insert(c) => dispatch_insert(app, *c, *cnt),
             };
-            match step_result {
-                // A step that only asks for a repaint folds into the
-                // final Success: the replay's caller repaints anyway.
-                DispatchResult::Success | DispatchResult::Redraw => {}
-                // Info is a successful step carrying its own message
-                // (set-mark says "Mark set", kill-region says "Region
-                // killed"): the message is shown and the replay
-                // continues. Treating Info as a stop aborted every
-                // macro containing a mark or kill command.
-                DispatchResult::Info(msg) => {
-                    app.message = Some(msg);
-                }
-                // Anything else (Exit, NeedsInput, AwaitKey,
-                // NotHandled, FileModified) stops the replay so the
-                // signal reaches the event layer instead of being
-                // swallowed mid-macro.
-                other => {
-                    result = other;
-                    break 'replay;
-                }
+            // An informational message ("Mark set") is shown and the
+            // replay continues: treating Info as a stop aborted every
+            // macro containing a mark or kill command. Whether the
+            // replay continues past this step is the one shared
+            // sequence rule: a refusal (a state-changing command that
+            // did not perform its action, like an exit refused) halts
+            // the replay so later steps never run against the
+            // uncompleted intent.
+            if let DispatchResult::Info(msg) | DispatchResult::Refused(msg) = &step_result {
+                app.message = Some(msg.clone());
+            }
+            if sequence_halts_after(&step_result) {
+                result = step_result;
+                break 'replay;
             }
         }
     }
@@ -144,9 +138,9 @@ mod tests {
         dispatch(&mut app, Command::ExecuteMacro, 1);
         dispatch(&mut app, Command::EndMacro, 1);
         let result = dispatch(&mut app, Command::ExecuteMacro, 1);
-        // Rejected, not recursive: the replay halts on the rejection and
+        // Rejected, not recursive: the replay halts on the refusal and
         // the message names it.
-        assert_eq!(result, DispatchResult::NotHandled);
+        assert!(matches!(result, DispatchResult::Refused(_)));
         assert!(app
             .message
             .as_deref()
@@ -218,5 +212,67 @@ mod propagation_tests {
         // The macro definition survives the aborted replay.
         assert_eq!(app.last_macro.len(), 2);
         assert!(!app.executing_macro);
+    }
+
+    #[test]
+    fn macro_halts_at_refused_exit_and_save() {
+        let mut app = EditorApp::new();
+        // A refused ExitAndSave followed by an observable step: the
+        // refusal must stop the replay, so the insert never runs.
+        if let Some(buffer) = app.active_buffer_mut() {
+            buffer.insert(0, "unsaved work");
+        }
+        // The default scratch buffer has no filename: exiting would
+        // destroy its content, so exit_and_save refuses.
+        app.last_macro = vec![
+            (MacroStep::Command(Command::ExitAndSave), 1),
+            (MacroStep::Insert('z'), 1),
+        ];
+        let result = execute_macro(&mut app, 1);
+        match result {
+            DispatchResult::Refused(msg) => assert!(msg.contains("exit refused")),
+            other => panic!("expected refusal, got {other:?}"),
+        }
+        let text = app.active_buffer().expect("buffer").content_string();
+        assert!(!text.contains('z'), "replay continued past the refusal");
+        assert!(app
+            .message
+            .is_some_and(|m| m.contains("exit refused")));
+    }
+
+    #[test]
+    fn macro_continues_past_informational_info() {
+        let mut app = EditorApp::new();
+        // set-mark reports Info("Mark set"): informational success, so
+        // the replay continues past it to the insert.
+        app.last_macro = vec![
+            (MacroStep::Command(Command::SetMark), 1),
+            (MacroStep::Insert('q'), 1),
+        ];
+        let result = execute_macro(&mut app, 1);
+        assert_eq!(result, DispatchResult::Success);
+        let text = app.active_buffer().expect("buffer").content_string();
+        assert!(text.contains('q'), "replay stopped at informational Info");
+    }
+
+    #[test]
+    fn macro_rejects_nested_execute_macro_as_refusal() {
+        let mut app = EditorApp::new();
+        // Macro-contained execute-macro is a refusal, so the shared
+        // stop rule halts the replay and the insert never runs.
+        app.last_macro = vec![
+            (MacroStep::Command(Command::ExecuteMacro), 1),
+            (MacroStep::Insert('z'), 1),
+        ];
+        let result = execute_macro(&mut app, 1);
+        match result {
+            DispatchResult::Refused(msg) => assert!(msg.contains("cannot invoke")),
+            other => panic!("expected refusal, got {other:?}"),
+        }
+        let text = app.active_buffer().expect("buffer").content_string();
+        assert!(
+            !text.contains('z'),
+            "replay continued past the nested rejection"
+        );
     }
 }

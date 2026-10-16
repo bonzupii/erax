@@ -16,7 +16,7 @@ pub fn exit_erax(app: &mut EditorApp, _count: usize) -> DispatchResult {
     }
     // The alternatives name the commands by their standard names, derived
     // from the same table the prompt and menus use: no second copy to drift.
-    app.message = Some(format!(
+    DispatchResult::Refused(format!(
         "{modified} modified buffer{} not saved; exit refused. \
          Save them ({}) or {}, \
          or {} to discard.",
@@ -24,8 +24,7 @@ pub fn exit_erax(app: &mut EditorApp, _count: usize) -> DispatchResult {
         crate::core::command::Command::SaveBuffer.name(),
         crate::core::command::Command::ExitAndSave.name(),
         crate::core::command::Command::ExitWithoutSave.name(),
-    ));
-    DispatchResult::Success
+    ))
 }
 
 pub fn exit_without_save(_app: &mut EditorApp, _count: usize) -> DispatchResult {
@@ -81,7 +80,7 @@ pub fn exit_and_save(app: &mut EditorApp, _count: usize) -> DispatchResult {
         }
 
         if nameless > 0 {
-            return DispatchResult::Info(format!(
+            return DispatchResult::Refused(format!(
                 "{nameless} modified buffer{} {} no filename; exit refused. \
                  Save {} first ({}) or {} to discard.",
                 if nameless == 1 { "" } else { "s" },
@@ -95,7 +94,7 @@ pub fn exit_and_save(app: &mut EditorApp, _count: usize) -> DispatchResult {
         if save_errors.is_empty() {
             DispatchResult::Exit
         } else {
-            DispatchResult::Info(format!("Failed to save: {}", save_errors.join(", ")))
+            DispatchResult::Refused(format!("Failed to save: {}", save_errors.join(", ")))
         }
     }
 
@@ -134,16 +133,21 @@ mod tests {
             panic!("test app has no active buffer");
         }
         let result = exit_erax(&mut app, 1);
-        assert_eq!(result, DispatchResult::Success);
-        let message = app.message.as_deref().unwrap_or("");
-        assert!(
-            message.contains("1 modified buffer"),
-            "message names the problem, got: {message}"
-        );
-        assert!(
-            message.contains("quit-without-saving"),
-            "message names the explicit-discard alternative, got: {message}"
-        );
+        // The refusal travels in the result, not a message side
+        // channel: a refused exit halts sequence executors.
+        match result {
+            DispatchResult::Refused(message) => {
+                assert!(
+                    message.contains("1 modified buffer"),
+                    "message names the problem, got: {message}"
+                );
+                assert!(
+                    message.contains("quit-without-saving"),
+                    "message names the explicit-discard alternative, got: {message}"
+                );
+            }
+            other => panic!("expected refusal, got {other:?}"),
+        }
     }
 
     /// `exit-and-save` must NOT silently discard a modified buffer that
@@ -163,11 +167,11 @@ mod tests {
             .is_some_and(|b| b.filename.is_none()));
         let result = exit_and_save(&mut app, 1);
         match result {
-            DispatchResult::Info(msg) => {
+            DispatchResult::Refused(msg) => {
                 assert!(msg.contains("no filename"), "got: {msg}");
                 assert!(msg.contains("exit refused"), "got: {msg}");
             }
-            other => panic!("expected refusal Info, got {other:?}"),
+            other => panic!("expected refusal, got {other:?}"),
         }
         // The content is still there: nothing was destroyed.
         assert!(app

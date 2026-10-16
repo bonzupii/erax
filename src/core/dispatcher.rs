@@ -62,10 +62,31 @@ pub enum DispatchResult {
     NeedsInput { prompt: String, action: InputAction },
     /// Informational message to display
     Info(String),
+    /// A state-changing command declined to perform its action: the
+    /// string explains why and names the way out. Unlike Info, which
+    /// reports an informational success, a refusal leaves an
+    /// uncompleted intent behind, so every step-sequence executor
+    /// halts on it.
+    Refused(String),
     /// Force full display redraw
     Redraw,
     /// Wait for the next keypress (e.g., for describe-key)
     AwaitKey(InputAction), // The action expecting the key (e.g., DescribeKey)
+}
+
+/// The stop rule shared by every step-sequence executor (macro replay,
+/// ex command chains): informational success lets the sequence
+/// continue; anything that needs the user's attention or leaves an
+/// uncompleted intent behind halts it. A refusal — a state-changing
+/// command that did not perform its action — stops the sequence so
+/// later steps never run against the uncompleted intent. NotHandled
+/// means the same to every executor: the step produced no outcome to
+/// build on, so the sequence ends.
+pub fn sequence_halts_after(result: &DispatchResult) -> bool {
+    !matches!(
+        result,
+        DispatchResult::Success | DispatchResult::Redraw | DispatchResult::Info(_)
+    )
 }
 
 /// A recorded macro step: a typed command or a character insertion (N-157,
@@ -419,6 +440,40 @@ mod tests {
     }
 
     #[test]
+    fn sequence_stop_rule_treats_outcomes_uniformly() {
+        // The one stop rule every sequence executor (macro replay, ex
+        // command chains) shares: informational success continues; a
+        // refusal or anything needing the user's attention halts.
+        // NotHandled means the same to every executor.
+        for result in [
+            DispatchResult::Success,
+            DispatchResult::Redraw,
+            DispatchResult::Info("Mark set".to_string()),
+        ] {
+            assert!(
+                !sequence_halts_after(&result),
+                "sequence should continue past {result:?}"
+            );
+        }
+        for result in [
+            DispatchResult::NotHandled,
+            DispatchResult::FileModified(BufferId(0)),
+            DispatchResult::NeedsInput {
+                prompt: "Save as: ".to_string(),
+                action: InputAction::DescribeKey,
+            },
+            DispatchResult::AwaitKey(InputAction::DescribeKey),
+            DispatchResult::Exit,
+            DispatchResult::Refused("exit refused".to_string()),
+        ] {
+            assert!(
+                sequence_halts_after(&result),
+                "sequence should halt after {result:?}"
+            );
+        }
+    }
+
+    #[test]
     fn self_insert_consumes_prefix_exactly_once() {
         // The leaked-prefix repro: C-u, x, then C-f. Before the fix
         // the insert bypassed the prefix, inserting one x and leaving
@@ -486,12 +541,12 @@ mod tests {
     fn test_nested_macro_execution_is_rejected() {
         let mut app = setup_test_app();
         // Recording execute-macro inside a macro, then replaying, must not
-        // recurse: the nested execution is rejected (NotHandled), which
-        // halts the replay without treating it as a command failure.
+        // recurse: the nested execution is a refusal, which halts the
+        // replay without treating it as a command failure.
         dispatch(&mut app, Command::BeginMacro, 1);
         dispatch(&mut app, Command::ExecuteMacro, 1);
         dispatch(&mut app, Command::EndMacro, 1);
         let result = dispatch(&mut app, Command::ExecuteMacro, 1);
-        assert!(matches!(result, DispatchResult::NotHandled));
+        assert!(matches!(result, DispatchResult::Refused(_)));
     }
 }

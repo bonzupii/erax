@@ -491,6 +491,13 @@ impl ModalEngine {
                 app.message = Some(msg);
                 ModalOutcome::Consumed
             }
+            DispatchResult::Refused(msg) => {
+                // A declined state change displays like an
+                // informational message; the sequence executors own
+                // the halt decision, not the per-keypress path.
+                app.message = Some(msg);
+                ModalOutcome::Consumed
+            }
             DispatchResult::NeedsInput { prompt, action } => {
                 use crate::core::focus::{FocusState, focus_target_for_action};
                 let target = focus_target_for_action(action);
@@ -1650,20 +1657,19 @@ impl ModalEngine {
         match EX_COMMANDS.iter().find(|(name, _)| *name == cmd).map(|(_, a)| *a) {
             Some(ExAction::Run(command)) => self.run(app, command, 1),
             Some(ExAction::RunSequence(commands)) => {
-                // A sequence stops at the first step that does not
-                // cleanly succeed: `:wq` with a failed or impossible
-                // save must not run the quit. Only the last outcome
-                // used to survive, so a NeedsInput (SaveAs prompt) or
-                // an Info ("Save failed") from the save was silently
-                // overwritten by the quit that followed it.
+                // Every step runs through the one shared stop rule:
+                // informational success (Success, Redraw, Info) lets
+                // the sequence continue to the next step, and any
+                // other outcome — a refusal, a prompt, an unhandled
+                // key — ends the sequence with its own outcome
+                // converted. `:wq` with a failed or impossible save
+                // must not run the quit: only the last outcome used
+                // to survive, so a NeedsInput (SaveAs prompt) from
+                // the save was silently overwritten by the quit that
+                // followed it.
                 for command in commands.iter() {
                     let result = dispatch(app, *command, 1);
-                    let stop = !matches!(
-                        result,
-                        DispatchResult::Success
-                            | DispatchResult::Redraw
-                            | DispatchResult::NotHandled
-                    );
+                    let stop = crate::core::dispatcher::sequence_halts_after(&result);
                     let outcome = self.convert_result(app, result);
                     if stop {
                         return outcome;

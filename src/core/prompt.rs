@@ -382,6 +382,11 @@ pub fn handle_prompt_action(
                     DispatchResult::Info(msg) => {
                         app.message = Some(msg);
                     }
+                    DispatchResult::Refused(msg) => {
+                        // A named command that declined its action
+                        // reports the refusal the same way.
+                        app.message = Some(msg);
+                    }
                     DispatchResult::NeedsInput { prompt, action: _ } => {
                         app.focus_manager.push(crate::core::focus::FocusState::new(
                             crate::core::focus::FocusTarget::Minibuffer,
