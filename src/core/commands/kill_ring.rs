@@ -312,25 +312,37 @@ pub fn transpose_words(app: &mut EditorApp, _count: usize) -> DispatchResult {
                 return DispatchResult::Success;
             }
 
+            // Byte offsets for the word range.
+            let byte_offset = |grapheme_idx: usize| -> usize {
+                graphemes[..grapheme_idx.min(graphemes.len())]
+                    .iter()
+                    .map(|g| g.len())
+                    .sum()
+            };
+            let line_start_byte = {
+                let window = app.windows.get(&active_window_id);
+                let buffer = app.buffers.get(&buffer_id);
+                match (window, buffer) {
+                    (Some(w), Some(b)) => b.line_to_byte(w.cursor_y).unwrap_or(0),
+                    _ => 0,
+                }
+            };
+            let w1s = line_start_byte + byte_offset(word1_start);
+            let w2e = line_start_byte + byte_offset(word2_end);
+
             if let Some(buffer) = app.buffers.get_mut(&buffer_id)
                 && let Some(window) = app.windows.get_mut(&active_window_id) {
-                    // Delete from word1_start to word2_end
-                    let delete_len = word2_end - word1_start;
-                    window.cursor_x = word1_start;
-                    for _ in 0..delete_len {
-                        window.delete_char(buffer, false);
-                    }
-
-                    // Insert in swapped order: word2 + space + word1
-                    for c in word2.chars() {
-                        window.insert_char(buffer, c);
-                    }
-                    for c in space.chars() {
-                        window.insert_char(buffer, c);
-                    }
-                    for c in word1.chars() {
-                        window.insert_char(buffer, c);
-                    }
+                    // Structural edit: delete the span and insert the
+                    // swapped words as one operation. Bypass the
+                    // window's insert_char, which in overwrite mode
+                    // deletes under the cursor per character and would
+                    // corrupt the transpose (and splinter undo).
+                    buffer.delete(w1s, w2e - w1s);
+                    let swapped = format!("{word2}{space}{word1}");
+                    buffer.insert(w1s, &swapped);
+                    // Cursor to the end of the transposed region.
+                    let new_cursor_byte = w1s + swapped.len();
+                    window.set_cursor_to_byte(buffer, new_cursor_byte);
                 }
         }
         DispatchResult::Success
