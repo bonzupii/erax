@@ -330,6 +330,11 @@ mod tests {
         let inv = Invocation {
             mode: crate::cli::InvocationMode::Sed,
             degradation: None,
+            environment: crate::cli::Environment {
+                graphical_display_present: false,
+                stdin_is_tty: false,
+                color_mode: crate::cli::ColorMode::Mono,
+            },
             files: vec![Path::new("somefile.txt").to_path_buf()],
             theme: None,
             wrap: None,

@@ -14,7 +14,7 @@ use crate::cli::ShellMode;
 /// one the resolver degrades the preference to the best terminal rung
 /// the environment supports (piped stdin: stream-editor mode), and the
 /// shell reports the degradation on stderr. Explicit CLI flags
-/// (`-g`, `-u`, `-a`, `-s`, `--web-server`, `--web-bind`) override this
+/// (`-g`, `-u`, `-a`, `-s`, `-e`/`-f`, `--web-server`) override this
 /// default per invocation; the override is a typed invocation parameter
 /// and never mutates the constant.
 pub const SHELL_MODE: ShellMode = ShellMode::Gui;

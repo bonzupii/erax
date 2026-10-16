@@ -11,7 +11,7 @@ use erax::run;
 
 use std::process::ExitCode;
 
-use cli::{Degradation, Invocation, InvocationMode, ParseFailure};
+use cli::{ColorMode, Degradation, Invocation, InvocationMode, ParseFailure};
 
 fn main() -> ExitCode {
     match cli::parse() {
@@ -69,9 +69,19 @@ fn run(invocation: Invocation) -> ExitCode {
                 Err(run::GuiError::EventLoop(_)) => {
                     // The display claimed present but produced no event
                     // loop: degrade in the shell exactly as the resolver
-                    // would, instead of failing the invocation.
-                    eprintln!("erax: {}", degradation_notice(Degradation::ToTerminal));
-                    match run::run_terminal_mode(&invocation, cli::ColorMode::detect()) {
+                    // would have, instead of failing the invocation.
+                    let (fallback, degradation) =
+                        event_loop_fallback(&invocation.environment);
+                    eprintln!("erax: {}", degradation_notice(degradation));
+                    let result = match fallback {
+                        EventLoopFallback::Terminal(color_mode) => {
+                            run::run_terminal_mode(&invocation, color_mode)
+                                .map_err(|e| format!("{e}"))
+                        }
+                        EventLoopFallback::Sed => run::run_sed_mode(&invocation)
+                            .map_err(|e| format!("sed: {e}")),
+                    };
+                    match result {
                         Ok(()) => ExitCode::SUCCESS,
                         Err(e) => {
                             eprintln!("erax: {e}");
@@ -106,5 +116,58 @@ fn degradation_notice(degradation: Degradation) -> &'static str {
     match degradation {
         Degradation::ToTerminal => "no graphical environment; running in terminal mode",
         Degradation::ToSed => "piped standard input; running in stream-editor mode",
+    }
+}
+
+/// The shell's fallback when the GUI event loop is unavailable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EventLoopFallback {
+    /// Best terminal rung from the captured snapshot.
+    Terminal(ColorMode),
+    /// Stream-editor mode (piped stdin).
+    Sed,
+}
+
+/// Which fallback the shell takes when the GUI event loop is
+/// unavailable, mirroring the resolver's Gui branch: piped stdin
+/// degrades to stream-editor mode, otherwise to the best terminal rung
+/// from the captured snapshot (never re-read from the environment).
+fn event_loop_fallback(env: &cli::Environment) -> (EventLoopFallback, Degradation) {
+    if env.stdin_is_tty {
+        (
+            EventLoopFallback::Terminal(env.color_mode),
+            Degradation::ToTerminal,
+        )
+    } else {
+        (EventLoopFallback::Sed, Degradation::ToSed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn snapshot(tty: bool, color: ColorMode) -> cli::Environment {
+        cli::Environment {
+            graphical_display_present: true,
+            stdin_is_tty: tty,
+            color_mode: color,
+        }
+    }
+
+    #[test]
+    fn event_loop_fallback_mirrors_resolver_gui_branch() {
+        // tty: the best terminal rung from the snapshot, ToTerminal notice.
+        let (fallback, degradation) = event_loop_fallback(&snapshot(true, ColorMode::Ansi16));
+        assert_eq!(
+            fallback,
+            EventLoopFallback::Terminal(ColorMode::Ansi16)
+        );
+        assert_eq!(degradation, Degradation::ToTerminal);
+        // Piped stdin is checked first, as in the resolver: stream-editor
+        // mode with the ToSed notice, not a terminal on a dead stdin.
+        let (fallback, degradation) = event_loop_fallback(&snapshot(false, ColorMode::TrueColor));
+        assert_eq!(fallback, EventLoopFallback::Sed);
+        assert_eq!(degradation, Degradation::ToSed);
     }
 }

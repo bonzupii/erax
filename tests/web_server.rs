@@ -27,6 +27,11 @@ fn test_invocation_with_theme(theme: Option<ThemeId>) -> Invocation {
     Invocation {
         mode: InvocationMode::WebServer,
         degradation: None,
+        environment: erax::cli::Environment {
+            graphical_display_present: false,
+            stdin_is_tty: false,
+            color_mode: erax::cli::ColorMode::Mono,
+        },
         files: vec![],
         theme,
         wrap: None,

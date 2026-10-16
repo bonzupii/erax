@@ -60,12 +60,24 @@ pub fn run_gui_mode(inv: &Invocation) -> Result<(), GuiError> {
         cursor_pos: None,
         pressed_button: None,
         await_deadline: None,
+        startup_error: None,
     };
 
     event_loop
         .run_app(&mut app)
         .map_err(|e| GuiError::EventLoop(e.to_string()))?;
-    Ok(())
+    gui_run_outcome(&mut app)
+}
+
+/// Decide `run_gui_mode`'s result after the event loop returns: a
+/// startup failure recorded by `resumed()` (window/renderer creation)
+/// becomes the run's error. Without this, a reachable-but-unrenderable
+/// display exits 0 having started nothing.
+fn gui_run_outcome(app: &mut GuiApp) -> Result<(), GuiError> {
+    match app.startup_error.take() {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 struct GuiApp {
@@ -87,6 +99,11 @@ struct GuiApp {
     /// deadline; the GUI was missing it, so e.g. `InsertSpace` on `^C`
     /// never fired without a second event.
     await_deadline: Option<std::time::Instant>,
+    /// Window/renderer creation failure recorded by `resumed()`: the
+    /// handler signature returns (), so `run_gui_mode` reports the
+    /// recorded error after the loop exits instead of exiting 0 having
+    /// started nothing.
+    startup_error: Option<GuiError>,
 }
 
 impl ApplicationHandler for GuiApp {
@@ -136,7 +153,12 @@ impl ApplicationHandler for GuiApp {
                             self.dirty = true;
                         }
                         Err(e) => {
-                            eprintln!("Failed to create renderer: {}", e);
+                            // Recorded for run_gui_mode to report after
+                            // the loop exits: the typed error reaches the
+                            // dispatch, which fails loudly instead of
+                            // exiting 0 having started nothing.
+                            self.startup_error =
+                                Some(GuiError::Renderer(e.to_string()));
                             event_loop.exit();
                             return;
                         }
@@ -144,7 +166,9 @@ impl ApplicationHandler for GuiApp {
                     self.window = Some(window);
                 }
                 Err(e) => {
-                    eprintln!("Failed to create window: {}", e);
+                    // Recorded for run_gui_mode to report after the loop
+                    // exits (see the renderer arm above).
+                    self.startup_error = Some(GuiError::Window(e.to_string()));
                     event_loop.exit();
                 }
             }
@@ -528,6 +552,7 @@ mod tests {
             cursor_pos: None,
             pressed_button: None,
             await_deadline: None,
+            startup_error: None,
         }
     }
 
@@ -570,5 +595,33 @@ mod tests {
         app.arm_await_deadline();
         assert_eq!(app.await_deadline, None);
         assert_eq!(app.fire_await_deadline(), None);
+    }
+
+    #[test]
+    fn recorded_startup_error_becomes_the_run_error() {
+        // The contract run_gui_mode's tail implements: a startup failure
+        // recorded by resumed() (window/renderer creation) is reported
+        // as the run's error instead of exiting 0 having started nothing.
+        // The old code returned Ok(()) unconditionally here.
+        let mut app = test_app();
+        assert!(gui_run_outcome(&mut app).is_ok());
+
+        let mut app = test_app();
+        app.startup_error = Some(GuiError::Window("no window".to_string()));
+        assert!(matches!(gui_run_outcome(&mut app), Err(GuiError::Window(_))));
+
+        let mut app = test_app();
+        app.startup_error = Some(GuiError::Renderer("no gl".to_string()));
+        assert!(matches!(
+            gui_run_outcome(&mut app),
+            Err(GuiError::Renderer(_))
+        ));
+
+        let mut app = test_app();
+        app.startup_error = Some(GuiError::EventLoop("no loop".to_string()));
+        assert!(matches!(
+            gui_run_outcome(&mut app),
+            Err(GuiError::EventLoop(_))
+        ));
     }
 }

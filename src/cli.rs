@@ -103,6 +103,10 @@ pub struct Invocation {
     /// preference, if any. The shell reports it on stderr; it is never
     /// silent and never an error exit.
     pub degradation: Option<Degradation>,
+    /// The environment snapshot the resolver decided on, captured once
+    /// at the CLI boundary. The shell consults it for fallbacks instead
+    /// of re-reading process state.
+    pub environment: Environment,
     /// Files to open.
     pub files: Vec<PathBuf>,
     /// Theme override from `--theme` (typed; `None` means the config default).
@@ -233,9 +237,10 @@ pub struct ResolvedMode {
 /// Precedence: explicit CLI mode flags, then the `SHELL_MODE` const,
 /// then environment degradation of that preference. The `WebUi`
 /// preference is never degraded (the server is headless by design); an
-/// explicit `-g` is never degraded either (a dead display surfaces as an
-/// event-loop error, which the dispatch boundary degrades to terminal
-/// mode with the same stderr notice).
+/// explicit `-g` is never degraded either (a display that yields no
+/// event loop surfaces as an event-loop error, which the dispatch
+/// boundary degrades to terminal mode with the same stderr notice;
+/// window/renderer creation failures stay errors).
 pub fn resolve_mode(flags: ModeFlags, shell: ShellMode, env: &Environment) -> ResolvedMode {
     let (mode, degradation) = if flags.web_server {
         (InvocationMode::WebServer, None)
@@ -434,6 +439,7 @@ fn convert(args: Args) -> Result<Invocation, ParseFailure> {
     Ok(Invocation {
         mode: resolved.mode,
         degradation: resolved.degradation,
+        environment: env,
         files: args.files,
         theme,
         wrap,

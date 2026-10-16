@@ -31,8 +31,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libcups2-dev
 
+      # The action's README directs @master when passing an explicit
+      # `toolchain` input instead of selecting via @rev.
       - name: Install Rust 1.99.0
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.99.0
           components: clippy, rustfmt
