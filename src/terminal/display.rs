@@ -590,6 +590,17 @@ impl Display {
             self.cursor_pos = None;
         }
 
+        // 5b. Background invariant: every cell of the frame rect carries
+        // an explicit background. Cells the pane renderers never painted
+        // (hscroll strip when no scrollbar, gutter-adjacent areas) would
+        // otherwise keep bg=Reset and show the terminal's own background
+        // through. Fill them with the theme background.
+        for cell in &mut self.back_buffer.cells {
+            if cell.bg == crate::terminal::model::Color::Reset {
+                cell.bg = self.theme.bg;
+            }
+        }
+
         // 6. Validate buffer synchronization before swap
         self.validate_buffer_synchronization()?;
 
@@ -1822,5 +1833,28 @@ mod cursor_clamp_tests {
         let gx = 3;
         assert_eq!(cells[0], (gx + 3, 1 + 2));
         assert_eq!(display.cursor_pos, Some((gx + 3, 1 + 2)));
+    }
+
+    /// Background invariant: after render, no cell carries bg=Reset.
+    /// Unpainted rows (hscroll strip with no scrollbar, gutter-adjacent
+    /// areas) must get the theme background, not show the terminal
+    /// through.
+    #[test]
+    fn no_cell_lacks_background_after_render() {
+        let (mut app, mut display) = app_with_scrolled_view();
+        display.render(&mut app).expect("render");
+        let reset_cells: Vec<(usize, usize)> = display
+            .back_buffer
+            .cells
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.bg == Color::Reset)
+            .map(|(i, _)| (i % display.back_buffer.width as usize, i / display.back_buffer.width as usize))
+            .collect();
+        assert!(
+            reset_cells.is_empty(),
+            "cells with bg=Reset (terminal shows through): {:?}",
+            &reset_cells[..reset_cells.len().min(10)]
+        );
     }
 }
