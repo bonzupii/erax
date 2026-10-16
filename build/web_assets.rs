@@ -272,6 +272,14 @@ fn build_wasm(shell: &Path, out: &Path) {
         // build's ambient flags.
         .env_remove("RUSTFLAGS")
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        // Compiler wrapper variables from the outer cargo invocation
+        // (RUSTC_WORKSPACE_WRAPPER under `cargo clippy`, RUSTC_WRAPPER
+        // generally) must not cross into the nested build: they
+        // redirect rustc to the outer invocation's driver (e.g.
+        // clippy-driver), which then fails the wasm32 target on lints
+        // the plain build never sees.
+        .env_remove("RUSTC_WORKSPACE_WRAPPER")
+        .env_remove("RUSTC_WRAPPER")
         .status()
         .expect("build.rs: failed to run nested cargo for the web shell");
     if !status.success() {
