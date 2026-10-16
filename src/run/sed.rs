@@ -307,8 +307,15 @@ fn write_in_place(path: &Path, lines: &[String]) -> Result<(), SedRunError> {
     temp.as_file()
         .sync_all()
         .map_err(SedRunError::OutputIo)?;
-    temp.persist(path).map_err(|_| {
-        SedRunError::OutputIo(io::Error::other("failed to replace file"))
+    temp.persist(path).map_err(|e| {
+        // PersistError carries the temp path and the io error; keep
+        // both in the message instead of discarding them.
+        SedRunError::OutputIo(io::Error::other(format!(
+            "failed to replace {}: {} (temp file: {})",
+            path.display(),
+            e.error,
+            e.file.path().display(),
+        )))
     })?;
     Ok(())
 }
