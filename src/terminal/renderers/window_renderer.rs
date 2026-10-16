@@ -71,27 +71,85 @@ impl WindowRenderer {
         let is_original_diff = kind == BufferKind::DiffOriginal;
         let is_modified_diff = kind == BufferKind::DiffModified;
 
-        // Special handling for Terminal buffers - render from TerminalHost grid
+        // Special handling for Terminal buffers - render from TerminalHost grid.
+        // The branch owns the text rect and the gutter region: host cells
+        // map to text-relative coordinates, cells past the host grid paint
+        // blank with the theme background, and the gutter (which carries
+        // no line numbers for a pty) paints blank in gutter styling.
+        // Derived scrollbar strips paint through the shared painters.
+        // Every owned region is painted by construction; no post-render
+        // sweep patches them.
+        // Scrollbar colors resolve here so the branch can paint strips.
+        let track_bg = theme.bg;
+        let track_fg: Color = theme.scrollbar_track;
+        let thumb_fg: Color = theme.scrollbar_thumb;
         if kind == BufferKind::Terminal
             && let Some(host) = terminal_host {
                 let fg = theme.fg;
                 let bg = theme.bg;
                 let grid = host.grid();
 
-                for y in 0..text_height.min(host.rows as usize) {
+                for y in 0..text_height {
                     let screen_y = (geom.text.y + y) as u16;
-                    // Optimization: check dirty tracker (though terminal usually needs full redraw)
-                    // if !dirty_tracker.is_row_dirty(screen_y as usize) { continue; }
-
-                    if y < grid.len() {
-                        for x in 0..geom.frame.width.min(host.cols as usize) {
-                            let screen_x = (geom.frame.x + x) as u16;
-                            if x < grid[y].len() {
-                                let ch = grid[y][x];
-                                screen_buffer.set(screen_x, screen_y, Cell::new(ch, fg, bg));
+                    for x in 0..text_width {
+                        let screen_x = (text_start_x + x) as u16;
+                        let ch = grid
+                            .get(y)
+                            .and_then(|row| row.get(x))
+                            .copied()
+                            .unwrap_or(' ');
+                        screen_buffer.set(screen_x, screen_y, Cell::new(ch, fg, bg));
+                    }
+                }
+                // Gutter region: the model extends it over the horizontal
+                // strip row when the bar is present (vertical chrome spans
+                // the strip row). Blank-line gutter format, no line numbers
+                // for a pty.
+                if gutter_width > 0 {
+                    let gutter_x = geom.frame.x
+                        + usize::from(
+                            geom.v_scrollbar.is_some()
+                                && crate::config::scrollbar::VERTICAL_SIDE
+                                    == crate::config::scrollbar::VerticalSide::Left,
+                        );
+                    let gutter_h = text_height + usize::from(geom.h_scrollbar.is_some());
+                    let blank_gutter = format!("{}│", " ".repeat(gutter_width - 1));
+                    for y in 0..gutter_h {
+                        let screen_y = (geom.text.y + y) as u16;
+                        for (i, ch) in blank_gutter.chars().enumerate() {
+                            let gx = gutter_x + i;
+                            if gx < geom.frame.x + geom.frame.width {
+                                screen_buffer.set(
+                                    gx as u16,
+                                    screen_y,
+                                    Cell::with_role(
+                                        ch,
+                                        theme.gutter_fg,
+                                        theme.gutter_bg,
+                                        CellRole::Gutter,
+                                    ),
+                                );
                             }
                         }
                     }
+                }
+                if let Some(vbar) = &geom.v_scrollbar {
+                    crate::terminal::scrollbar::render_vertical(
+                        screen_buffer,
+                        vbar,
+                        track_fg,
+                        thumb_fg,
+                        track_bg,
+                    );
+                }
+                if let Some(hbar) = &geom.h_scrollbar {
+                    crate::terminal::scrollbar::render_horizontal(
+                        screen_buffer,
+                        hbar,
+                        track_fg,
+                        thumb_fg,
+                        track_bg,
+                    );
                 }
                 // Status line is handled by StatusRenderer (caller responsibility)
                 return 0; // Terminal buffers don't need horizontal scrollbar caching
@@ -182,12 +240,15 @@ impl WindowRenderer {
                     format!("{}│", " ".repeat(gutter_width - 1))
                 };
                 // The gutter sits after the left scrollbar strip when the
-                // vertical bar is on the left; the geometry's text rect
-                // already excludes the strip.
+                // vertical bar is on the left and present; the strip
+                // exists only while the bar does (dynamic presence), so
+                // the gutter origin follows the model's derived bar,
+                // matching `PaneGeometry::owned_regions`.
                 let gutter_x = geom.frame.x
                     + usize::from(
-                        crate::config::scrollbar::VERTICAL_SIDE
-                            == crate::config::scrollbar::VerticalSide::Left,
+                        geom.v_scrollbar.is_some()
+                            && crate::config::scrollbar::VERTICAL_SIDE
+                                == crate::config::scrollbar::VerticalSide::Left,
                     );
                 for (i, ch) in line_num_str.chars().enumerate() {
                     let gx = gutter_x as u16 + i as u16;
@@ -467,9 +528,8 @@ impl WindowRenderer {
         }
 
         // Scrollbars paint from the unified model geometry.
-        let track_bg = theme.bg;
-        let track_fg: Color = theme.scrollbar_track;
-        let thumb_fg: Color = theme.scrollbar_thumb;
+        // (Colors resolve above the terminal branch, which paints
+        // derived strips for terminal buffers too.)
 
         if let Some(vbar) = &geom.v_scrollbar {
             // The bar paints its own strip from the model geometry.
@@ -499,7 +559,7 @@ impl WindowRenderer {
         // Note: can't mutate window here, caller should update cached_content_width after render
 
         // The bar paints only when the model derived one; its strip
-        // row is reserved unconditionally.
+        // row exists only while it does (dynamic presence).
         if let Some(hbar) = &geom.h_scrollbar {
             crate::terminal::scrollbar::render_horizontal(
                 screen_buffer,
@@ -508,6 +568,36 @@ impl WindowRenderer {
                 thumb_fg,
                 track_bg,
             );
+            // Vertical chrome spans the strip row (the model's gutter
+            // region covers it, like the vertical bar's corner cell):
+            // paint the strip row's gutter columns in the blank-line
+            // gutter format. Without this they would be unowned.
+            if show_line_numbers && gutter_width > 0 {
+                let gutter_x = geom.frame.x
+                    + usize::from(
+                        geom.v_scrollbar.is_some()
+                            && crate::config::scrollbar::VERTICAL_SIDE
+                                == crate::config::scrollbar::VerticalSide::Left,
+                    );
+                for (i, ch) in format!("{}│", " ".repeat(gutter_width - 1))
+                    .chars()
+                    .enumerate()
+                {
+                    let gx = gutter_x + i;
+                    if gx < geom.frame.x + geom.frame.width {
+                        screen_buffer.set(
+                            gx as u16,
+                            hbar.cross as u16,
+                            Cell::with_role(
+                                ch,
+                                theme.gutter_fg,
+                                theme.gutter_bg,
+                                CellRole::Gutter,
+                            ),
+                        );
+                    }
+                }
+            }
         }
 
         // Return the visible max width for caching by caller

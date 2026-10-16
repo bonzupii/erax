@@ -590,17 +590,6 @@ impl Display {
             self.cursor_pos = None;
         }
 
-        // 5b. Background invariant: every cell of the frame rect carries
-        // an explicit background. Cells the pane renderers never painted
-        // (hscroll strip when no scrollbar, gutter-adjacent areas) would
-        // otherwise keep bg=Reset and show the terminal's own background
-        // through. Fill them with the theme background.
-        for cell in &mut self.back_buffer.cells {
-            if cell.bg == crate::terminal::model::Color::Reset {
-                cell.bg = self.theme.bg;
-            }
-        }
-
         // 6. Validate buffer synchronization before swap
         self.validate_buffer_synchronization()?;
 
@@ -1552,14 +1541,14 @@ mod golden_tests {
             (0, 1, 80, 23)
         );
         assert_eq!(p.gutter_width, 3);
+        // Dynamic presence: the horizontal bar is absent (content fits),
+        // so no strip is reserved and the text rect takes the full
+        // extent: 22 rows, reaching the row above the status row.
         assert_eq!(
             (p.text.x, p.text.y, p.text.width, p.text.height),
-            (3, 1, 76, 21)
+            (3, 1, 76, 22)
         );
         assert_eq!(p.status_row, 23);
-        // The horizontal strip row is reserved unconditionally; the bar
-        // itself is absent (content fits).
-        assert_eq!(p.hscroll_row, 22);
         assert_eq!(p.h_scrollbar, None);
         let v = p.v_scrollbar.expect("vertical scrollbar");
         assert_eq!((v.cross, v.track_start, v.track_len), (79, 2, 20));
@@ -1578,6 +1567,11 @@ mod golden_tests {
             display.back_buffer.get(79, 2).unwrap().role,
             CellRole::Scrollbar
         );
+        // The row the old permanent reservation wasted is text now: it
+        // paints as text with an explicit background, owned by the text
+        // renderer — no post-render sweep needed to cover it.
+        let strip_cell = display.back_buffer.get(3, 22).unwrap();
+        assert_ne!(strip_cell.bg, Color::Reset, "row 22 must be painted");
         assert_eq!(display.cursor_pos, Some((3, 1)));
     }
 
@@ -1710,9 +1704,10 @@ mod golden_tests {
             ),
             (0, 12, 80, 12)
         );
-        // Top pane: 11 rows = 9 text + 1 hscroll strip + 1 status.
+        // Top pane: 11 rows = 9 text + 1 hscroll strip + 1 status. The
+        // strip exists because the bar is present (dynamic presence),
+        // not because it is reserved.
         assert_eq!(top.text.height, 9);
-        assert_eq!(top.hscroll_row, 10);
         assert_eq!(top.status_row, 11);
         // Vertical bar owns the last column; its strip reaches the
         // hscroll row, whose corner cell is the bar's down arrow.
@@ -1721,11 +1716,11 @@ mod golden_tests {
         assert_eq!((v.thumb_start, v.thumb_len), (0, 2));
         // Horizontal bar spans the text width; the corner cell under
         // the vertical strip belongs to the vertical bar.
-        // (Gutter here is 2: 9 visible lines, one digit plus border.)
+        // (Gutter here is 3: 10 visible lines, two digits plus border.)
         let h = top.h_scrollbar.expect("horizontal scrollbar");
         assert_eq!(h.cross, 10);
-        assert_eq!(h.track_start, 3);
-        assert_eq!(h.track_len, 75);
+        assert_eq!(h.track_start, 4);
+        assert_eq!(h.track_len, 74);
         assert_eq!((h.thumb_start, h.thumb_len), (0, 28));
         assert!(h.thumb_start + h.thumb_len <= h.track_len);
         // Painted proof: the hscroll row carries scrollbar cells with
@@ -1733,10 +1728,19 @@ mod golden_tests {
         // bar's down arrow.
         let left_arrow = display.back_buffer.get(top.text.x as u16, 10).unwrap();
         assert_eq!(left_arrow.role, CellRole::Scrollbar);
-        let right_end = display.back_buffer.get((top.text.x + 75) as u16, 10).unwrap();
-        assert_eq!(right_end.role, CellRole::Scrollbar);
+        let right_arrow = display.back_buffer.get((top.text.x + 75) as u16, 10).unwrap();
+        assert_eq!(right_arrow.role, CellRole::Scrollbar);
         let corner = display.back_buffer.get(79, 10).unwrap();
         assert_eq!(corner.role, CellRole::Scrollbar);
+        // The model's gutter region extends over the strip row
+        // (vertical chrome spans it): the strip row's gutter columns
+        // paint as gutter cells with an explicit background, owned by
+        // the gutter painter — not left for any sweep.
+        for gx in 0..top.gutter_width as u16 {
+            let gutter_cell = display.back_buffer.get(gx, 10).unwrap();
+            assert_eq!(gutter_cell.role, CellRole::Gutter);
+            assert_ne!(gutter_cell.bg, Color::Reset);
+        }
     }
 }
 
@@ -1831,14 +1835,24 @@ mod cursor_clamp_tests {
         assert_eq!(display.cursor_pos, Some((gx + 3, 1 + 2)));
     }
 
-    /// Background invariant: after render, no cell carries bg=Reset.
-    /// Unpainted rows (hscroll strip with no scrollbar, gutter-adjacent
-    /// areas) must get the theme background, not show the terminal
-    /// through.
+    /// Ownership invariant, render side: after render, no cell carries
+    /// bg=Reset. There is no post-render sweep anymore (a sweep would
+    /// launder a modeling gap into correct-looking output); this holds
+    /// because every cell of the frame belongs to exactly one owned
+    /// region of the model (`PaneGeometry::owned_regions`, proven to
+    /// tile in `pane_regions_tile_frame_exactly`) and each region's
+    /// owner paints its background while constructing the frame. A
+    /// Reset cell here is an unowned cell: a model bug, not a
+    /// paint-order detail.
     #[test]
-    fn no_cell_lacks_background_after_render() {
+    fn render_paints_every_owned_region() {
         let (mut app, mut display) = app_with_scrolled_view();
         display.render(&mut app).expect("render");
+        // The menu bar is painted by a separate pass in the real run
+        // loops (run/tui.rs, run/gui.rs, web/server.rs); the test
+        // mirrors that sequence so the menu region has its owner.
+        let show = display.show_menu_bar;
+        display.render_menu_bar(show);
         let reset_cells: Vec<(usize, usize)> = display
             .back_buffer
             .cells
@@ -1849,7 +1863,7 @@ mod cursor_clamp_tests {
             .collect();
         assert!(
             reset_cells.is_empty(),
-            "cells with bg=Reset (terminal shows through): {:?}",
+            "cells with bg=Reset (unowned by any region): {:?}",
             &reset_cells[..reset_cells.len().min(10)]
         );
     }

@@ -1666,13 +1666,14 @@ mod tests {
             (0, 1, 80, 23)
         );
         assert_eq!(p.gutter_width, 3);
+        // Dynamic presence: no horizontal bar (content fits), so the
+        // text rect takes the full extent.
         assert_eq!(
             (p.text.x, p.text.y, p.text.width, p.text.height),
-            (3, 1, 76, 21)
+            (3, 1, 76, 22)
         );
         assert_eq!(p.status_row, 23);
-        // Both scrollbar strips are reserved outside the text rect.
-        assert_eq!(p.hscroll_row, 22);
+        assert_eq!(p.h_scrollbar, None);
         let v = p.v_scrollbar.expect("vertical scrollbar");
         assert_eq!((v.cross, v.track_start, v.track_len), (79, 2, 20));
         assert_eq!((v.thumb_start, v.thumb_len), (0, 4));
