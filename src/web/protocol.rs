@@ -1,6 +1,6 @@
 //! Typed, versioned wire protocol for the WebUI server.
 //!
-//! Design (owner's, non-negotiable):
+//! Design:
 //! - Frames mirror the internal screen-model types — `Cell`, `CellRole`,
 //!   `KeyPress`, `MouseEvent` are serialized directly (serde). There is no
 //!   second representation of editor state.
@@ -57,7 +57,7 @@ pub struct CursorState {
     pub y: u16,
     /// Whether the cursor is visible (e.g. hidden in some modes).
     pub visible: bool,
-    /// The semantic role under the cursor (N-273 metadata for shaders).
+    /// The semantic role under the cursor (metadata for shaders).
     pub role: CellRole,
     /// The cursor shape for the current input model/mode (block, bar,
     /// underline, hollow), decided by the backend. The client presents
@@ -77,7 +77,7 @@ pub enum ServerFrame {
     /// Authentication failed; the server closes the connection after this.
     AuthError { reason: String },
     /// Screen update: sequence number, dirty regions, and the cells within
-    /// them (full `Cell` values — text, colors, N-273 role). The client
+    /// them (full `Cell` values — text, colors, role). The client
     /// applies them to its local screen model and re-renders.
     Screen {
         seq: u64,
@@ -275,7 +275,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // Hostile-frame fuzz (session 8 hardening): the decode path must turn
+    // Hostile-frame fuzz: the decode path must turn
     // hostile input into `Err`, never panic, never hang. Deterministic
     // xorshift PRNG over a seed corpus + byte mutations. Not run under
     // Miri (exec count); the round-trip tests above do run under Miri.

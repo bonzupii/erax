@@ -14,17 +14,15 @@
 //! from their specifications so the tree carries no new dependency; both
 //! carry their published test vectors in `tests` below.
 //!
-//! Security model, stated without varnish: this mints an
-//! unguessable-enough per-session bearer token for a server that binds
-//! loopback by default. The threat answered is a remote party guessing a
-//! live session token (128-bit class) within one session's lifetime. It is
-//! NOT a general-purpose CSPRNG and does not claim OS-CSPRNG equivalence:
-//! the seed material is observable in part (wall clock, pid, thread id),
-//! and a restored VM snapshot with a frozen clock defeats the
-//! time-based inputs. Uniqueness across rapid successive calls holds by
-//! construction, not by clock luck: a process-wide atomic counter is part
-//! of every seed and strictly increases, so two calls in one process can
-//! never feed the mixer identical input.
+//! Security model: this mints a per-session bearer token for a server that
+//! binds loopback by default. The threat answered is a remote party guessing
+//! a live session token. It is NOT a general-purpose CSPRNG and does not
+//! claim OS-CSPRNG equivalence: the seed material is observable in part
+//! (wall clock, pid, thread id), and a restored VM snapshot with a frozen
+//! clock defeats the time-based inputs. Uniqueness across rapid successive
+//! calls holds by construction: a process-wide atomic counter is part of
+//! every seed and strictly increases, so two calls in one process can never
+//! feed the mixer identical input.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;

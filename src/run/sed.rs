@@ -1,10 +1,10 @@
 //! Sed (stream editing) mode with interactive diff review.
 //!
-//! Principle 11: this is *interactive* sed. Every transformation is presented
-//! as accept/reject diff hunks before anything is applied; batch-only
-//! execution is not a mode of this tool (N-018). A script comes only from an
+//! This is *interactive* sed. Every transformation is presented as
+//! accept/reject diff hunks before anything is applied; batch-only
+//! execution is not a mode of this tool. A script comes only from an
 //! explicit `-e`/`-f`; a positional filename is never reinterpreted as a
-//! script (N-019).
+//! script.
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, IsTerminal, Write};
@@ -19,7 +19,7 @@ use crate::core::path::{PathError, validate_file_path};
 /// Typed errors for sed-mode invocation and review.
 #[derive(Debug)]
 pub enum SedRunError {
-    /// No script was given via `-e`/`-f` (N-019: never guess from positionals).
+    /// No script was given via `-e`/`-f`; positionals are never guessed as scripts.
     NoScript,
     /// A script failed to parse.
     ScriptParse(SedError),
@@ -82,7 +82,7 @@ pub fn run_sed_mode(inv: &Invocation) -> Result<(), SedRunError> {
         }
     }
 
-    // N-019: a script must come from -e/-f. A positional filename is input,
+    // A script must come from -e/-f. A positional filename is input,
     // never a script.
     if sed_config.commands.is_empty() {
         return Err(SedRunError::NoScript);
@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn no_script_is_a_typed_error_not_a_guessed_filename() {
-        // N-019: without -e/-f, the first positional is input, never a script.
+        // Without -e/-f, the first positional is input, never a script.
         let inv = Invocation {
             mode: crate::cli::InvocationMode::Sed,
             files: vec![Path::new("somefile.txt").to_path_buf()],

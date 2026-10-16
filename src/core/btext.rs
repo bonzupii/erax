@@ -239,14 +239,13 @@ impl Pager {
                 file_len: self.len,
             });
         }
-        // Snapshot-integrity revalidation (session 6): the fd pins the
-        // inode, but the inode's *content* can be replaced under us
-        // (truncate+regrow, in-place overwrite). On a cache miss the old
-        // bytes are gone, so re-stat: same length + different mtime means
-        // the pinned snapshot no longer exists on disk — refuse the read
-        // rather than silently substituting new bytes. A grown file is a
-        // (tolerated) append; a shrunk file surfaces as Truncated below.
-        // One fstat per page miss (~100ns) — negligible against the read.
+        // Snapshot-integrity revalidation: the fd pins the inode, but the
+        // inode's *content* can be replaced under us (truncate+regrow,
+        // in-place overwrite). On a cache miss the old bytes are gone, so
+        // re-stat: same length + different mtime means the pinned snapshot
+        // no longer exists on disk — refuse the read rather than silently
+        // substituting new bytes. A grown file is a (tolerated) append; a
+        // shrunk file surfaces as Truncated below.
         if let Some(open_mtime) = self.open_mtime
             && let Ok(meta) = self.file.metadata()
             && meta.len() == self.len
@@ -936,9 +935,9 @@ impl BText {
                             line_index,
                             ..
                         } => {
-                            // Cached newline index (session 6): built on first
-                            // use via a single region scan, then O(1) lookup.
-                            // Without this, every lookup scanned up to 1 MiB.
+                            // Cached newline index: built on first use via a
+                            // single region scan, then O(1) lookup. Without
+                            // this, every lookup scanned up to 1 MiB.
                             if line_index.borrow().is_none() {
                                 let bytes = pager.read(*offset, *len as usize)?;
                                 *line_index.borrow_mut() =

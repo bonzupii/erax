@@ -1,18 +1,14 @@
-//! Memory-mapped read-only file regions — production (session 7).
+//! Memory-mapped read-only file regions.
 //!
-//! Owner directive (item 5): mmap is BACK ON where needed to meet goals,
-//! with ALL standard safety mitigations implemented. This module is the
-//! complete mitigation set:
+//! The complete mitigation set for mapping untrusted file bytes:
 //!  1. **Validated length**: `len` comes from `fstat` at open; we never
 //!     build a slice at or beyond it (mitigation #1).
 //!  2. **Post-read snapshot validation**: one `fstat` after every guarded
 //!     read. Same length + different mtime means the content was replaced
 //!     (truncate+regrow or in-place rewrite) — the bytes just read are
 //!     discarded with `PagerError::FileChanged`. Checking *after* the deref
-//!     is precise where a pre-read check has a TOCTOU window (and where the
-//!     first session-7 design's 1024-read epoch cache silently served
-//!     replaced bytes — caught by fault-injection). Truncation is caught by
-//!     the guard; the length cache short-circuits repeat faults.
+//!     is precise where a pre-read check has a TOCTOU window. Truncation is
+//!     caught by the guard; the length cache short-circuits repeat faults.
 //!     (mitigation #2).
 //!  3. **SIGBUS handler with scoped recovery**: a fault inside a guarded
 //!     read becomes `PagerError::Truncated`, never process death
@@ -39,11 +35,6 @@
 //! - All derefs go through `read_guarded`, which validates bounds first and
 //!   arms the SIGBUS guard around the deref window.
 //!
-//! Owner pre-approval (session 5, reaffirmed session 6 item 5 and the
-//! owner's late-2026-10-14 directive): unsafe for memory mapping is allowed
-//! INSIDE the DS module only, with SAFETY proofs. This module is that
-//! pre-approved surface.
-//!
 //! Platform note: Unix-only (`#[cfg(unix)]` at the `mod` declaration).
 //! The `libc` crate does not expose `sigsetjmp`/`siglongjmp` on this
 //! platform, so they are declared here via `extern "C"` (see `guard`).
@@ -56,8 +47,7 @@ use std::time::SystemTime;
 
 // -- Unsafe leaves (module level): each holds exactly one unsafe operation
 // and no safe logic. The workspace denies `unsafe_code`; these per-item
-// `#[allow(unsafe_code)]` attributes are the only unsafe surface here
-// (owner pre-approved for memory mapping inside the DS module).
+// `#[allow(unsafe_code)]` attributes are the only unsafe surface here.
 
 /// `mmap` a read-only private mapping of `map_len` bytes of `fd`.
 ///
@@ -697,11 +687,11 @@ impl MmapRegion {
     /// Why the validation is *post*-read: `MAP_PRIVATE` read-faults map the
     /// page cache (not copy-on-write), so an in-place file rewrite is
     /// visible in already-faulted pages WITHOUT faulting — a pre-read mtime
-    /// check has a TOCTOU window, and an epoch-cached mtime (session 7's
-    /// first design) missed replacements for up to 1023 reads. Checking
-    /// *after* the deref is precise: if mtime is unchanged, no replacement
-    /// happened before we finished reading, so the bytes are the pinned
-    /// snapshot; if it changed, we discard them. One fstat per read.
+    /// check has a TOCTOU window, and a cached mtime can miss replacements.
+    /// Checking *after* the deref is precise: if mtime is unchanged, no
+    /// replacement happened before we finished reading, so the bytes are
+    /// the pinned snapshot; if it changed, we discard them. One fstat per
+    /// read.
     /// Validate `[offset, offset+len)` against the open length and the
     /// shrink cache. Shared by the guarded read primitives below.
     fn check_range(&self, offset: u64, len: usize) -> Result<(), PagerError> {

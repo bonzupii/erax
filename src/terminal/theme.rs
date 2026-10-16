@@ -1,23 +1,22 @@
 //! Color themes as plain data.
 //!
-//! A theme is a plain data value with named fields (N-099): a new theme is a
-//! copied struct literal with the colors changed. There is one `Color` type
-//! for themes and terminal alike (N-098) — `crate::terminal::color::Color` —
-//! stored directly in the theme and read by field at render sites, with no
-//! conversion layer and no per-theme constructor functions (N-103's `rgb!`
-//! macro is gone; construct the value directly).
+//! A theme is a plain data value with named fields: a new theme is a copied
+//! struct literal with the colors changed. There is one `Color` type for
+//! themes and terminal alike — `crate::terminal::color::Color` — stored
+//! directly in the theme and read by field at render sites, with no
+//! conversion layer and no per-theme constructor functions.
 //!
-//! Theme selection is a typed match over `ThemeId` producing a `&'static Theme`
-//! (N-101): no stringly registry, no HashMap, no per-lookup clone of the whole
-//! palette. Light/dark is a field of the theme value, decided once where the
-//! theme is defined (N-073). There is exactly one default theme, stated once
-//! (N-102): `ThemeId::default()`.
+//! Theme selection is a typed match over `ThemeId` producing a `&'static Theme`:
+//! no stringly registry, no HashMap, no per-lookup clone of the whole palette.
+//! Light/dark is a field of the theme value, decided once where the theme is
+//! defined. There is exactly one default theme, stated once:
+//! `ThemeId::default()`.
 
 use crate::terminal::color::Color;
 
 pub mod themes;
 
-/// A color theme: plain data, one named field per UI/syntax role (N-100).
+/// A color theme: plain data, one named field per UI/syntax role.
 ///
 /// Roles that previously collided on one palette slot (e.g. `selection_bg`,
 /// `current_line_bg`, and `scrollbar_track`) are independent fields here; each
@@ -27,7 +26,7 @@ pub mod themes;
 pub struct Theme {
     /// Theme name, e.g. `"dracula"`.
     pub name: &'static str,
-    /// True for dark-background themes, false for light ones (N-073).
+    /// True for dark-background themes, false for light ones.
     pub is_dark: bool,
 
     // -- editor surface --
@@ -68,7 +67,7 @@ pub struct Theme {
     /// Underline tint for misspelled words.
     pub spell_tint: Color,
 
-    // -- syntax roles (generic highlighter, N-269) --
+    // -- syntax roles (generic highlighter) --
     /// Keywords.
     pub keyword: Color,
     /// Type names.
@@ -107,9 +106,9 @@ pub struct Theme {
     pub diff_removed_bg: Color,
 }
 
-/// Typed theme identifier. Selecting a theme is a match over this enum (N-101);
+/// Typed theme identifier. Selecting a theme is a match over this enum;
 /// an invalid selection is a compile error or a typed CLI parse error, never a
-/// silent runtime fallback (N-014, N-088).
+/// silent runtime fallback.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ThemeId {
     Dracula,
@@ -195,7 +194,7 @@ impl ThemeId {
         self.theme().name
     }
 
-    /// The theme value for this id. One typed match, no registry (N-101).
+    /// The theme value for this id. One typed match, no registry.
     pub fn theme(self) -> &'static Theme {
         use ThemeId::*;
         match self {
@@ -237,7 +236,7 @@ impl ThemeId {
     }
 }
 
-/// The one default theme, stated once (N-102).
+/// The one default theme, stated once.
 ///
 /// GitHub Dark is the stock default: the most neutral dark palette in the
 /// tree by background chroma, with a seamless status bar and full truecolor
@@ -265,7 +264,7 @@ impl core::str::FromStr for ThemeId {
     type Err = UnknownTheme;
 
     /// Parse a kebab-case theme name (e.g. `"gruvbox"`, `"solarized-dark"`).
-    /// An invalid name is a typed parse error, never a silent fallback (N-014).
+    /// An invalid name is a typed parse error, never a silent fallback.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         for id in Self::all() {
             if id.theme().name == s {

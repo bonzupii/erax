@@ -44,7 +44,7 @@ pub fn run_terminal_mode(
 
     let mut display =
         terminal::display::Display::new_terminal(inv.theme, inv.wrap).map_err(TuiError::TerminalSize)?;
-    // The CLI color mode decides the display's color capability (N-002).
+    // The CLI color mode decides the display's color capability.
     display.display_mode = match color_mode {
         ColorMode::TrueColor => terminal::capabilities::DisplayMode::TrueColor,
         ColorMode::Ansi16 => terminal::capabilities::DisplayMode::Ansi,
@@ -91,7 +91,7 @@ pub fn run_terminal_mode(
 
     let mut event_handler = terminal::events::EventHandler::new();
     // Deadline for an `AwaitLonger` leaf: if no key arrives by then, the leaf
-    // command executes (N-013).
+    // command executes.
     let mut await_deadline: Option<std::time::Instant> = None;
     let await_timeout =
         std::time::Duration::from_millis(crate::config::keys::KEY_SEQUENCE_TIMEOUT_MS);

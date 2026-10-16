@@ -2,7 +2,7 @@
 //! No cursor, scrolling, or viewport state (those belong to Window)
 //!
 //! Storage engine: [`BText`](crate::core::btext::BText), the in-house
-//! persistent B-tree over byte chunks (replaced ropey in session 5).
+//! persistent B-tree over byte chunks.
 //! The Buffer API is byte-positioned end to end — no char/byte translation
 //! layer — because the tree itself is encoding-dumb (bytes are bytes).
 
@@ -35,7 +35,7 @@ pub enum BufferKind {
     ShellOutput,
 }
 
-/// Typed error for buffer file loading (N-143: distinguish IO from UTF-8 errors).
+/// Typed error for buffer file loading: distinguishes IO errors from UTF-8 errors.
 #[derive(Debug)]
 pub enum LoadError {
     /// IO error (file not found, permission denied, etc.)
@@ -117,7 +117,7 @@ pub struct Buffer {
     pub token_annotations: Vec<crate::core::semantics::TokenAnnotation>,
     /// Syntax highlighting state cache for each line
     pub syntax_state_cache: Vec<SyntaxLexerState>,
-    /// Original raw bytes for non-UTF-8 files (N-143, byte-exact preservation).
+    /// Original raw bytes for non-UTF-8 files, preserved byte-exact.
     /// When Some, the B-tree holds the lossy UTF-8 view for display/editing,
     /// but saving an unmodified buffer writes these bytes back byte-exact.
     /// (The tree can hold arbitrary bytes natively, but the bridge stays —
@@ -193,7 +193,7 @@ impl Buffer {
     /// Load a buffer from a file.
     ///
     /// Returns a typed [`LoadError`] distinguishing IO failures from invalid
-    /// UTF-8 (N-143). For invalid UTF-8, the raw bytes are preserved in the
+    /// UTF-8. For invalid UTF-8, the raw bytes are preserved in the
     /// error so the caller can prompt the user (read-only vs proceed) without
     /// re-reading the file. Use [`Buffer::from_invalid_utf8_bytes`] after the
     /// user chooses to proceed.
@@ -219,7 +219,7 @@ impl Buffer {
         // errors and to preserve bytes for the InvalidUtf8 case).
         let bytes = fs::read(&validated_path).map_err(LoadError::Io)?;
 
-        // Validate UTF-8 explicitly (N-143: no silent lossy fallback).
+        // Validate UTF-8 explicitly: no silent lossy fallback.
         match std::str::from_utf8(&bytes) {
             Ok(text) => {
                 let text = BText::from_bytes(text.as_bytes());
@@ -364,7 +364,7 @@ impl Buffer {
     }
 
     /// Create a buffer from bytes known to be invalid UTF-8, after the user
-    /// has chosen to proceed (N-143).
+    /// has chosen to proceed.
     ///
     /// The tree holds the lossy UTF-8 view for display/editing; the original
     /// bytes are preserved in `original_bytes` so an unmodified buffer saves
@@ -1132,7 +1132,7 @@ impl Buffer {
         };
         let mut temp_file = NamedTempFile::new_in(parent)?;
 
-        // N-143: If the buffer was loaded from invalid UTF-8 and has NOT been
+        // If the buffer was loaded from invalid UTF-8 and has NOT been
         // modified, write the original bytes back byte-exact (never destructive).
         // If modified, the tree content is written (user chose to proceed).
         if !self.modified {
@@ -1454,8 +1454,8 @@ impl Buffer {
 /// KMP failure function for `pattern`: `table[i]` is the length of the
 /// longest proper prefix of `pattern[..=i]` that is also a suffix.
 /// Used only for the border check (whether the pattern can overlap with
-/// itself); the search itself uses SIMD `str` APIs, not KMP (a byte-at-a-time
-/// KMP loop is 4x slower than memchr-backed `str::find` — measured session 6).
+/// itself); the search itself is memchr-backed `str::find`, not a
+/// byte-at-a-time KMP loop.
 fn kmp_table(pattern: &[u8]) -> Vec<usize> {
     let m = pattern.len();
     let mut table = vec![0; m];
@@ -1552,7 +1552,7 @@ impl Buffer {
         }
 
         // Apply replacements in reverse order to keep byte positions valid,
-        // recording the REAL edits in a single undo group (N-146: no fake marker).
+        // recording the real edits in a single undo group, not a fake marker.
         let mut group = UndoGroup::new();
         for &pos in matches.iter().rev() {
             // Record the deleted text for undo (delete_bytes is atomic: on a
@@ -1809,7 +1809,7 @@ mod tests {
             .expect("Failed to write test data");
         drop(file);
 
-        // Load the file - should return InvalidUtf8 error (N-143: no silent lossy)
+        // Load the file - should return InvalidUtf8 error (no silent lossy)
         let result = Buffer::from_file(&test_file);
 
         // Clean up
@@ -1845,7 +1845,7 @@ mod tests {
 
     #[test]
     fn test_replace_all_undo_restores_real_content() {
-        // N-146: replace_all must record real edits, not a fake marker.
+        // replace_all must record real edits, not a fake marker.
         let mut buffer = Buffer::new();
         buffer.insert(0, "foo bar foo baz foo");
         let original = buffer.content_string();
@@ -1869,7 +1869,7 @@ mod tests {
 
     #[test]
     fn test_find_all_spanning_tiny_mapped_leaves() {
-        // Regression (session 6): `find_all` missed matches spanning three
+        // `find_all` missed matches spanning three
         // or more chunks when a middle chunk was shorter than the pattern —
         // the old overlap logic required the *current* chunk to complete the
         // pattern, so a match split across two boundaries was never found.
@@ -1898,7 +1898,7 @@ mod tests {
 
     #[test]
     fn test_replace_all_is_non_overlapping() {
-        // Regression (session 6): `replace_all` used to apply `find_all`'s
+        // `replace_all` used to apply `find_all`'s
         // overlapping matches right-to-left, giving order-dependent results
         // ("aaa".replace("aa"→"b") yielded "b"). It now mirrors
         // `str::replace`: non-overlapping, left to right.

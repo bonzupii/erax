@@ -1,19 +1,17 @@
-//! Vim modal editing engine (N-268 Phase 1 + Phase 2).
+//! Vim modal editing engine.
 //!
 //! Real modal semantics behind the [`INPUT_MODEL`](crate::config::keys::INPUT_MODEL)
 //! switch: Normal / Insert / Visual / OperatorPending / CommandLine, counts,
-//! operator+motion composition, registers, and `.` repeat.
+//! operator+motion composition, registers, and `.` repeat. Word-end motions
+//! (`e`/`E`/`ge`/`gE`) and WORD motions (`W`/`B`) share one word-boundary
+//! primitive with the word-start motions; text objects (`iw`/`aw`/`iW`/`aW`,
+//! pairs, quotes) are range producers through the same operator/visual
+//! machinery; sentence motions (`(`/`)`) are typed commands; Ctrl+R is redo.
 //!
-//! Phase 2 adds: word-end motions (`e`/`E`/`ge`/`gE`) and WORD motions
-//! (`W`/`B`) over one shared word-boundary primitive with the word-start
-//! motions, text objects (`iw`/`aw`/`iW`/`aW`, pairs, quotes) as range
-//! producers through the same operator/visual machinery, sentence motions
-//! (`(`/`)`) as typed commands, and Ctrl+R redo.
-//!
-//! Composition, not forking: motions run as typed [`Command`]s through the
-//! dispatcher; operators resolve the motion's byte range and apply it through
-//! the [`Buffer`](crate::core::buffer::Buffer) API (`insert`/`delete`), which
-//! is undo-recorded. Vim registers live in the engine — the emacs kill ring is
+//! Motions run as typed [`Command`]s through the dispatcher; operators resolve
+//! the motion's byte range and apply it through the
+//! [`Buffer`](crate::core::buffer::Buffer) API (`insert`/`delete`), which is
+//! undo-recorded. Vim registers live in the engine — the emacs kill ring is
 //! never touched, so the per-model clipboard separation on `EditorApp`
 //! (`kill_ring` vs `clipboard` vs vim registers) holds.
 
@@ -249,7 +247,7 @@ impl ModalEngine {
         self.mode
     }
 
-    // -- screen-model accessors (N-273/D6) ----------------------------------
+    // -- screen-model accessors -----------------------------------------------
     //
     // The TUI screen model and the GUI/WebUI read mode UI state through these
     // small accessors only. They are pure views of engine state: adding them

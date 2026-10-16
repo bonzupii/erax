@@ -1016,7 +1016,7 @@ pub fn encode_checked(text: &str, detected: &DetectedEncoding) -> (Vec<u8>, HadE
 #[derive(Debug)]
 pub struct LoadedBuffer {
     /// The buffer. For non-UTF-8 / erroring input, `original_bytes` is set so
-    /// an *unmodified* buffer saves byte-exact (existing N-143 semantics).
+    /// an *unmodified* buffer saves byte-exact.
     pub buffer: Buffer,
     /// What was detected, including any BOM (needed for byte-exact encode).
     pub detected: DetectedEncoding,
@@ -1032,7 +1032,7 @@ pub struct LoadedBuffer {
 /// decodes cleanly, the rope *is* the byte-exact content and no preservation
 /// copy is kept. Otherwise the original bytes are preserved in
 /// `buffer.original_bytes`, so saving an unmodified buffer writes them back
-/// verbatim (N-143 semantics extended to every encoding and to raw binary).
+/// verbatim (extended to every encoding and to raw binary).
 pub fn buffer_from_bytes(path: PathBuf, bytes: Vec<u8>) -> LoadedBuffer {
     let detected = detect(&bytes);
     let (text, HadErrors(had_errors)) = decode(&bytes, detected.encoding);

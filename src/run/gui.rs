@@ -40,7 +40,7 @@ impl std::fmt::Display for GuiError {
 /// Run in GUI mode.
 pub fn run_gui_mode(inv: &Invocation) -> Result<(), GuiError> {
     let mut keybind_manager = terminal::keybinds::KeyBindingManager::new();
-    // Load the keymap for the compile-time input model (N-268).
+    // Load the keymap for the compile-time input model.
     keybind_manager.load(bindings_for_model(INPUT_MODEL));
 
     let editor_app = core::app::EditorApp::initialize(&inv.files);
@@ -404,7 +404,7 @@ impl GuiApp {
         use winit::event::ElementState;
 
         // Track pressed button for Drag synthesis; forward ALL states
-        // including release (N-028). Click counting lives in the backend.
+        // including release. Click counting lives in the backend.
         if state == ElementState::Pressed {
             self.pressed_button = Some(button);
         } else {
