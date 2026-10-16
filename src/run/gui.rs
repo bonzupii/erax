@@ -420,15 +420,16 @@ impl GuiApp {
         };
 
         // Scroll position clamps onto the grid: a wheel over the scrollbar
-        // strips or the status line scrolls the adjacent pane. The old
-        // `unwrap_or_default()` attributed those events to cell (0, 0),
-        // scrolling the top-left pane instead of the one under the cursor.
-        let (col, row) =
-            if let (Some((x, y)), Some(renderer)) = (self.cursor_pos, self.renderer.as_ref()) {
+        // strips or the status line scrolls the adjacent pane. With no
+        // prior cursor position there is no pane under the cursor; the
+        // event is dropped rather than fabricated at (0, 0), which would
+        // scroll the top-left pane for a wheel that happened elsewhere.
+        let (col, row) = match (self.cursor_pos, self.renderer.as_ref()) {
+            (Some((x, y)), Some(renderer)) => {
                 crate::gui::input::mouse_pos_to_grid_clamped(x as f32, y as f32, &renderer.metrics)
-            } else {
-                (0, 0)
-            };
+            }
+            _ => return,
+        };
 
         let mouse_event = core::input::MouseEvent {
             column: col as u16,
