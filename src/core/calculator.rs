@@ -419,7 +419,10 @@ fn evaluate(
     variables: &mut HashMap<String, i64>,
 ) -> Result<i64, CalcError> {
     let mut stack: Vec<i64> = Vec::new();
-    let mut pending_assignment: Option<String> = None;
+    // Stack of assignment targets for chained assignment (a = b = 5).
+    // Right-associativity puts the targets on in order; each Equals
+    // pops one target and assigns the value.
+    let mut pending_assignments: Vec<String> = Vec::new();
 
     for token in postfix {
         match token {
@@ -438,11 +441,9 @@ fn evaluate(
             Token::AssignTarget(name) => {
                 // Assignment target: record for the Equals operator.
                 // No placeholder is pushed (the old code pushed 0, which was
-                // a bug — it left garbage on the stack).
-                if pending_assignment.is_some() {
-                    return Err(CalcError::InvalidAssignment);
-                }
-                pending_assignment = Some(name);
+                // a bug — it left garbage on the stack). Chained targets
+                // accumulate; each Equals consumes one.
+                pending_assignments.push(name);
             }
             Token::UnaryMinus => {
                 // N-188: Unary minus negates the top of stack.
@@ -501,7 +502,7 @@ fn evaluate(
             }
             Token::Equals => {
                 let val = stack.pop().ok_or(CalcError::StackUnderflow)?;
-                if let Some(name) = pending_assignment.take() {
+                if let Some(name) = pending_assignments.pop() {
                     variables.insert(name, val);
                     stack.push(val);
                 } else {
@@ -517,6 +518,9 @@ fn evaluate(
         }
     }
 
+    if !pending_assignments.is_empty() {
+        return Err(CalcError::InvalidAssignment);
+    }
     stack.pop().ok_or(CalcError::EmptyExpression)
 }
 
@@ -603,6 +607,16 @@ impl Calculator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chained_assignment_assigns_right_to_left() {
+        // X-52: the parser claimed right-associativity for `=` but the
+        // evaluator rejected chains with a single pending slot.
+        let mut calc = Calculator::new();
+        assert_eq!(calc.eval("a = b = 5"), Ok(5));
+        assert_eq!(calc.eval("a"), Ok(5));
+        assert_eq!(calc.eval("b"), Ok(5));
+    }
 
     #[test]
     fn test_basic_arithmetic() {
