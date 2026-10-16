@@ -588,9 +588,14 @@ impl Buffer {
         self.line_with_newline(line_idx).map(|mut s| {
             // Pop the trailing newline in place (no realloc) instead of
             // `trim_end_matches('\n').to_string()` (which copies): one
-            // fewer allocation per `line()` call.
+            // fewer allocation per `line()` call. CRLF files keep their
+            // `\r` in the stored text; the line ending is `\r\n`, so
+            // both come off here. `line_with_newline` keeps them.
             if s.ends_with('\n') {
                 s.pop();
+                if s.ends_with('\r') {
+                    s.pop();
+                }
             }
             s
         })
