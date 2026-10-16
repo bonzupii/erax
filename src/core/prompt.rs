@@ -133,15 +133,15 @@ pub fn handle_prompt_action(
         },
         InputAction::QueryReplace => {
             if let Some((old, new)) = input.split_once('|') {
-                if !old.is_empty() {
-                    let bid = app.windows.get(&app.active_window).map(|w| w.buffer_id);
-                    if let Some(bid) = bid
-                        && let Some(buffer) = app.buffers.get_mut(&bid) {
-                            let count = buffer.replace_all(old, new);
-                            buffer.modified = true;
-                            app.message = Some(format!("Replaced {} occurrences", count));
-                        }
-                }
+                if old.is_empty() {
+                    app.message = Some("Empty search pattern: nothing replaced".to_string());
+                } else if let Some(bid) =
+                    app.windows.get(&app.active_window).map(|w| w.buffer_id)
+                    && let Some(buffer) = app.buffers.get_mut(&bid) {
+                        let count = buffer.replace_all(old, new);
+                        buffer.modified = true;
+                        app.message = Some(format!("Replaced {} occurrences", count));
+                    }
             } else {
                 app.message = Some("Format: old|new (use | as separator)".to_string());
             }
