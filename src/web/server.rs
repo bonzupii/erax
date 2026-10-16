@@ -582,9 +582,8 @@ fn handle_websocket(
         .render(&mut app)
         .map_err(|e| ServerError::Protocol(format!("initial render: {e}")))?;
     {
-        let menu_bar = display.menu_bar.clone();
         let show = display.show_menu_bar;
-        display.render_menu_bar(&menu_bar, show);
+        display.render_menu_bar(show);
     }
     let mut seq = 0u64;
     send_screen(&mut ws, &mut display, &mut seq)?;
@@ -678,9 +677,8 @@ fn handle_websocket(
             display
                 .render(&mut app)
                 .map_err(|e| ServerError::Protocol(format!("render: {e}")))?;
-            let menu_bar = display.menu_bar.clone();
             let show = display.show_menu_bar;
-            display.render_menu_bar(&menu_bar, show);
+            display.render_menu_bar(show);
             send_screen(&mut ws, &mut display, &mut seq)?;
         }
 

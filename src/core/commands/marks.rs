@@ -66,11 +66,8 @@ pub fn kill_region_in_model(
                     if let Some((mx, my)) = window.mark {
                         let cursor_byte = window.get_byte_offset(buffer).unwrap_or_default();
 
-                        // Calculate mark byte offset using temp window
-                        let mut temp_win = window.clone();
-                        temp_win.cursor_x = mx;
-                        temp_win.cursor_y = my;
-                        let mark_byte = temp_win.get_byte_offset(buffer).unwrap_or_default();
+                        let mark_byte =
+                            window.get_byte_offset_at(buffer, mx, my).unwrap_or_default();
 
                         let (s, e) = if cursor_byte < mark_byte {
                             (cursor_byte, mark_byte)
@@ -160,10 +157,9 @@ pub fn copy_region_in_model(
             if let (Some(window_ref), Some(buffer_ref)) = (window_opt, buffer_opt) {
                 if let Some((mx, my)) = window_ref.mark {
                     let cursor_byte = window_ref.get_byte_offset(buffer_ref).unwrap_or_default();
-                    let mut temp_win = window_ref.clone();
-                    temp_win.cursor_x = mx;
-                    temp_win.cursor_y = my;
-                    let mark_byte = temp_win.get_byte_offset(buffer_ref).unwrap_or_default();
+                    let mark_byte = window_ref
+                        .get_byte_offset_at(buffer_ref, mx, my)
+                        .unwrap_or_default();
 
                     let (start_b, end_b) = if cursor_byte < mark_byte {
                         (cursor_byte, mark_byte)
@@ -265,10 +261,7 @@ pub fn delete_active_selection(app: &mut EditorApp) -> bool {
             return false;
         }
         let cursor_byte = window.get_byte_offset(buffer).unwrap_or(0);
-        let mut temp_win = window.clone();
-        temp_win.cursor_x = mx;
-        temp_win.cursor_y = my;
-        let mark_byte = temp_win.get_byte_offset(buffer).unwrap_or(0);
+        let mark_byte = window.get_byte_offset_at(buffer, mx, my).unwrap_or(0);
         let (s, e) = if cursor_byte < mark_byte {
             (cursor_byte, mark_byte)
         } else {

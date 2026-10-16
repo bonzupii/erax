@@ -173,9 +173,8 @@ impl ApplicationHandler for GuiApp {
             WindowEvent::RedrawRequested => {
                 if self.dirty {
                     let _ = self.display.render(&mut self.editor);
-                    let menu_bar = self.display.menu_bar.clone();
                     let show = self.display.show_menu_bar;
-                    self.display.render_menu_bar(&menu_bar, show);
+                    self.display.render_menu_bar(show);
                     self.dirty = false;
                 }
                 if let Some(renderer) = &mut self.renderer {

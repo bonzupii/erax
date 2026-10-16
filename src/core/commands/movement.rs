@@ -352,12 +352,9 @@ fn sentence_starts(buffer: &Buffer) -> Vec<usize> {
 /// Place the window cursor on a buffer byte offset (helper for motions
 /// that compute byte targets directly).
 fn place_window_at_byte(window: &mut Window, buffer: &Buffer, byte: usize) {
-    let li = buffer.byte_to_line(byte);
-    let ls = buffer.line_to_byte(li).unwrap_or(0);
-    let text = buffer.line(li).unwrap_or_default();
+    let (li, col) = buffer.byte_to_position(byte);
     window.cursor_y = li;
-    window.cursor_x =
-        crate::core::utf8::byte_to_grapheme_col(&text, byte.saturating_sub(ls));
+    window.cursor_x = col;
     window.update_visual_cursor(buffer);
     update_selection(window, buffer);
     window.ensure_cursor_visible(buffer);

@@ -515,12 +515,12 @@ impl EditorApp {
         }
 
         let mut word_start = window.cursor_x;
-        while word_start > 0 && is_word_char(graphemes[word_start - 1]) {
+        while word_start > 0 && crate::core::utf8::is_word_grapheme(graphemes[word_start - 1]) {
             word_start -= 1;
         }
 
         let mut word_end = window.cursor_x;
-        while word_end < graphemes.len() && is_word_char(graphemes[word_end]) {
+        while word_end < graphemes.len() && crate::core::utf8::is_word_grapheme(graphemes[word_end]) {
             word_end += 1;
         }
 
@@ -530,12 +530,6 @@ impl EditorApp {
             None
         }
     }
-}
-
-// Helper function to determine if a grapheme is part of a word
-fn is_word_char(grapheme: &str) -> bool {
-    // Simple definition of a word character: alphanumeric or underscore
-    grapheme.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
 impl Default for EditorApp {

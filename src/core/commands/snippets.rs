@@ -30,7 +30,7 @@ pub fn expand_snippet(app: &mut EditorApp, _count: usize) -> DispatchResult {
 
             let word_end = window.cursor_x;
             let mut word_start = word_end;
-            while word_start > 0 && is_word_char(graphemes[word_start - 1]) {
+            while word_start > 0 && crate::core::utf8::is_word_grapheme(graphemes[word_start - 1]) {
                 word_start -= 1;
             }
 
@@ -105,7 +105,3 @@ pub fn expand_snippet(app: &mut EditorApp, _count: usize) -> DispatchResult {
             DispatchResult::Success
         }
     }
-
-fn is_word_char(grapheme: &str) -> bool {
-    grapheme.chars().all(|c| c.is_alphanumeric() || c == '_')
-}

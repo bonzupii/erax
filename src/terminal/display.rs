@@ -796,10 +796,10 @@ impl Display {
     }
 
     /// Render menu bar to the back buffer (works for both TUI and GUI)
-    pub fn render_menu_bar(&mut self, menu_bar: &crate::core::menu::MenuBar, show: bool) {
+    pub fn render_menu_bar(&mut self, show: bool) {
         crate::terminal::renderers::MenuRenderer::render(
             &mut self.back_buffer,
-            menu_bar,
+            &self.menu_bar,
             &self.theme,
             self.terminal_size.0 as usize,
             self.terminal_size.1 as usize,

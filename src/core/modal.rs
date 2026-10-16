@@ -2511,12 +2511,7 @@ fn expand_to_lines(app: &EditorApp, s: usize, e: usize) -> (usize, usize) {
 /// Place the cursor on a byte offset (same line; used by find-char motions).
 fn place_cursor_at_byte(app: &mut EditorApp, byte: usize) {
     let (line_idx, col) = match app.active_buffer() {
-        Some(b) => {
-            let li = b.byte_to_line(byte);
-            let ls = b.line_to_byte(li).unwrap_or(0);
-            let text = b.line(li).unwrap_or_default();
-            (li, crate::core::utf8::byte_to_grapheme_col(&text, byte.saturating_sub(ls)))
-        }
+        Some(b) => b.byte_to_position(byte),
         None => return,
     };
     if let Some(window) = app.active_window_mut() {
@@ -2970,15 +2965,7 @@ fn char_at(app: &EditorApp, byte: usize) -> Option<char> {
 /// Set the visual mark on a buffer byte offset.
 fn set_mark_at_byte(app: &mut EditorApp, byte: usize) {
     let (li, col) = match app.active_buffer() {
-        Some(b) => {
-            let li = b.byte_to_line(byte);
-            let ls = b.line_to_byte(li).unwrap_or(0);
-            let text = b.line(li).unwrap_or_default();
-            (
-                li,
-                crate::core::utf8::byte_to_grapheme_col(&text, byte.saturating_sub(ls)),
-            )
-        }
+        Some(b) => b.byte_to_position(byte),
         None => return,
     };
     if let Some(window) = app.active_window_mut() {

@@ -42,6 +42,14 @@ pub fn grapheme_byte_index(text: &str, n: usize) -> Option<usize> {
     text.grapheme_indices(true).nth(n).map(|(idx, _)| idx)
 }
 
+/// The canonical word-character predicate: one definition for every
+/// word-boundary computation (mouse double-click, selection expansion,
+/// snippet boundaries, completion). Alphanumeric or underscore, over the
+/// whole grapheme cluster.
+pub fn is_word_grapheme(grapheme: &str) -> bool {
+    grapheme.chars().all(|c| c.is_alphanumeric() || c == '_')
+}
+
 /// Helper to get the grapheme column at or before a byte offset (byte → grapheme)
 /// This is the inverse of grapheme_byte_index
 pub fn byte_to_grapheme_col(text: &str, byte_offset: usize) -> usize {

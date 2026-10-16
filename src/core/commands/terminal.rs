@@ -85,10 +85,7 @@ fn text_to_send(app: &mut EditorApp) -> Option<String> {
             let cursor_byte = window.get_byte_offset(buffer).unwrap_or(0);
             // The mark is a (grapheme col, line) pair; resolve it to a
             // byte offset the same way the cursor is resolved.
-            let mut mark_window = window.clone();
-            mark_window.cursor_x = mx;
-            mark_window.cursor_y = my;
-            let mark_byte = mark_window.get_byte_offset(buffer).unwrap_or(0);
+            let mark_byte = window.get_byte_offset_at(buffer, mx, my).unwrap_or(0);
             let (start, end) = if cursor_byte < mark_byte {
                 (cursor_byte, mark_byte)
             } else {

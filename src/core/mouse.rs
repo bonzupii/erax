@@ -190,15 +190,14 @@ impl MouseHandler {
             }
 
             // Define word boundary: alphanumeric + underscore vs everything else
-            let is_word_char = |s: &str| s.chars().all(|c| c.is_alphanumeric() || c == '_');
 
             let clicked_grapheme = graphemes[col];
-            let clicked_is_word = is_word_char(clicked_grapheme);
+            let clicked_is_word = crate::core::utf8::is_word_grapheme(clicked_grapheme);
 
             // Expand start
             let mut start = col;
             while start > 0 {
-                if is_word_char(graphemes[start - 1]) != clicked_is_word {
+                if crate::core::utf8::is_word_grapheme(graphemes[start - 1]) != clicked_is_word {
                     break;
                 }
                 start -= 1;
@@ -207,7 +206,7 @@ impl MouseHandler {
             // Expand end
             let mut end = col + 1;
             while end < graphemes.len() {
-                if is_word_char(graphemes[end]) != clicked_is_word {
+                if crate::core::utf8::is_word_grapheme(graphemes[end]) != clicked_is_word {
                     break;
                 }
                 end += 1;

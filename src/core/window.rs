@@ -190,22 +190,29 @@ impl Window {
     }
 
     /// Move cursor forward by word
-    pub fn forward_word(&mut self, buffer: &Buffer) {
+    /// Target (cursor_x, cursor_y) of moving one word forward, without
+    /// applying it: the pure position computation behind
+    /// [`Window::forward_word`]. Kill commands measure their range
+    /// through this instead of cloning the window for a speculative
+    /// motion.
+    pub fn forward_word_target(&self, buffer: &Buffer) -> (usize, usize) {
         let line_count = buffer.line_count();
+        let mut x = self.cursor_x;
+        let mut y = self.cursor_y;
 
-        if let Some(line_text) = buffer.line(self.cursor_y) {
+        if let Some(line_text) = buffer.line(y) {
             let graphemes: Vec<&str> =
                 crate::core::utf8::GraphemeIterator::new(&line_text).collect();
             let grapheme_count = graphemes.len();
 
             // Skip current word/whitespace
-            let mut in_word = self.cursor_x < grapheme_count
+            let mut in_word = x < grapheme_count
                 && !graphemes
-                    .get(self.cursor_x)
+                    .get(x)
                     .is_none_or(|g| g.chars().all(|c| c.is_whitespace()));
 
-            while self.cursor_x < grapheme_count {
-                let grapheme = graphemes[self.cursor_x];
+            while x < grapheme_count {
+                let grapheme = graphemes[x];
                 let is_space = grapheme.chars().all(|c| c.is_whitespace());
 
                 if in_word && is_space {
@@ -214,64 +221,86 @@ impl Window {
                     in_word = true;
                 }
 
-                self.cursor_x += 1;
+                x += 1;
             }
 
             // If we reached end of line and there's a next line, move to it
-            if self.cursor_x >= grapheme_count && self.cursor_y < line_count.saturating_sub(1) {
-                self.cursor_y += 1;
-                self.cursor_x = 0;
+            if x >= grapheme_count && y < line_count.saturating_sub(1) {
+                y += 1;
+                x = 0;
                 // Skip leading whitespace on new line
-                if let Some(new_line_text) = buffer.line(self.cursor_y) {
+                if let Some(new_line_text) = buffer.line(y) {
                     let new_graphemes: Vec<&str> =
                         crate::core::utf8::GraphemeIterator::new(&new_line_text).collect();
-                    while self.cursor_x < new_graphemes.len()
-                        && new_graphemes[self.cursor_x]
-                            .chars()
-                            .all(|c| c.is_whitespace())
+                    while x < new_graphemes.len()
+                        && new_graphemes[x].chars().all(|c| c.is_whitespace())
                     {
-                        self.cursor_x += 1;
+                        x += 1;
                     }
                 }
             }
         }
 
+        (x, y)
+    }
+
+    pub fn forward_word(&mut self, buffer: &Buffer) {
+        let (x, y) = self.forward_word_target(buffer);
+        self.cursor_x = x;
+        self.cursor_y = y;
+
         self.update_visual_cursor(buffer);
         self.ensure_cursor_visible(buffer);
     }
 
-    /// Move cursor backward by word
-    pub fn backward_word(&mut self, buffer: &Buffer) {
+    /// Target (cursor_x, cursor_y) of moving one word backward, without
+    /// applying it: the pure position computation behind
+    /// [`Window::backward_word`]. Kill commands measure their range
+    /// through this instead of cloning the window for a speculative
+    /// motion.
+    pub fn backward_word_target(&self, buffer: &Buffer) -> (usize, usize) {
+        let mut x = self.cursor_x;
+        let mut y = self.cursor_y;
+
         // If at beginning of line, move to end of previous line
-        if self.cursor_x == 0 && self.cursor_y > 0 {
-            self.cursor_y -= 1;
-            if let Some(line_text) = buffer.line(self.cursor_y) {
-                self.cursor_x = crate::core::utf8::grapheme_count(&line_text);
+        if x == 0 && y > 0 {
+            y -= 1;
+            if let Some(line_text) = buffer.line(y) {
+                x = crate::core::utf8::grapheme_count(&line_text);
             }
         }
 
-        if let Some(line_text) = buffer.line(self.cursor_y) {
+        if let Some(line_text) = buffer.line(y) {
             let graphemes: Vec<&str> =
                 crate::core::utf8::GraphemeIterator::new(&line_text).collect();
 
             // Skip trailing whitespace
-            while self.cursor_x > 0
+            while x > 0
                 && graphemes
-                    .get(self.cursor_x.saturating_sub(1))
+                    .get(x.saturating_sub(1))
                     .is_some_and(|g| g.chars().all(|c| c.is_whitespace()))
             {
-                self.cursor_x -= 1;
+                x -= 1;
             }
 
             // Skip word characters
-            while self.cursor_x > 0
+            while x > 0
                 && !graphemes
-                    .get(self.cursor_x.saturating_sub(1))
+                    .get(x.saturating_sub(1))
                     .is_none_or(|g| g.chars().all(|c| c.is_whitespace()))
             {
-                self.cursor_x -= 1;
+                x -= 1;
             }
         }
+
+        (x, y)
+    }
+
+    /// Move cursor backward by word
+    pub fn backward_word(&mut self, buffer: &Buffer) {
+        let (x, y) = self.backward_word_target(buffer);
+        self.cursor_x = x;
+        self.cursor_y = y;
 
         self.update_visual_cursor(buffer);
         self.ensure_cursor_visible(buffer);

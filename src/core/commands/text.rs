@@ -1,23 +1,6 @@
 //! Text-transformation commands (case, fill, sort).
 use crate::core::app::EditorApp;
-/// Text transformation and manipulation commands
 use crate::core::dispatcher::{DispatchResult, InputAction};
-
-// Helper function to calculate cursor position from byte offset
-fn byte_to_cursor_position(
-    buffer: &crate::core::buffer::Buffer,
-    byte_pos: usize,
-) -> (usize, usize) {
-    let line = buffer.byte_to_line(byte_pos);
-    if let Some(line_start) = buffer.line_to_byte(line)
-        && let Some(line_text) = buffer.line(line) {
-            let byte_offset_in_line = byte_pos.saturating_sub(line_start);
-            let grapheme_col =
-                crate::core::utf8::byte_to_grapheme_col(&line_text, byte_offset_in_line);
-            return (line, grapheme_col);
-        }
-    (line, 0)
-}
 
 /// Get the byte range of the word at cursor position.
 /// Returns (start_byte, end_byte) of the word, or None if no word is found.
@@ -26,9 +9,8 @@ fn get_word_range_at_cursor(
     buffer: &crate::core::buffer::Buffer,
 ) -> Option<(usize, usize)> {
     let start_byte = window.get_byte_offset(buffer)?;
-    let mut temp_window = window.clone();
-    temp_window.forward_word(buffer);
-    let end_byte = temp_window.get_byte_offset(buffer)?;
+    let (wx, wy) = window.forward_word_target(buffer);
+    let end_byte = window.get_byte_offset_at(buffer, wx, wy)?;
     if end_byte > start_byte {
         Some((start_byte, end_byte))
     } else {
@@ -337,7 +319,7 @@ pub fn case_word_upper(app: &mut EditorApp, _count: usize) -> DispatchResult {
 
             if let Some(window_mut) = app.windows.get_mut(&active_window_id)
                 && let Some(buffer) = app.buffers.get(&buffer_id) {
-                    let (line, col) = byte_to_cursor_position(buffer, start_byte + new_text.len());
+                    let (line, col) = buffer.byte_to_position( start_byte + new_text.len());
                     window_mut.cursor_y = line;
                     window_mut.cursor_x = col;
                 }
@@ -382,7 +364,7 @@ pub fn case_word_lower(app: &mut EditorApp, _count: usize) -> DispatchResult {
 
             if let Some(window_mut) = app.windows.get_mut(&active_window_id)
                 && let Some(buffer) = app.buffers.get(&buffer_id) {
-                    let (line, col) = byte_to_cursor_position(buffer, start_byte + new_text.len());
+                    let (line, col) = buffer.byte_to_position( start_byte + new_text.len());
                     window_mut.cursor_y = line;
                     window_mut.cursor_x = col;
                 }
@@ -430,7 +412,7 @@ pub fn case_word_capitalize(app: &mut EditorApp, _count: usize) -> DispatchResul
 
             if let Some(window_mut) = app.windows.get_mut(&active_window_id)
                 && let Some(buffer) = app.buffers.get(&buffer_id) {
-                    let (line, col) = byte_to_cursor_position(buffer, start_byte + new_text.len());
+                    let (line, col) = buffer.byte_to_position( start_byte + new_text.len());
                     window_mut.cursor_y = line;
                     window_mut.cursor_x = col;
                 }
@@ -462,10 +444,9 @@ pub fn uppercase_region(app: &mut EditorApp, _count: usize) -> DispatchResult {
                     if let Some(mark) = window.mark {
                         let cursor_byte = window.get_byte_offset(buffer).unwrap_or_default();
 
-                        let mut temp_window = window.clone();
-                        temp_window.cursor_x = mark.0;
-                        temp_window.cursor_y = mark.1;
-                        let mark_byte = temp_window.get_byte_offset(buffer).unwrap_or_default();
+                        let mark_byte = window
+                            .get_byte_offset_at(buffer, mark.0, mark.1)
+                            .unwrap_or_default();
 
                         let (start_byte, end_byte) = if cursor_byte < mark_byte {
                             (cursor_byte, mark_byte)
@@ -485,10 +466,8 @@ pub fn uppercase_region(app: &mut EditorApp, _count: usize) -> DispatchResult {
 
                             if let Some(window_mut) = app.windows.get_mut(&active_window_id)
                                 && let Some(buffer) = app.buffers.get(&buffer_id) {
-                                    let (line, col) = byte_to_cursor_position(
-                                        buffer,
-                                        start_byte + upper_text.len(),
-                                    );
+                                    let (line, col) =
+                                        buffer.byte_to_position(start_byte + upper_text.len());
                                     window_mut.cursor_y = line;
                                     window_mut.cursor_x = col;
                                 }
@@ -510,10 +489,9 @@ pub fn lowercase_region(app: &mut EditorApp, _count: usize) -> DispatchResult {
                     if let Some(mark) = window.mark {
                         let cursor_byte = window.get_byte_offset(buffer).unwrap_or_default();
 
-                        let mut temp_window = window.clone();
-                        temp_window.cursor_x = mark.0;
-                        temp_window.cursor_y = mark.1;
-                        let mark_byte = temp_window.get_byte_offset(buffer).unwrap_or_default();
+                        let mark_byte = window
+                            .get_byte_offset_at(buffer, mark.0, mark.1)
+                            .unwrap_or_default();
 
                         let (start_byte, end_byte) = if cursor_byte < mark_byte {
                             (cursor_byte, mark_byte)
@@ -533,10 +511,8 @@ pub fn lowercase_region(app: &mut EditorApp, _count: usize) -> DispatchResult {
 
                             if let Some(window_mut) = app.windows.get_mut(&active_window_id)
                                 && let Some(buffer) = app.buffers.get(&buffer_id) {
-                                    let (line, col) = byte_to_cursor_position(
-                                        buffer,
-                                        start_byte + lower_text.len(),
-                                    );
+                                    let (line, col) =
+                                        buffer.byte_to_position(start_byte + lower_text.len());
                                     window_mut.cursor_y = line;
                                     window_mut.cursor_x = col;
                                 }
@@ -635,7 +611,7 @@ pub fn wrap_word(app: &mut EditorApp, _count: usize) -> DispatchResult {
 
                         // Move cursor to end of wrap
                         let new_cursor_byte = pos + 1 + word_len;
-                        let (line, col) = byte_to_cursor_position(buffer, new_cursor_byte);
+                        let (line, col) = buffer.byte_to_position( new_cursor_byte);
                         window.cursor_y = line;
                         window.cursor_x = col;
                     }

@@ -565,6 +565,24 @@ impl Buffer {
         }
     }
 
+    /// Byte offset to (0-based line, grapheme column).
+    ///
+    /// The single byte→cursor-position derivation: every caller that
+    /// places a cursor or a mark from a byte offset goes through here
+    /// instead of recomputing the line/column split inline.
+    pub fn byte_to_position(&self, byte_pos: usize) -> (usize, usize) {
+        let line = self.byte_to_line(byte_pos);
+        if let Some(line_start) = self.line_to_byte(line)
+            && let Some(line_text) = self.line(line)
+        {
+            let byte_offset_in_line = byte_pos.saturating_sub(line_start);
+            let grapheme_col =
+                crate::core::utf8::byte_to_grapheme_col(&line_text, byte_offset_in_line);
+            return (line, grapheme_col);
+        }
+        (line, 0)
+    }
+
     /// Get content of a specific line (without newline)
     pub fn line(&self, line_idx: usize) -> Option<String> {
         self.line_with_newline(line_idx).map(|mut s| {

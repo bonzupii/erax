@@ -57,9 +57,9 @@ pub fn kill_word(app: &mut EditorApp, _count: usize) -> DispatchResult {
                 if let Some(window) = app.windows.get(&active_window_id) {
                     if let Some(buffer) = app.buffers.get(&buffer_id) {
                         let start_byte = window.get_byte_offset(buffer).unwrap_or_default();
-                        let mut temp_window = window.clone();
-                        temp_window.forward_word(buffer);
-                        let end_byte = temp_window.get_byte_offset(buffer).unwrap_or_default();
+                        let (wx, wy) = window.forward_word_target(buffer);
+                        let end_byte =
+                            window.get_byte_offset_at(buffer, wx, wy).unwrap_or_default();
 
                         if end_byte > start_byte {
                             let text_to_kill =
@@ -105,9 +105,9 @@ pub fn backward_kill_word(app: &mut EditorApp, _count: usize) -> DispatchResult 
                 if let Some(window) = app.windows.get(&active_window_id) {
                     if let Some(buffer) = app.buffers.get(&buffer_id) {
                         let end_byte = window.get_byte_offset(buffer).unwrap_or_default();
-                        let mut temp_window = window.clone();
-                        temp_window.backward_word(buffer);
-                        let start_byte = temp_window.get_byte_offset(buffer).unwrap_or_default();
+                        let (wx, wy) = window.backward_word_target(buffer);
+                        let start_byte =
+                            window.get_byte_offset_at(buffer, wx, wy).unwrap_or_default();
 
                         if start_byte < end_byte {
                             let text_to_kill =

@@ -82,9 +82,8 @@ pub fn run_terminal_mode(
     display.render(&mut app).map_err(|e| TuiError::Render(io::Error::other(e.to_string())))?;
     // Render menu bar on initial display
     {
-        let menu_bar = display.menu_bar.clone();
         let show = display.show_menu_bar;
-        display.render_menu_bar(&menu_bar, show);
+        display.render_menu_bar(show);
     }
     let mut stdout = io::stdout();
     terminal::render::render_display_to_terminal(&mut display, &mut stdout)
@@ -193,9 +192,8 @@ pub fn run_terminal_mode(
                 .render(&mut app)
                 .map_err(|e| TuiError::Render(io::Error::other(e.to_string())))?;
 
-            let menu_bar = display.menu_bar.clone();
             let show = display.show_menu_bar;
-            display.render_menu_bar(&menu_bar, show);
+            display.render_menu_bar(show);
 
             // Apply GPM mouse cursor overlay to back buffer (Invert output)
             // Done AFTER UI rendering (including menu) to ensure it's on top
