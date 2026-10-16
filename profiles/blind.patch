@@ -1,0 +1,16 @@
+# erax accessibility profile: blind
+#
+# Non-visual operation. Enables the accessibility cue bus; the stock
+# config already sets ANNOUNCE_CURSOR_LINE and CUE_ERROR_BELL, so the
+# only change is the bus master. Applies with: patch -p1 --forward.
+# Reversible with: patch -R -p1 --forward (see accessibility.sh).
+diff --git a/src/config/accessibility/mod.rs b/tmp/a11y-new/mod.rs
+index 2962139..b737b8d 100644
+--- a/src/config/accessibility/mod.rs
++++ b/src/config/accessibility/mod.rs
+@@ -20,4 +20,4 @@ pub mod hearing;
+ /// the user asking for it is a regression for everyone else. Users
+ /// who want the cues set this to `true`. The per-class modules hold
+ /// the individual cue senses; this constant gates the bus itself.
+-pub const CUES_ENABLED: bool = false;
++pub const CUES_ENABLED: bool = true;
