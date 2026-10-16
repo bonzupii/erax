@@ -2173,14 +2173,29 @@ impl ModalEngine {
         let ins_at = if before {
             pos
         } else {
-            // After the character under the cursor.
+            // After the grapheme cluster under the cursor. Clusters
+            // (ZWJ sequences, combining marks) exceed 4 bytes and span
+            // multiple chars; a fixed 4-byte peek splits them.
             let total = app.active_buffer().map(|b| b.len()).unwrap_or(0);
             if pos < total {
-                let head = app
+                let cluster_len = app
                     .active_buffer()
-                    .map(|b| b.get_range_as_string(pos, 4))
-                    .unwrap_or_default();
-                pos + head.chars().next().map(|c| c.len_utf8()).unwrap_or(0)
+                    .and_then(|b| {
+                        let line_idx = b.byte_to_line(pos);
+                        let line_start = b.line_to_byte(line_idx)?;
+                        let line = b.line(line_idx)?;
+                        let rel = pos.saturating_sub(line_start);
+                        crate::core::utf8::GraphemeIterator::new(&line)
+                            .scan(0usize, |offset, g| {
+                                let start = *offset;
+                                *offset += g.len();
+                                Some((start, g.len()))
+                            })
+                            .find(|(start, _)| *start >= rel)
+                            .map(|(_, len)| len)
+                    })
+                    .unwrap_or(0);
+                pos + cluster_len
             } else {
                 pos
             }
@@ -2188,10 +2203,17 @@ impl ModalEngine {
         if let Some(buffer) = app.active_buffer_mut() {
             buffer.insert(ins_at, &reg.text);
         }
-        // The cursor lands on the last character of the put text (vim),
-        // for both `p` and `P`.
+        // The cursor lands on the last grapheme cluster of the put
+        // text (vim), for both `p` and `P`.
         let last_start = ins_at
-            + reg.text.char_indices().last().map(|(i, _)| i).unwrap_or(0);
+            + crate::core::utf8::GraphemeIterator::new(&reg.text)
+                .scan(0usize, |offset, g| {
+                    let start = *offset;
+                    *offset += g.len();
+                    Some(start)
+                })
+                .last()
+                .unwrap_or(0);
         place_cursor_at_byte(app, last_start);
         clear_mark(app);
         ensure_visible(app);
