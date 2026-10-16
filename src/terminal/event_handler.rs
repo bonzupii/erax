@@ -650,6 +650,43 @@ fn handle_menu_input(
 ///
 /// Returns `Some(exit_requested)` when the key was consumed, `None` when
 /// the caller should fall through to normal key handling.
+/// Byte sequence a non-character key sends to the hosted terminal.
+/// Standard xterm sequences; a terminal that does not understand them
+/// ignores them, which is strictly better than swallowing the key.
+fn terminal_key_bytes(key: &crate::core::input::Key) -> Option<Vec<u8>> {
+    use crate::core::input::Key;
+    let seq: &[u8] = match key {
+        Key::Esc => b"\x1b",
+        Key::Enter => b"\n",
+        Key::Backspace => &[0x7f],
+        Key::Tab => b"\t",
+        Key::Up => b"\x1b[A",
+        Key::Down => b"\x1b[B",
+        Key::Right => b"\x1b[C",
+        Key::Left => b"\x1b[D",
+        Key::Home => b"\x1b[H",
+        Key::End => b"\x1b[F",
+        Key::Insert => b"\x1b[2~",
+        Key::Delete => b"\x1b[3~",
+        Key::PageUp => b"\x1b[5~",
+        Key::PageDown => b"\x1b[6~",
+        Key::F(1) => b"\x1bOP",
+        Key::F(2) => b"\x1bOQ",
+        Key::F(3) => b"\x1bOR",
+        Key::F(4) => b"\x1bOS",
+        Key::F(5) => b"\x1b[15~",
+        Key::F(6) => b"\x1b[17~",
+        Key::F(7) => b"\x1b[18~",
+        Key::F(8) => b"\x1b[19~",
+        Key::F(9) => b"\x1b[20~",
+        Key::F(10) => b"\x1b[21~",
+        Key::F(11) => b"\x1b[23~",
+        Key::F(12) => b"\x1b[24~",
+        _ => return None,
+    };
+    Some(seq.to_vec())
+}
+
 fn handle_special_buffer_input(
     app: &mut EditorApp,
     display: &mut Display,
@@ -691,20 +728,63 @@ fn handle_special_buffer_input(
                             let encoded = c.encode_utf8(&mut buf);
                             host.write(encoded.as_bytes());
                         }
-                        Key::Enter => {
-                            host.write(b"\n");
+                        // Every non-character key forwards its terminal
+                        // sequence: Esc, arrows, Home/End, Delete, and the
+                        // rest used to vanish here while reporting
+                        // handled.
+                        _ => {
+                            if let Some(bytes) = terminal_key_bytes(&key.key) {
+                                host.write(&bytes);
+                            }
                         }
-                        Key::Backspace => {
-                            host.write(&[0x7f]);
-                        }
-                        Key::Tab => {
-                            host.write(b"\t");
-                        }
-                        _ => {}
                     }
                     display.dirty = true;
                     return Ok(Some(false));
                 }
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::terminal_key_bytes;
+    use crate::core::input::Key;
+
+    #[test]
+    fn special_keys_forward_xterm_sequences() {
+        let cases: &[(Key, &[u8])] = &[
+            (Key::Esc, b"\x1b"),
+            (Key::Enter, b"\n"),
+            (Key::Backspace, &[0x7f]),
+            (Key::Tab, b"\t"),
+            (Key::Up, b"\x1b[A"),
+            (Key::Down, b"\x1b[B"),
+            (Key::Right, b"\x1b[C"),
+            (Key::Left, b"\x1b[D"),
+            (Key::Home, b"\x1b[H"),
+            (Key::End, b"\x1b[F"),
+            (Key::Insert, b"\x1b[2~"),
+            (Key::Delete, b"\x1b[3~"),
+            (Key::PageUp, b"\x1b[5~"),
+            (Key::PageDown, b"\x1b[6~"),
+            (Key::F(1), b"\x1bOP"),
+            (Key::F(4), b"\x1bOS"),
+            (Key::F(5), b"\x1b[15~"),
+            (Key::F(12), b"\x1b[24~"),
+        ];
+        for (key, expected) in cases {
+            assert_eq!(
+                terminal_key_bytes(key).as_deref(),
+                Some(*expected),
+                "wrong sequence for {key:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unmappable_keys_forward_nothing() {
+        assert_eq!(terminal_key_bytes(&Key::Null), None);
+        assert_eq!(terminal_key_bytes(&Key::Char('a')), None);
+        assert_eq!(terminal_key_bytes(&Key::F(13)), None);
+    }
 }
