@@ -1,0 +1,215 @@
+//! Menu structure as data: which commands appear in which menus.
+//!
+//! Data only: titles, order, separators, and per-entry enable/disable.
+//! Labels derive from [`Command::name`](crate::core::command::Command::name)
+//! and hints resolve from the live binding tables at render time, so this
+//! file carries neither. A disabled entry does not render; the entry stays.
+//!
+//! Coverage: every command appears in exactly one menu except
+//! [`Command::PrefixArgument`](crate::core::command::Command::PrefixArgument),
+//! which is a prefix mechanism rather than an invocable action and has no
+//! meaningful menu entry. See `tests/menu_naming.rs`.
+
+use crate::core::command::Command;
+use crate::core::menu::{MenuItemSpec, MenuSpec};
+
+const SEP: MenuItemSpec = MenuItemSpec::Separator;
+
+const fn entry(command: Command) -> MenuItemSpec {
+    MenuItemSpec::Action {
+        command,
+        enabled: true,
+    }
+}
+
+/// All top-level menus, in bar order.
+pub const MENUS: &[MenuSpec] = &[
+    MenuSpec {
+        title: "File",
+        items: &[
+            entry(Command::FindFile),
+            entry(Command::ReadFile),
+            SEP,
+            entry(Command::NewBuffer),
+            entry(Command::SaveBuffer),
+            entry(Command::WriteFile),
+            SEP,
+            entry(Command::Print),
+            entry(Command::PrintBuffer),
+            SEP,
+            entry(Command::ExitErax),
+            entry(Command::ExitAndSave),
+            entry(Command::ExitWithoutSave),
+        ],
+    },
+    MenuSpec {
+        title: "Edit",
+        items: &[
+            entry(Command::Undo),
+            entry(Command::Redo),
+            SEP,
+            entry(Command::KillRegion),
+            entry(Command::CopyRegion),
+            entry(Command::Yank),
+            entry(Command::YankPop),
+            SEP,
+            entry(Command::MarkWholeBuffer),
+            entry(Command::SetMark),
+            entry(Command::ExchangePointAndMark),
+            entry(Command::ExpandSelection),
+            entry(Command::ExtendSelectionRight),
+            entry(Command::ExtendSelectionLeft),
+            entry(Command::ExtendSelectionDown),
+            entry(Command::ExtendSelectionUp),
+            entry(Command::ExtendSelectionHome),
+            entry(Command::ExtendSelectionEnd),
+            SEP,
+            entry(Command::SearchForward),
+            entry(Command::SearchReverse),
+            entry(Command::QueryReplace),
+            SEP,
+            entry(Command::DeletePreviousCharacter),
+            entry(Command::DeleteNextCharacter),
+            entry(Command::KillToEndOfLine),
+            entry(Command::KillWord),
+            entry(Command::BackwardKillWord),
+            entry(Command::DeleteBlankLines),
+            SEP,
+            entry(Command::MarkWord),
+            entry(Command::MarkLine),
+            entry(Command::MarkParagraph),
+            entry(Command::TransposeCharacters),
+            entry(Command::TransposeWords),
+            SEP,
+            entry(Command::CaseWordUpper),
+            entry(Command::CaseWordLower),
+            entry(Command::CaseWordCapitalize),
+            entry(Command::UppercaseRegion),
+            entry(Command::LowercaseRegion),
+            SEP,
+            entry(Command::JustifyParagraph),
+            entry(Command::WrapWord),
+            entry(Command::QuoteCharacter),
+            entry(Command::ToggleOverwriteMode),
+            entry(Command::NewlineAndIndent),
+            entry(Command::OpenLine),
+            entry(Command::InsertNewline),
+            entry(Command::InsertTab),
+            entry(Command::InsertSpace),
+        ],
+    },
+    MenuSpec {
+        title: "Navigate",
+        items: &[
+            entry(Command::BackwardCharacter),
+            entry(Command::ForwardCharacter),
+            entry(Command::PreviousLine),
+            entry(Command::NextLine),
+            SEP,
+            entry(Command::BeginningOfLine),
+            entry(Command::EndOfLine),
+            entry(Command::SmartHome),
+            entry(Command::BeginningOfFile),
+            entry(Command::EndOfFile),
+            SEP,
+            entry(Command::BackwardWord),
+            entry(Command::ForwardWord),
+            entry(Command::BackwardPage),
+            entry(Command::ForwardPage),
+            SEP,
+            entry(Command::BackwardParagraph),
+            entry(Command::ForwardParagraph),
+            entry(Command::BackwardSentence),
+            entry(Command::ForwardSentence),
+            SEP,
+            entry(Command::GotoLine),
+            entry(Command::GotoByte),
+            entry(Command::GotoMatchingFence),
+        ],
+    },
+    MenuSpec {
+        title: "Buffer",
+        items: &[
+            entry(Command::ListBuffers),
+            entry(Command::SelectBuffer),
+            entry(Command::NextBuffer),
+            entry(Command::PreviousBuffer),
+            SEP,
+            entry(Command::BufferInfo),
+            entry(Command::ShowPosition),
+            entry(Command::WhatCursorPosition),
+            entry(Command::CountWords),
+            SEP,
+            entry(Command::DeleteBuffer),
+        ],
+    },
+    MenuSpec {
+        title: "Window",
+        items: &[
+            entry(Command::SplitCurrentWindow),
+            entry(Command::SplitWindowHorizontally),
+            SEP,
+            entry(Command::NextWindow),
+            entry(Command::WindowPicker),
+            entry(Command::MinimizeWindow),
+            SEP,
+            entry(Command::GrowWindow),
+            entry(Command::ShrinkWindow),
+            SEP,
+            entry(Command::DeleteWindow),
+            entry(Command::DeleteOtherWindows),
+        ],
+    },
+    MenuSpec {
+        title: "Terminal",
+        items: &[
+            entry(Command::SpawnTerminal),
+            entry(Command::SplitSpawnTerminalVertical),
+            entry(Command::SplitSpawnTerminalHorizontal),
+            entry(Command::TerminalSendInput),
+            SEP,
+            entry(Command::ShellCommand),
+            entry(Command::FilterBuffer),
+            entry(Command::Calculator),
+        ],
+    },
+    MenuSpec {
+        title: "Tools",
+        items: &[
+            entry(Command::WordCompletion),
+            entry(Command::ExpandSnippet),
+            entry(Command::SpellSuggest),
+            SEP,
+            entry(Command::BeginMacro),
+            entry(Command::EndMacro),
+            entry(Command::ExecuteMacro),
+            SEP,
+            entry(Command::ToggleDiagnostics),
+            entry(Command::DiagnosticsNext),
+            entry(Command::DiagnosticsPrevious),
+            entry(Command::DiagnosticsJump),
+            SEP,
+            entry(Command::SedPreview),
+            entry(Command::DiffAcceptHunk),
+            entry(Command::DiffNextHunk),
+            entry(Command::DiffPreviousHunk),
+            entry(Command::DiffQuit),
+        ],
+    },
+    MenuSpec {
+        title: "View",
+        items: &[
+            entry(Command::RedrawDisplay),
+            entry(Command::ToggleMenu),
+            entry(Command::DescribeState),
+        ],
+    },
+    MenuSpec {
+        title: "Help",
+        items: &[
+            entry(Command::ExecuteNamedCommand),
+            entry(Command::DescribeKey),
+            entry(Command::KeyboardQuit),
+        ],
+    },
+];

@@ -227,7 +227,7 @@ pub struct Display {
     pub needs_full_redraw: bool,
     /// Current status message to display
     pub message: String,
-    /// Current key sequence being built (e.g., "C-x-")
+    /// Current key sequence being built (e.g., "Ctrl+x-")
     pub key_sequence: String,
     /// Front buffer (currently displayed)
     pub front_buffer: ScreenBuffer,
@@ -312,7 +312,7 @@ impl Display {
             cursor_pos: None,
             prompt_state: None,
             spell_checker: SpellChecker::new(),
-            menu_bar: crate::core::menu::MenuBar::new(),
+            menu_bar: crate::core::menu::MenuBar::default(),
             show_menu_bar: true,
             dirty_tracker: DirtyTracker::new(width, height),
             mouse_cursor: None,
@@ -707,24 +707,25 @@ impl Display {
                 let layout = self.menu_bar.layout();
                 if let Some((_, menu_x, _)) = layout.get(active_idx) {
                     let menu = &self.menu_bar.menus[active_idx];
-                    let menu_width = menu.render_width();
+                    let menu_width = menu.render_width(INPUT_MODEL);
 
                     // Check bounds
                     if x >= *menu_x && x < *menu_x + menu_width {
                         let rel_y = y.saturating_sub(1);
-                        if rel_y < menu.items.len() {
-                            // Check if separator
-                            if !matches!(menu.items[rel_y], crate::core::menu::MenuItem::Separator)
-                            {
-                                // Execute!
-                                let cmd = menu.items[rel_y].clone(); // clone item to avoid borrow issues
-                                // Wait, we need command string.
-                                if let crate::core::menu::MenuItem::Action { command, .. } = cmd {
-                                    self.menu_bar.close();
-                                    self.dirty = true;
-                                    return Some(command);
-                                }
-                            }
+                        // Rows address painted items: disabled entries are
+                        // not painted, so the raw item index is wrong here.
+                        // Copy the command out before closing (borrow ends).
+                        let clicked = match menu.rendered_item(rel_y) {
+                            Some(crate::core::menu::MenuItem::Action {
+                                command,
+                                enabled: true,
+                            }) => Some(*command),
+                            _ => None,
+                        };
+                        if let Some(command) = clicked {
+                            self.menu_bar.close();
+                            self.dirty = true;
+                            return Some(command);
                         }
                     }
                 }
@@ -765,21 +766,18 @@ impl Display {
             if let Some((_, menu_x, _)) = layout.get(active_idx) {
                 // Access menu mutably
                 let menu = &mut self.menu_bar.menus[active_idx];
-                let width = menu.render_width();
+                let width = menu.render_width(INPUT_MODEL);
 
                 if x >= *menu_x && x < *menu_x + width
                     && y >= 1 {
-                        let item_idx = y - 1;
-                        if item_idx < menu.items.len() {
-                            // Only select if not separator
-                            if !matches!(
-                                menu.items[item_idx],
-                                crate::core::menu::MenuItem::Separator
-                            )
-                                && menu.selected != Some(item_idx) {
-                                    menu.selected = Some(item_idx);
-                                    self.dirty = true;
-                                }
+                        // Hover addresses painted rows; resolve to the item
+                        // index so a disabled entry cannot be highlighted.
+                        if let Some(item_idx) = menu.rendered_row_index(y - 1)
+                            && menu.selectable(item_idx)
+                            && menu.selected != Some(item_idx)
+                        {
+                            menu.selected = Some(item_idx);
+                            self.dirty = true;
                         }
                     }
             }
@@ -805,6 +803,7 @@ impl Display {
             self.terminal_size.0 as usize,
             self.terminal_size.1 as usize,
             show,
+            INPUT_MODEL,
         );
     }
 
@@ -1266,8 +1265,8 @@ mod tests {
         use crate::terminal::renderers::menu_renderer::MenuRenderer;
         let mut display = Display::new(80, 24, None, None);
         let theme = display.theme;
-        let menu_bar = crate::core::menu::MenuBar::new();
-        MenuRenderer::render(&mut display.back_buffer, &menu_bar, &theme, 80, 24, true);
+        let menu_bar = crate::core::menu::MenuBar::default();
+        MenuRenderer::render(&mut display.back_buffer, &menu_bar, &theme, 80, 24, true, crate::core::bindings::InputModel::KeyTrie);
         // Every cell of the top bar carries the MenuBar role.
         for x in 0..80u16 {
             let cell = display
@@ -1283,9 +1282,9 @@ mod tests {
         use crate::terminal::renderers::menu_renderer::MenuRenderer;
         let mut display = Display::new(80, 24, None, None);
         let theme = display.theme;
-        let mut menu_bar = crate::core::menu::MenuBar::new();
+        let mut menu_bar = crate::core::menu::MenuBar::default();
         menu_bar.open_menu(0);
-        MenuRenderer::render(&mut display.back_buffer, &menu_bar, &theme, 80, 24, true);
+        MenuRenderer::render(&mut display.back_buffer, &menu_bar, &theme, 80, 24, true, crate::core::bindings::InputModel::KeyTrie);
         // Dropdown item rows below the bar carry the MenuItem role.
         let cell = display
             .back_buffer

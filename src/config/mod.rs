@@ -29,5 +29,6 @@ pub mod effects;
 pub mod font;
 pub mod frontend;
 pub mod keys;
+pub mod menu;
 pub mod scrollbar;
 pub mod theme;

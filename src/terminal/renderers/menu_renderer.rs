@@ -2,6 +2,7 @@
 //!
 //! All menubar logic consolidated here: menu titles, dropdowns, X close button.
 
+use crate::core::bindings::InputModel;
 use crate::core::menu::MenuBar;
 use crate::terminal::display::{Cell, CellRole, Color, ScreenBuffer};
 use crate::terminal::theme::Theme;
@@ -10,7 +11,10 @@ use crate::terminal::theme::Theme;
 pub struct MenuRenderer;
 
 impl MenuRenderer {
-    /// Render the menu bar to a screen buffer
+    /// Render the menu bar to a screen buffer.
+    ///
+    /// `model` is the active input model: hotkey hints resolve from its
+    /// live binding tables, so a Vim-feel session never shows Emacs chords.
     pub fn render(
         buffer: &mut ScreenBuffer,
         menu_bar: &MenuBar,
@@ -18,6 +22,7 @@ impl MenuRenderer {
         width: usize,
         height: usize,
         show: bool,
+        model: InputModel,
     ) {
         if !show {
             return;
@@ -76,11 +81,11 @@ impl MenuRenderer {
         // Draw dropdown menu if open
         if let Some(active_idx) = menu_bar.active_menu {
             let menu = &menu_bar.menus[active_idx];
-            let items = menu.render_items();
-            let menu_width = menu.render_width();
+            let items = menu.render_items(model);
+            let menu_width = menu.render_width(model);
 
             if let Some((_, start_x, _)) = layout.get(active_idx) {
-                for (item_idx, (label, hotkey, is_sep, _is_submenu)) in items.iter().enumerate() {
+                for (item_idx, (label, hotkey, is_sep)) in items.iter().enumerate() {
                     let y = 1 + item_idx;
                     if y >= height {
                         break;

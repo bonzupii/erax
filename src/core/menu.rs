@@ -1,42 +1,53 @@
-//! Menu system data model.
+//! Menu system: schema, runtime assembly, and derived presentation.
 //!
-//! Menu data model used by both TUI and GUI modes.
-//! Rendering is handled by terminal/renderers/menu_renderer.rs.
+//! Menu STRUCTURE is data: [`MenuSpec`] tables live in
+//! [`crate::config::menu`] as consts with per-entry enable/disable, and this
+//! module interprets them. Labels and hotkey hints are never stored: the
+//! label derives from the command's standard name
+//! ([`Command::name`], title-cased by [`display_name`]), and the hint is
+//! resolved at render time from the live binding tables for the active
+//! input model ([`hint_for`]) and rendered through the canonical notation
+//! ([`crate::core::keyfmt`]). A stored label or hint string would drift from
+//! the tables it describes; derivation kills that class by construction.
+
+use crate::core::bindings::{InputModel, ModalAction, ModalMode};
+use crate::core::command::Command;
+use crate::core::input::KeyPress;
 
 /// Height of the menu bar in cells
 pub const MENU_BAR_HEIGHT_CELLS: usize = 1;
 
-/// A single menu item (action or separator)
-#[derive(Clone, Debug)]
-pub enum MenuItem {
-    /// Action item with label, typed command, and optional hotkey hint
+/// One menu's structure, as data: the tables in [`crate::config::menu`]
+/// are written in this vocabulary.
+#[derive(Clone, Copy, Debug)]
+pub struct MenuSpec {
+    /// Title shown in the menu bar.
+    pub title: &'static str,
+    /// Entries in display order.
+    pub items: &'static [MenuItemSpec],
+}
+
+/// One entry of a [`MenuSpec`]: a command or a separator.
+///
+/// No label, no hint: both derive from the command at render time.
+#[derive(Clone, Copy, Debug)]
+pub enum MenuItemSpec {
+    /// A command entry. Disabled entries do not render; the data remains.
     Action {
-        label: &'static str,
-        command: crate::core::command::Command,
-        hotkey: Option<&'static str>,
+        command: Command,
+        enabled: bool,
     },
-    /// Separator line
+    /// A separator line.
     Separator,
 }
 
-impl MenuItem {
-    /// Create an action item
-    pub const fn action(
-        label: &'static str,
-        command: crate::core::command::Command,
-        hotkey: Option<&'static str>,
-    ) -> Self {
-        MenuItem::Action {
-            label,
-            command,
-            hotkey,
-        }
-    }
-
-    /// Create a separator
-    pub const fn separator() -> Self {
-        MenuItem::Separator
-    }
+/// A single runtime menu item (action or separator).
+#[derive(Clone, Debug)]
+pub enum MenuItem {
+    /// Action item: the typed command and whether it renders.
+    Action { command: Command, enabled: bool },
+    /// Separator line
+    Separator,
 }
 
 /// A dropdown menu (column of MenuItems)
@@ -60,9 +71,17 @@ impl Menu {
         }
     }
 
+    /// Whether the item at `idx` can be highlighted and run.
+    pub fn selectable(&self, idx: usize) -> bool {
+        match self.items.get(idx) {
+            Some(MenuItem::Action { enabled, .. }) => *enabled,
+            _ => false,
+        }
+    }
+
     /// Move selection down.
     ///
-    /// If every item is a separator the selection is left unchanged rather
+    /// If no item is selectable the selection is left unchanged rather
     /// than spinning forever (L-001).
     pub fn select_next(&mut self) {
         let max = self.items.len();
@@ -74,7 +93,7 @@ impl Menu {
         let mut idx = start;
         loop {
             idx = (idx + 1) % max;
-            if !matches!(self.items.get(idx), Some(MenuItem::Separator)) {
+            if self.selectable(idx) {
                 self.selected = Some(idx);
                 return;
             }
@@ -86,7 +105,7 @@ impl Menu {
 
     /// Move selection up.
     ///
-    /// If every item is a separator the selection is left unchanged rather
+    /// If no item is selectable the selection is left unchanged rather
     /// than spinning forever (L-001).
     pub fn select_prev(&mut self) {
         let max = self.items.len();
@@ -98,7 +117,7 @@ impl Menu {
         let mut idx = start;
         loop {
             idx = if idx == 0 { max - 1 } else { idx - 1 };
-            if !matches!(self.items.get(idx), Some(MenuItem::Separator)) {
+            if self.selectable(idx) {
                 self.selected = Some(idx);
                 return;
             }
@@ -108,50 +127,76 @@ impl Menu {
         }
     }
 
-    /// Get the currently selected item's command (if any)
-    pub fn selected_command(&self) -> Option<crate::core::command::Command> {
-        let result = self.selected.and_then(|idx| {
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "selected_command: idx={}, item={:?}",
-                idx,
-                self.items.get(idx)
-            );
-            match self.items.get(idx) {
-                Some(MenuItem::Action { command, .. }) => Some(*command),
-                _ => None,
-            }
-        });
-        #[cfg(debug_assertions)]
-        eprintln!("selected_command returning: {:?}", result);
-        result
-    }
-
-    /// Get render data for all menu items
-    /// Returns vec of (label, hotkey_hint, is_separator, is_submenu)
-    pub fn render_items(&self) -> Vec<(String, Option<&'static str>, bool, bool)> {
+    /// The item painted at rendered row `row`.
+    ///
+    /// Disabled entries are not painted, so rendered rows and item indices
+    /// diverge when any entry is disabled; mouse hit-testing must resolve
+    /// through this method, never index `items` by screen row.
+    pub fn rendered_item(&self, row: usize) -> Option<&MenuItem> {
         self.items
             .iter()
-            .map(|item| match item {
-                MenuItem::Action { label, hotkey, .. } => {
-                    (label.to_string(), *hotkey, false, false)
-                }
-                MenuItem::Separator => ("---".to_string(), None, true, false),
+            .filter(|item| {
+                !matches!(item, MenuItem::Action { enabled: false, .. })
+            })
+            .nth(row)
+    }
+
+    /// The item index painted at rendered row `row`, for hover selection.
+    pub fn rendered_row_index(&self, row: usize) -> Option<usize> {
+        self.items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| {
+                !matches!(item, MenuItem::Action { enabled: false, .. })
+            })
+            .nth(row)
+            .map(|(idx, _)| idx)
+    }
+
+    /// Get the currently selected item's command (if any)
+    pub fn selected_command(&self) -> Option<Command> {
+        self.selected.and_then(|idx| match self.items.get(idx) {
+            Some(MenuItem::Action {
+                command, enabled: true, ..
+            }) => Some(*command),
+            _ => None,
+        })
+    }
+
+    /// Render data for all menu items: (label, hotkey hint, is separator).
+    ///
+    /// Labels derive from the command's standard name; hints resolve from
+    /// the live binding tables for `model`. Disabled entries do not render.
+    pub fn render_items(&self, model: InputModel) -> Vec<(String, Option<String>, bool)> {
+        self.items
+            .iter()
+            .filter_map(|item| match item {
+                MenuItem::Action {
+                    command,
+                    enabled: true,
+                } => Some((
+                    display_name(*command),
+                    hint_for(model, *command),
+                    false,
+                )),
+                MenuItem::Action { enabled: false, .. } => None,
+                MenuItem::Separator => Some(("---".to_string(), None, true)),
             })
             .collect()
     }
 
     /// Calculate width needed to render this menu (for dropdown sizing)
-    pub fn render_width(&self) -> usize {
+    pub fn render_width(&self, model: InputModel) -> usize {
         let max_label = self
-            .items
+            .render_items(model)
             .iter()
-            .map(|item| match item {
-                MenuItem::Action { label, hotkey, .. } => {
-                    let hotkey_len = hotkey.map_or(0, |h| h.len() + 2);
+            .map(|(label, hotkey, is_sep)| {
+                if *is_sep {
+                    3
+                } else {
+                    let hotkey_len = hotkey.as_ref().map_or(0, |h| h.len() + 2);
                     label.len() + hotkey_len
                 }
-                MenuItem::Separator => 3,
             })
             .max();
 
@@ -171,123 +216,29 @@ pub struct MenuBar {
 }
 
 impl MenuBar {
-    /// Create the standard erax menu bar
-    pub fn new() -> Self {
+    /// Assemble the menu bar from the config data tables.
+    pub fn from_spec(specs: &[MenuSpec]) -> Self {
         Self {
-            menus: vec![
-                Self::file_menu(),
-                Self::edit_menu(),
-                Self::view_menu(),
-                Self::buffer_menu(),
-                Self::window_menu(),
-                Self::help_menu(),
-            ],
+            menus: specs
+                .iter()
+                .map(|spec| Menu {
+                    title: spec.title,
+                    items: spec
+                        .items
+                        .iter()
+                        .map(|item| match item {
+                            MenuItemSpec::Action { command, enabled } => MenuItem::Action {
+                                command: *command,
+                                enabled: *enabled,
+                            },
+                            MenuItemSpec::Separator => MenuItem::Separator,
+                        })
+                        .collect(),
+                    selected: None,
+                })
+                .collect(),
             active_menu: None,
         }
-    }
-
-    fn file_menu() -> Menu {
-        Menu::new(
-            "File",
-            vec![
-                MenuItem::action("Find File...", crate::core::command::Command::FindFile, Some("^X^F")),
-                MenuItem::action("Read File...", crate::core::command::Command::ReadFile, Some("^X^R")),
-                MenuItem::separator(),
-                MenuItem::action("Save", crate::core::command::Command::SaveBuffer, Some("^X^S")),
-                MenuItem::action("Write File...", crate::core::command::Command::WriteFile, Some("^X^W")),
-                MenuItem::separator(),
-                MenuItem::action("Print Buffer", crate::core::command::Command::PrintBuffer, None),
-                MenuItem::separator(),
-                MenuItem::action("Exit", crate::core::command::Command::ExitErax, Some("^X^C")),
-            ],
-        )
-    }
-
-    fn edit_menu() -> Menu {
-        Menu::new(
-            "Edit",
-            vec![
-                MenuItem::action("Set Mark", crate::core::command::Command::SetMark, Some("M-Space")),
-                MenuItem::action(
-                    "Exchange Point/Mark",
-                    crate::core::command::Command::ExchangePointAndMark,
-                    Some("^X^X"),
-                ),
-                MenuItem::separator(),
-                MenuItem::action("Kill Region", crate::core::command::Command::KillRegion, Some("^W")),
-                MenuItem::action("Copy Region", crate::core::command::Command::CopyRegion, Some("M-W")),
-                MenuItem::action("Yank", crate::core::command::Command::Yank, Some("^Y")),
-                MenuItem::separator(),
-                MenuItem::action("Kill Line", crate::core::command::Command::KillToEndOfLine, Some("^K")),
-                MenuItem::action("Delete Blank Lines", crate::core::command::Command::DeleteBlankLines, Some("^X^O")),
-                MenuItem::separator(),
-                MenuItem::action("Search Forward", crate::core::command::Command::SearchForward, Some("^S")),
-                MenuItem::action("Search Backward", crate::core::command::Command::SearchReverse, Some("^R")),
-                MenuItem::action("Query Replace", crate::core::command::Command::QueryReplace, Some("M-^R")),
-            ],
-        )
-    }
-
-    fn view_menu() -> Menu {
-        Menu::new(
-            "View",
-            vec![
-                MenuItem::action("Toggle Diagnostics", crate::core::command::Command::ToggleDiagnostics, None),
-                MenuItem::action("Jump to Diagnostic", crate::core::command::Command::DiagnosticsJump, None),
-                MenuItem::separator(),
-                MenuItem::action("Buffer Info", crate::core::command::Command::BufferInfo, None),
-                MenuItem::action("What Cursor Position", crate::core::command::Command::WhatCursorPosition, Some("^X =")),
-            ],
-        )
-    }
-
-    fn buffer_menu() -> Menu {
-        Menu::new(
-            "Buf",
-            vec![
-                MenuItem::action("Next Buffer", crate::core::command::Command::NextBuffer, Some("^X X")),
-                MenuItem::action("Previous Buffer", crate::core::command::Command::PreviousBuffer, None),
-                MenuItem::action("Select Buffer...", crate::core::command::Command::SelectBuffer, Some("^X B")),
-                MenuItem::action("List Buffers", crate::core::command::Command::ListBuffers, Some("^X^B")),
-                MenuItem::separator(),
-                MenuItem::action("Kill Buffer", crate::core::command::Command::DeleteBuffer, Some("^X K")),
-            ],
-        )
-    }
-
-    fn window_menu() -> Menu {
-        Menu::new(
-            "Win",
-            vec![
-                MenuItem::action("Split Vertical", crate::core::command::Command::SplitCurrentWindow, Some("^X 2")),
-                MenuItem::action(
-                    "Split Horizontal",
-                    crate::core::command::Command::SplitWindowHorizontally,
-                    Some("^X 3"),
-                ),
-                MenuItem::separator(),
-                MenuItem::action("Delete Window", crate::core::command::Command::DeleteWindow, None),
-                MenuItem::action("Delete Other Windows", crate::core::command::Command::DeleteOtherWindows, Some("^X 1")),
-                MenuItem::action("Minimize Window", crate::core::command::Command::MinimizeWindow, Some("^X 0")),
-                MenuItem::action("Window Picker", crate::core::command::Command::WindowPicker, Some("^X 9")),
-                MenuItem::separator(),
-                MenuItem::action("Next Window", crate::core::command::Command::NextWindow, Some("^X O")),
-                MenuItem::separator(),
-                MenuItem::action("Grow Window", crate::core::command::Command::GrowWindow, Some("^X Z")),
-                MenuItem::action("Shrink Window", crate::core::command::Command::ShrinkWindow, Some("^X^Z")),
-            ],
-        )
-    }
-
-    fn help_menu() -> Menu {
-        Menu::new(
-            "Help",
-            vec![
-                MenuItem::action("Describe Key...", crate::core::command::Command::DescribeKey, Some("^X ?")),
-                MenuItem::action("Count Words", crate::core::command::Command::CountWords, None),
-                MenuItem::action("Show Position", crate::core::command::Command::ShowPosition, None),
-            ],
-        )
     }
 
     /// Open a menu by index
@@ -335,8 +286,8 @@ impl MenuBar {
         self.active_menu.map(|idx| &mut self.menus[idx])
     }
 
-    /// Execute the selected command (returns command name)
-    pub fn execute_selected(&mut self) -> Option<crate::core::command::Command> {
+    /// Execute the selected command (returns the typed command)
+    pub fn execute_selected(&mut self) -> Option<Command> {
         let cmd = self
             .active_menu
             .and_then(|idx| self.menus[idx].selected_command());
@@ -364,99 +315,249 @@ impl MenuBar {
 
 impl Default for MenuBar {
     fn default() -> Self {
-        Self::new()
+        Self::from_spec(crate::config::menu::MENUS)
     }
+}
+
+/// The menu label for a command: its standard kebab-case name, title-cased.
+///
+/// Glue words stay lowercase (unless first) so labels read like
+/// contemporary editor menus: `find-and-replace` becomes "Find and Replace".
+/// A pure function of [`Command::name`]: the prompt, the menu, and help all
+/// name the command identically by construction.
+pub fn display_name(command: Command) -> String {
+    const GLUE: &[&str] = &[
+        "and", "or", "to", "of", "a", "an", "the", "for", "in", "on", "with", "without", "as",
+        "at", "by", "from",
+    ];
+    command
+        .name()
+        .split('-')
+        .enumerate()
+        .map(|(i, word)| {
+            if i > 0 && GLUE.contains(&word) {
+                word.to_string()
+            } else {
+                let mut chars = word.chars();
+                match chars.next() {
+                    Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+                    None => String::new(),
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The hotkey hint for a command in `model`: the command's binding in that
+/// model's live table, rendered through the canonical notation.
+///
+/// Returns `None` when the command has no binding in the model (facility-
+/// reachable commands show no hint rather than a hand-typed string).
+pub fn hint_for(model: InputModel, command: Command) -> Option<String> {
+    let keys: &[KeyPress] = match model {
+        InputModel::KeyTrie | InputModel::Standard => {
+            crate::config::keys::bindings_for_model(model)
+                .iter()
+                .find(|b| b.command == command)?
+                .keys
+        }
+        InputModel::Modal => {
+            // Normal-mode direct command bindings only: the `:` facility,
+            // `g`-prefixes, and operator compositions have no single chord.
+            let binding = crate::config::keys::MODAL_BINDINGS.iter().find(|b| {
+                b.mode == ModalMode::Normal
+                    && matches!(b.action, ModalAction::Command(c) if c == command)
+            })?;
+            std::slice::from_ref(&binding.key)
+        }
+    };
+    Some(crate::core::keyfmt::format_sequence(keys))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::menu::MENUS;
+
+    fn spec_bar() -> MenuBar {
+        MenuBar::from_spec(MENUS)
+    }
 
     #[test]
-    fn test_select_next_skips_separators() {
-        let mut menu = Menu::new(
-            "t",
-            vec![
-                MenuItem::action("a", crate::core::command::Command::Undo, None),
-                MenuItem::Separator,
-                MenuItem::action("b", crate::core::command::Command::Redo, None),
+    fn spec_assembles_all_menus() {
+        let bar = spec_bar();
+        assert_eq!(bar.menus.len(), MENUS.len());
+        for (menu, spec) in bar.menus.iter().zip(MENUS.iter()) {
+            assert_eq!(menu.title, spec.title);
+            assert_eq!(menu.items.len(), spec.items.len());
+        }
+    }
+
+    #[test]
+    fn disabled_entries_do_not_render_but_data_remains() {
+        let spec = [MenuSpec {
+            title: "t",
+            items: &[
+                MenuItemSpec::Action {
+                    command: Command::Undo,
+                    enabled: true,
+                },
+                MenuItemSpec::Action {
+                    command: Command::Redo,
+                    enabled: false,
+                },
+                MenuItemSpec::Separator,
             ],
-        );
+        }];
+        let bar = MenuBar::from_spec(&spec);
+        // Data remains: three items assembled.
+        assert_eq!(bar.menus[0].items.len(), 3);
+        // Rendering skips the disabled entry.
+        let items = bar.menus[0].render_items(InputModel::KeyTrie);
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().all(|(label, _, _)| label != "Redo"));
+    }
+
+    #[test]
+    fn selection_skips_separators_and_disabled() {
+        let spec = [MenuSpec {
+            title: "t",
+            items: &[
+                MenuItemSpec::Action {
+                    command: Command::Undo,
+                    enabled: true,
+                },
+                MenuItemSpec::Separator,
+                MenuItemSpec::Action {
+                    command: Command::Redo,
+                    enabled: false,
+                },
+                MenuItemSpec::Action {
+                    command: Command::DescribeKey,
+                    enabled: true,
+                },
+            ],
+        }];
+        let mut bar = MenuBar::from_spec(&spec);
+        bar.open_menu(0);
+        let menu = bar.active().unwrap();
+        // Index 0 is Undo; next skips the separator AND the disabled Redo.
         menu.select_next();
-        assert_eq!(menu.selected, Some(2));
+        assert_eq!(menu.selected, Some(3));
         menu.select_next();
         assert_eq!(menu.selected, Some(0));
     }
 
     #[test]
-    fn test_select_prev_skips_separators() {
-        let mut menu = Menu::new(
-            "t",
-            vec![
-                MenuItem::action("a", crate::core::command::Command::Undo, None),
-                MenuItem::Separator,
-                MenuItem::action("b", crate::core::command::Command::Redo, None),
+    fn select_prev_skips_separators_and_disabled() {
+        let spec = [MenuSpec {
+            title: "t",
+            items: &[
+                MenuItemSpec::Action {
+                    command: Command::Undo,
+                    enabled: true,
+                },
+                MenuItemSpec::Separator,
+                MenuItemSpec::Action {
+                    command: Command::DescribeKey,
+                    enabled: true,
+                },
             ],
-        );
+        }];
+        let mut bar = MenuBar::from_spec(&spec);
+        bar.open_menu(0);
+        let menu = bar.active().unwrap();
         menu.select_prev();
         assert_eq!(menu.selected, Some(2));
     }
 
-    /// L-001: an all-separator menu must not hang `select_next`/`select_prev`.
+    /// L-001: a menu with nothing selectable must not hang select_next/prev.
     #[test]
-    fn test_all_separator_menu_does_not_hang() {
-        let mut menu = Menu::new(
-            "t",
-            vec![MenuItem::Separator, MenuItem::Separator, MenuItem::Separator],
-        );
+    fn all_unselectable_menu_does_not_hang() {
+        let spec = [MenuSpec {
+            title: "t",
+            items: &[
+                MenuItemSpec::Separator,
+                MenuItemSpec::Separator,
+                MenuItemSpec::Action {
+                    command: Command::Undo,
+                    enabled: false,
+                },
+            ],
+        }];
+        let mut bar = MenuBar::from_spec(&spec);
+        bar.open_menu(0);
+        let menu = bar.active().unwrap();
         menu.select_next();
-        assert_eq!(menu.selected, None);
+        assert_eq!(menu.selected, Some(0));
         menu.select_prev();
-        assert_eq!(menu.selected, None);
+        assert_eq!(menu.selected, Some(0));
     }
 
     #[test]
-    fn test_menu_navigation() {
-        let mut bar = MenuBar::new();
+    fn menu_navigation() {
+        let mut bar = spec_bar();
         assert!(!bar.is_open());
 
-        bar.open_menu(0); // Open File menu
+        bar.open_menu(0);
         assert!(bar.is_open());
         assert_eq!(bar.active_menu, Some(0));
 
         bar.next_menu();
-        assert_eq!(bar.active_menu, Some(1)); // Edit
+        assert_eq!(bar.active_menu, Some(1));
 
         bar.prev_menu();
-        assert_eq!(bar.active_menu, Some(0)); // File
+        assert_eq!(bar.active_menu, Some(0));
 
         bar.close();
         assert!(!bar.is_open());
     }
 
     #[test]
-    fn test_menu_item_selection() {
-        let mut bar = MenuBar::new();
+    fn execute_selected_returns_the_typed_command() {
+        let mut bar = spec_bar();
         bar.open_menu(0);
-
-        if let Some(menu) = bar.active() {
-            assert_eq!(menu.selected, Some(0));
-            menu.select_next();
-            if let Some(sel) = menu.selected {
-                assert!(sel > 0);
-            } else {
-                panic!("Expected selected index");
-            }
-        }
+        let cmd = bar.execute_selected();
+        assert!(cmd.is_some());
+        assert!(!bar.is_open());
     }
 
     #[test]
-    fn test_execute_selected() {
-        let mut bar = MenuBar::new();
-        bar.open_menu(0); // File menu
+    fn display_name_title_cases_with_glue_words() {
+        assert_eq!(display_name(Command::SaveBuffer), "Save");
+        assert_eq!(display_name(Command::QueryReplace), "Find and Replace");
+        assert_eq!(display_name(Command::GotoLine), "Go to Line");
+        assert_eq!(
+            display_name(Command::ExitWithoutSave),
+            "Quit without Saving"
+        );
+        assert_eq!(
+            display_name(Command::SplitCurrentWindow),
+            "Split Window Down"
+        );
+        assert_eq!(display_name(Command::Undo), "Undo");
+    }
 
-        let cmd = bar.execute_selected();
-        assert!(cmd.is_some());
-        assert!(!bar.is_open()); // Should close after execute
+    #[test]
+    fn hint_derives_from_the_live_keytrie_table() {
+        // SaveBuffer is bound as Ctrl+x Ctrl+s in the KeyTrie table.
+        let hint = hint_for(InputModel::KeyTrie, Command::SaveBuffer);
+        assert_eq!(hint.as_deref(), Some("Ctrl+x-Ctrl+s"));
+    }
+
+    #[test]
+    fn hint_is_none_when_the_model_binds_nothing() {
+        // GotoByte is facility-only in the KeyTrie model (no binding).
+        assert_eq!(hint_for(InputModel::KeyTrie, Command::GotoByte), None);
+    }
+
+    #[test]
+    fn modal_hint_uses_the_normal_mode_chord() {
+        // 'h' runs BackwardCharacter in Normal mode.
+        assert_eq!(
+            hint_for(InputModel::Modal, Command::BackwardCharacter).as_deref(),
+            Some("h")
+        );
     }
 }

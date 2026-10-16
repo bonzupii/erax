@@ -48,12 +48,6 @@ const ALLOWLIST: &[(&str, usize, &str)] = &[
          table, never hardcoded name strings",
     ),
     (
-        "src/core/menu.rs",
-        37,
-        "menu presentation items map labels to commands; accelerator hints \
-         are display strings, not bindings",
-    ),
-    (
         "src/core/commands/macro_cmd.rs",
         1,
         "macro replay rejects nested ExecuteMacro",
