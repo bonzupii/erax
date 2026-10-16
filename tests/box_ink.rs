@@ -22,15 +22,14 @@ fn ink_metrics(ch: char) -> Option<(i32, i32, u32, u32)> {
             if let Some(img) = manager
                 .swash_cache
                 .get_image(&mut manager.font_system, physical.cache_key)
+                && img.placement.width > 0
             {
-                if img.placement.width > 0 {
-                    return Some((
-                        img.placement.left,
-                        img.placement.top,
-                        img.placement.width,
-                        img.placement.height,
-                    ));
-                }
+                return Some((
+                    img.placement.left,
+                    img.placement.top,
+                    img.placement.width,
+                    img.placement.height,
+                ));
             }
         }
     }

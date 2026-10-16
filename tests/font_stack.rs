@@ -26,7 +26,7 @@ fn winning_family(text: &str) -> Option<String> {
     );
     buffer.shape_until_scroll(&mut manager.font_system, false);
     for run in buffer.layout_runs() {
-        for glyph in run.glyphs {
+        if let Some(glyph) = run.glyphs.iter().next() {
             let face = manager.font_system.db().face(glyph.font_id)?;
             return face.families.first().map(|(name, _)| name.clone());
         }
