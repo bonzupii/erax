@@ -22,6 +22,11 @@ struct GridHandler {
 
 impl GridHandler {
     fn new(cols: usize, rows: usize) -> Self {
+        // A zero-sized grid is meaningless: line_feed's `rows - 1`
+        // underflows and `remove(0)` panics on the empty grid. Clamp to
+        // the 1x1 minimum.
+        let cols = cols.max(1);
+        let rows = rows.max(1);
         Self {
             grid: vec![vec![' '; cols]; rows],
             cols,
@@ -32,6 +37,8 @@ impl GridHandler {
     }
 
     fn resize(&mut self, cols: usize, rows: usize) {
+        let cols = cols.max(1);
+        let rows = rows.max(1);
         self.cols = cols;
         self.rows = rows;
         self.grid.resize(rows, vec![' '; cols]);
@@ -400,5 +407,26 @@ impl Drop for TerminalHost {
         if let Ok(mut child) = self.child.lock() {
             let _ = child.kill();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zero_sized_grid_clamps_to_1x1() {
+        // Regression: a 0-row/col grid made line_feed underflow
+        // (`rows - 1`) and panic (`remove(0)` on the empty grid).
+        let mut grid = GridHandler::new(0, 0);
+        assert_eq!((grid.cols, grid.rows), (1, 1));
+        grid.put_char('a');
+        grid.line_feed();
+        assert_eq!(grid.grid[0][0], ' ');
+
+        let mut grid = GridHandler::new(80, 24);
+        grid.resize(0, 0);
+        assert_eq!((grid.cols, grid.rows), (1, 1));
+        grid.line_feed();
     }
 }

@@ -397,7 +397,7 @@ impl GuiApp {
 
     fn handle_mouse_input(
         &mut self,
-        event_loop: &ActiveEventLoop,
+        _event_loop: &ActiveEventLoop,
         state: winit::event::ElementState,
         button: winit::event::MouseButton,
     ) {
@@ -449,6 +449,5 @@ impl GuiApp {
         };
 
         self.forward_mouse(mouse_event);
-        let _ = event_loop;
     }
 }
