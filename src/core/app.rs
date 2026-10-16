@@ -650,7 +650,7 @@ mod tests {
         // The first file is the one shown.
         let shown = app.active_buffer().expect("active buffer");
         assert_eq!(
-            shown.filename.as_ref().map(|p| p.as_path()),
+            shown.filename.as_deref(),
             Some(f1.as_path())
         );
         let _ = std::fs::remove_file(&f1);

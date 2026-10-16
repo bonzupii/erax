@@ -1550,7 +1550,7 @@ mod golden_tests {
         let mut app = EditorApp::new();
         let long = "x".repeat(120);
         app.buffers
-            .insert(BufferId(0), Buffer::from_string(&format!("{long}\nshort\n")));
+            .insert(BufferId(0), Buffer::from_string(format!("{long}\nshort\n")));
         let mut display = Display::new(80, 24, None, None);
         display.render(&mut app).expect("render");
         let grown = app
