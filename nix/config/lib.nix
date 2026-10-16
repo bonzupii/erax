@@ -96,6 +96,11 @@ let
         ]
       );
       postPatch = patchScript overrides;
+      # A configuration build produces the user's binary; it does not
+      # run the development test suite (the dev shell in ../../flake.nix
+      # owns tests and their fixtures). Keeping doCheck off is also
+      # what keeps dev-only dependencies out of this flake.
+      doCheck = false;
       # A personal, compile-time-configured editor is built FOR the user,
       # on the user's machine, from the user's own settings.
       meta.mainProgram = "erax";

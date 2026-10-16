@@ -99,6 +99,13 @@
               [
                 toolchain
                 pkgs.pkg-config
+                # Test and audit tooling: python3 runs the test corpus
+                # generators (tests/gen_vim_corpus.py); semgrep runs the
+                # maintained sin-pattern ruleset that gates regressions
+                # clippy cannot see (research/ai-code-sins/semgrep.yml in
+                # the project ledger, copied into the tree by the audit).
+                pkgs.python3
+                pkgs.semgrep
               ]
               ++ fontPackages
               ++ lib.optionals isLinux linuxLibs
