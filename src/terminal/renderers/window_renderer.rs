@@ -15,6 +15,22 @@ use unicode_segmentation::UnicodeSegmentation;
 /// Renders a window's content to the screen buffer
 pub struct WindowRenderer;
 
+/// Gutter origin column: the gutter sits after the left scrollbar strip
+/// when the vertical bar is on the left and present; the strip exists
+/// only while the bar does (dynamic presence), so the gutter origin
+/// follows the model's derived bar, matching `PaneGeometry::owned_regions`.
+/// One derivation — every gutter painter (line numbers, diagnostic icons,
+/// blank filler) positions from it, so a gutter cell can never disagree
+/// with the line-number string about where the gutter starts.
+fn gutter_origin_x(frame_x: usize, v_scrollbar_present: bool) -> usize {
+    frame_x
+        + usize::from(
+            v_scrollbar_present
+                && crate::config::scrollbar::VERTICAL_SIDE
+                    == crate::core::geometry::VerticalSide::Left,
+        )
+}
+
 /// Parameters for [`WindowRenderer::render`]: one struct instead of twelve
 /// arguments.
 pub struct WindowRenderParams<'a> {
@@ -106,12 +122,7 @@ impl WindowRenderer {
                 // the strip row). Blank-line gutter format, no line numbers
                 // for a pty.
                 if gutter_width > 0 {
-                    let gutter_x = geom.frame.x
-                        + usize::from(
-                            geom.v_scrollbar.is_some()
-                                && crate::config::scrollbar::VERTICAL_SIDE
-                                    == crate::core::geometry::VerticalSide::Left,
-                        );
+                    let gutter_x = gutter_origin_x(geom.frame.x, geom.v_scrollbar.is_some());
                     let gutter_h = text_height + usize::from(geom.h_scrollbar.is_some());
                     let blank_gutter = format!("{}│", " ".repeat(gutter_width - 1));
                     for y in 0..gutter_h {
@@ -239,17 +250,9 @@ impl WindowRenderer {
                 } else {
                     format!("{}│", " ".repeat(gutter_width - 1))
                 };
-                // The gutter sits after the left scrollbar strip when the
-                // vertical bar is on the left and present; the strip
-                // exists only while the bar does (dynamic presence), so
-                // the gutter origin follows the model's derived bar,
-                // matching `PaneGeometry::owned_regions`.
-                let gutter_x = geom.frame.x
-                    + usize::from(
-                        geom.v_scrollbar.is_some()
-                            && crate::config::scrollbar::VERTICAL_SIDE
-                                == crate::core::geometry::VerticalSide::Left,
-                    );
+                // The gutter origin follows the model's derived bar (see
+                // `gutter_origin_x`).
+                let gutter_x = gutter_origin_x(geom.frame.x, geom.v_scrollbar.is_some());
                 for (i, ch) in line_num_str.chars().enumerate() {
                     let gx = gutter_x as u16 + i as u16;
                     if gx < (geom.frame.x + geom.frame.width) as u16 {
@@ -267,7 +270,12 @@ impl WindowRenderer {
                 }
             }
 
-            // Draw diagnostic gutter icon
+            // Draw diagnostic gutter icon in the divider column: the
+            // divider yields its seat on diagnostic lines. The column
+            // derives from the same gutter origin as the line numbers
+            // (offset past a left-side scrollbar strip while the bar is
+            // present); the icon is a diagnostic marker, not document
+            // text, so it carries the Diagnostic role.
             if (has_error || has_warning) && gutter_width > 0 {
                 let icon = if has_error { '!' } else { 'W' };
                 let icon_fg = if has_error {
@@ -275,15 +283,17 @@ impl WindowRenderer {
                 } else {
                     theme.warning
                 };
-                let gx = geom.frame.x as u16 + (gutter_width as u16).saturating_sub(1);
+                let icon_gutter_x = gutter_origin_x(geom.frame.x, geom.v_scrollbar.is_some());
+                let gx = icon_gutter_x as u16 + (gutter_width as u16).saturating_sub(1);
                 if gx < (geom.frame.x + geom.frame.width) as u16 {
                     screen_buffer.set(
                         gx,
                         screen_y,
-                        Cell::new(
+                        Cell::with_role(
                             icon,
                             icon_fg,
                             theme.gutter_bg,
+                            CellRole::Diagnostic,
                         ),
                     );
                 }
@@ -511,17 +521,19 @@ impl WindowRenderer {
                     );
                 }
             } else {
+                // Tilde filler: the whole row is chrome, not document
+                // text — the model documents it under the Gutter role.
                 let screen_x = text_start_x as u16;
                 screen_buffer.set(
                     screen_x,
                     screen_y,
-                    Cell::new('~', theme.gutter_fg, line_bg),
+                    Cell::with_role('~', theme.gutter_fg, line_bg, CellRole::Gutter),
                 );
                 for x in (screen_x + 1)..(text_start_x + text_width) as u16 {
                     screen_buffer.set(
                         x,
                         screen_y,
-                        Cell::new(' ', theme.fg, line_bg),
+                        Cell::with_role(' ', theme.fg, line_bg, CellRole::Gutter),
                     );
                 }
             }
@@ -573,12 +585,7 @@ impl WindowRenderer {
             // paint the strip row's gutter columns in the blank-line
             // gutter format. Without this they would be unowned.
             if show_line_numbers && gutter_width > 0 {
-                let gutter_x = geom.frame.x
-                    + usize::from(
-                        geom.v_scrollbar.is_some()
-                            && crate::config::scrollbar::VERTICAL_SIDE
-                                == crate::core::geometry::VerticalSide::Left,
-                    );
+                let gutter_x = gutter_origin_x(geom.frame.x, geom.v_scrollbar.is_some());
                 for (i, ch) in format!("{}│", " ".repeat(gutter_width - 1))
                     .chars()
                     .enumerate()
