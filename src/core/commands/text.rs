@@ -8,11 +8,38 @@ fn get_word_range_at_cursor(
     window: &crate::core::window::Window,
     buffer: &crate::core::buffer::Buffer,
 ) -> Option<(usize, usize)> {
-    let start_byte = window.get_byte_offset(buffer)?;
-    let (wx, wy) = window.forward_word_target(buffer);
-    let end_byte = window.get_byte_offset_at(buffer, wx, wy)?;
-    if end_byte > start_byte {
-        Some((start_byte, end_byte))
+    // Skip forward over non-word graphemes: capitalize-word acts on
+    // the next word when the cursor sits on whitespace. The search
+    // stays on the cursor's line; it never crosses into the next line.
+    let cursor_byte = window.get_byte_offset(buffer)?;
+    let line_idx = buffer.byte_to_line(cursor_byte);
+    let line_start = buffer.line_to_byte(line_idx)?;
+    let line = buffer.line(line_idx)?;
+    let rel_cursor = cursor_byte.saturating_sub(line_start);
+
+    let mut clusters: Vec<(usize, &str)> = Vec::new();
+    let mut off = 0usize;
+    for g in crate::core::utf8::GraphemeIterator::new(&line) {
+        clusters.push((off, g));
+        off += g.len();
+    }
+    // Word start: first word grapheme at or after the cursor.
+    let start_idx = clusters
+        .iter()
+        .position(|(o, g)| {
+            *o >= rel_cursor && crate::core::utf8::is_word_grapheme(g)
+        })?;
+    let word_start = line_start + clusters[start_idx].0;
+    // Word end: first non-word grapheme after the start, or line end.
+    let mut word_end = line_start + line.len();
+    for (o, g) in clusters.iter().skip(start_idx + 1) {
+        if !crate::core::utf8::is_word_grapheme(g) {
+            word_end = line_start + o;
+            break;
+        }
+    }
+    if word_end > word_start {
+        Some((word_start, word_end))
     } else {
         None
     }
