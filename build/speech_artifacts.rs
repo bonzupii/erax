@@ -8,6 +8,13 @@ const ARTIFACTS: &[(&str, &str, &str, u64)] = &[
     ("kokoro-v1.0.int8.onnx",
      "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/1939ad2a8e416c0acfeecc08a694d14ef25f2231/onnx/model_uint8.onnx",
      "6607a397d77b8514065420b7c1e7320117f7aabfdb45ce15f0050c5b0fe75aea", 177464632),
+    // tokenizer.json is not a weight: it is the pinned source of the
+    // phoneme table (src/speech/kokoro.rs KOKORO_PHONEME_IDS). The
+    // content test reads it back to verify the table against the
+    // pinned revision.
+    ("tokenizer.json",
+     "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/1939ad2a8e416c0acfeecc08a694d14ef25f2231/tokenizer.json",
+     "77a02c8e164413299b4b4c403b14f8e0e1c1b727db4d46a09d6327b861060a34", 3497),
     ("voices/af.bin",
      "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/1939ad2a8e416c0acfeecc08a694d14ef25f2231/voices/af.bin",
      "a4f11d9d055a12bfa0db2668a3e4f0ef8fd1f1ccca69494479718e44dbf9e41a", 524288),
