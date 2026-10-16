@@ -66,6 +66,11 @@ struct WebSession {
     /// until the first cue frame arrives; a suspended context drops
     /// that cue and resumes on the next one.
     audio: Option<web_sys::AudioContext>,
+    /// The server's active theme id, from the `Hello` handshake. The
+    /// presentation core renders from this — never from the client's
+    /// own config default. Initialized to the config default only as a
+    /// pre-handshake placeholder; no frame renders before `Hello`.
+    theme_id: crate::terminal::theme::ThemeId,
 }
 
 /// Probe WebGPU adapter availability WITHOUT touching the canvas.
@@ -331,6 +336,9 @@ pub async fn erax_start(
         repaint_pending: false,
         repaint_attempts: 0,
         audio: None,
+        // Pre-handshake placeholder; the Hello frame replaces it before
+        // any frame renders.
+        theme_id: crate::config::theme::THEME,
     }));
 
     // Wire DOM events → protocol input.
@@ -684,7 +692,7 @@ fn handle_server_frame(session: &Rc<RefCell<WebSession>>, frame: ServerFrame) {
         }
     };
     match frame {
-        ServerFrame::Hello { version, .. } => {
+        ServerFrame::Hello { version, theme, .. } => {
             // width/height are informational (the server resizes to the
             // grid we report in our Resize frames); the client's own canvas
             // grid is authoritative for rendering. Only the version gates.
@@ -699,6 +707,13 @@ fn handle_server_frame(session: &Rc<RefCell<WebSession>>, frame: ServerFrame) {
                 // version to disconnect (protocol.rs); continuing would
                 // speak frames the client may misinterpret.
                 let _ = session.borrow().ws.close();
+            } else {
+                // The theme is the server's active theme (invocation
+                // overrides included): from here on the presentation core
+                // renders from it, never from the client's config default.
+                // Adopted only after the version gates — a mismatched
+                // server's theme must not become client state.
+                session.borrow_mut().theme_id = theme;
             }
         }
         ServerFrame::AuthOk => {
@@ -769,8 +784,9 @@ fn handle_server_frame(session: &Rc<RefCell<WebSession>>, frame: ServerFrame) {
                 let _ = ime_style.set_property("top", &format!("{top_css}px"));
 
                 // Disjoint field borrows through the &mut.
-                let (renderer, screen) = (&mut s.renderer, &s.screen);
-                renderer.render(screen)
+                let (renderer, screen, theme_id) =
+                    (&mut s.renderer, &s.screen, s.theme_id);
+                renderer.render(screen, theme_id.theme())
             };
             match outcome {
                 Err(e) => {
@@ -852,8 +868,8 @@ fn repaint_once(session: &Rc<RefCell<WebSession>>) {
         // method call would borrow through `DerefMut` and conflict).
         let s = &mut *session.borrow_mut();
         s.repaint_pending = false;
-        let (renderer, screen) = (&mut s.renderer, &s.screen);
-        renderer.render(screen)
+        let (renderer, screen, theme_id) = (&mut s.renderer, &s.screen, s.theme_id);
+        renderer.render(screen, theme_id.theme())
     };
     match outcome {
         Err(e) => {

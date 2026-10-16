@@ -113,7 +113,11 @@ pub struct Theme {
 /// Typed theme identifier. Selecting a theme is a match over this enum;
 /// an invalid selection is a compile error or a typed CLI parse error, never a
 /// silent runtime fallback.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+///
+/// Serialized on the web protocol's `Hello` frame so the client renders
+/// with the server's active theme (invocation overrides included); the
+/// serialized form is the variant name, stable across builds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ThemeId {
     Dracula,
     Monokai,

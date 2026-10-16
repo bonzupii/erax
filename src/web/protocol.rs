@@ -18,6 +18,7 @@
 use crate::core::cursor_style::CursorStyle;
 use crate::core::input::{KeyPress, MouseEvent};
 use crate::terminal::display::{Cell, CellRole};
+use crate::terminal::theme::ThemeId;
 use serde::{Deserialize, Serialize};
 
 /// Current protocol version. Bumped on any breaking frame change.
@@ -31,7 +32,13 @@ use serde::{Deserialize, Serialize};
 /// events: mode changes, errors, save completions, reload questions)
 /// and `Announce` (screen-reader announcement text derived from
 /// document-snapshot diffs). Both are event frames alongside `Screen`.
-pub const PROTOCOL_VERSION: u32 = 3;
+///
+/// v4 (2026-10-16): `Hello` carries the server's active theme (`ThemeId`,
+/// invocation overrides included) so the client's presentation core
+/// renders clear color, out-of-grid background, and effect signing from
+/// the same theme the cells were painted with — one theme source per
+/// side, no client-side config read.
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// A rectangle of cells, in cell coordinates (inclusive origin, exclusive end).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,9 +76,16 @@ pub struct CursorState {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ServerFrame {
-    /// First frame on connect: protocol version + current screen size.
-    /// The client MUST check `version == PROTOCOL_VERSION`.
-    Hello { version: u32, width: u16, height: u16 },
+    /// First frame on connect: protocol version + current screen size +
+    /// the server's active theme. The client MUST check
+    /// `version == PROTOCOL_VERSION`, and MUST render from `theme` —
+    /// never from its own config default, which may not match.
+    Hello {
+        version: u32,
+        width: u16,
+        height: u16,
+        theme: ThemeId,
+    },
     /// Authentication succeeded; screen streaming begins.
     AuthOk,
     /// Authentication failed; the server closes the connection after this.
@@ -166,7 +180,9 @@ mod tests {
 
     #[test]
     fn protocol_version_is_current() {
-        assert_eq!(PROTOCOL_VERSION, 3);
+        // Bumped for the theme-carrying Hello frame; update deliberately,
+        // never to make the suite green.
+        assert_eq!(PROTOCOL_VERSION, 4);
     }
 
     #[test]

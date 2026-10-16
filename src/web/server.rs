@@ -542,6 +542,9 @@ fn handle_websocket(
             version: PROTOCOL_VERSION,
             width,
             height,
+            // The active theme rides the handshake: the client renders
+            // from this, never from its own config default.
+            theme: theme.unwrap_or(crate::config::theme::THEME),
         },
     )?;
 

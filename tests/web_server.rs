@@ -4,6 +4,7 @@
 //! a server bound to 127.0.0.1:0. No browser needed.
 
 use erax::cli::{Invocation, InvocationMode, SedOptions};
+use erax::terminal::theme::ThemeId;
 use erax::web::protocol::*;
 use erax::web::server::{bind_server, serve};
 use std::net::TcpStream;
@@ -22,11 +23,11 @@ fn set_timeout(ws: &mut ClientWs, timeout: Option<Duration>) {
     }
 }
 
-fn test_invocation() -> Invocation {
+fn test_invocation_with_theme(theme: Option<ThemeId>) -> Invocation {
     Invocation {
         mode: InvocationMode::WebServer,
         files: vec![],
-        theme: None,
+        theme,
         wrap: None,
         sed: SedOptions::default(),
         web_bind: "127.0.0.1:0".to_string(),
@@ -36,10 +37,16 @@ fn test_invocation() -> Invocation {
 
 /// Start a server in the background; return (addr, token).
 fn start_server() -> (std::net::SocketAddr, String) {
+    start_server_with_theme(None)
+}
+
+fn start_server_with_theme(
+    theme: Option<ThemeId>,
+) -> (std::net::SocketAddr, String) {
     let server = bind_server("127.0.0.1:0", false).expect("bind failed");
     let addr = server.addr;
     let token = server.token.clone();
-    let inv = test_invocation();
+    let inv = test_invocation_with_theme(theme);
     std::thread::spawn(move || serve(server, &inv));
     // Give the accept loop a moment to start.
     std::thread::sleep(Duration::from_millis(100));
@@ -99,6 +106,27 @@ fn hello_carries_protocol_version() {
         other => panic!("expected Hello, got {other:?}"),
     }
     // Don't auth; just close.
+}
+
+#[test]
+fn hello_carries_active_theme() {
+    // The server's active theme (invocation override included) rides the
+    // handshake: the client's presentation core renders clear color,
+    // out-of-grid background, and effect signing from it — never from
+    // the client's own config default, which may not match.
+    for override_theme in [None, Some(ThemeId::Dracula)] {
+        let (addr, _token) = start_server_with_theme(override_theme);
+        let (mut ws, _) = connect(ws_url(&addr)).expect("connect failed");
+        match read_server_frame(&mut ws) {
+            ServerFrame::Hello { theme, .. } => assert_eq!(
+                theme,
+                override_theme.unwrap_or(erax::config::theme::THEME),
+                "Hello must carry the server's active theme id"
+            ),
+            other => panic!("expected Hello, got {other:?}"),
+        }
+        // Don't auth; just close.
+    }
 }
 
 #[test]

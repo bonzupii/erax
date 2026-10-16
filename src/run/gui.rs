@@ -186,7 +186,7 @@ impl ApplicationHandler for GuiApp {
                         .map(|w| w.scale_factor() as f32)
                         .unwrap_or(1.0);
                     renderer.set_cursor(self.display.cursor_style, dpr);
-                    match renderer.render(&self.display.back_buffer) {
+                    match renderer.render(&self.display.back_buffer, &self.display.theme) {
                         Ok(_) => {}
                         Err(crate::gui::RenderError::SurfaceLost) => {
                             let size = renderer.size();
