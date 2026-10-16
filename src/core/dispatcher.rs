@@ -399,11 +399,12 @@ mod tests {
     fn test_nested_macro_execution_is_rejected() {
         let mut app = setup_test_app();
         // Recording execute-macro inside a macro, then replaying, must not
-        // recurse: the nested execution is rejected with a message.
+        // recurse: the nested execution is rejected (NotHandled), which
+        // halts the replay without treating it as a command failure.
         dispatch(&mut app, Command::BeginMacro, 1);
         dispatch(&mut app, Command::ExecuteMacro, 1);
         dispatch(&mut app, Command::EndMacro, 1);
         let result = dispatch(&mut app, Command::ExecuteMacro, 1);
-        assert!(matches!(result, DispatchResult::Success | DispatchResult::Info(_)));
+        assert!(matches!(result, DispatchResult::NotHandled));
     }
 }
