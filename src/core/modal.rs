@@ -2272,6 +2272,9 @@ impl ModalEngine {
                 if let Some(buffer) = app.active_buffer_mut() {
                     buffer.insert(pos, text);
                 }
+                // The cursor ends after the inserted text, as if typed.
+                let end = pos + text.len();
+                move_cursor_to_byte(app, end);
                 ensure_visible(app);
                 ModalOutcome::Consumed
             }
@@ -2291,6 +2294,7 @@ impl ModalEngine {
                     if let Some(buffer) = app.active_buffer_mut() {
                         buffer.insert(pos, &inserted);
                     }
+                    move_cursor_to_byte(app, pos + inserted.len());
                     ensure_visible(app);
                 }
                 // The replay itself becomes the repeatable change.
@@ -2380,6 +2384,22 @@ fn cursor_xy(app: &EditorApp) -> (usize, usize) {
 }
 
 /// Byte offset of the cursor in the active buffer.
+/// Move the active window's cursor to a buffer byte offset.
+fn move_cursor_to_byte(app: &mut EditorApp, byte: usize) {
+    let window_id = app.active_window;
+    let buffer_id = match app.windows.get(&window_id) {
+        Some(w) => w.buffer_id,
+        None => return,
+    };
+    // Disjoint field borrows: the window and its buffer.
+    if let (Some(window), Some(buffer)) = (
+        app.windows.get_mut(&window_id),
+        app.buffers.get(&buffer_id),
+    ) {
+        window.set_cursor_to_byte(buffer, byte);
+    }
+}
+
 fn cursor_byte(app: &EditorApp) -> usize {
     let window = match app.active_window_ref() {
         Some(w) => w,
