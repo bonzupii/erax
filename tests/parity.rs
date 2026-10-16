@@ -18,7 +18,7 @@
 //!
 //! - KeyTrie: every binding's key sequence through `process_terminal_event`
 //!   (the TUI event handler, await-longer leaves settled like the run
-//!   loop does), and every command typed by name through M-x the same way.
+//!   loop does), and every command typed by name through run-command the same way.
 //! - Modal: Normal-mode bindings and the `:` line, driven through the
 //!   real engine (`handle_key_inner`) in `src/core/modal.rs`
 //!   `parity_end_to_end` — the public `handle_key` passes a compile-time
@@ -243,7 +243,7 @@ fn standard_bindings_drive_real_dispatch() {
 
 #[test]
 fn mx_reaches_every_command_end_to_end() {
-    check_named_facility(KEYBINDINGS, "keytrie", "M-x");
+    check_named_facility(KEYBINDINGS, "keytrie", "run-command");
 }
 
 #[test]
@@ -255,21 +255,21 @@ fn palette_reaches_every_command_end_to_end() {
 /// through M-x, must raise the exit signal out of the event-handler
 /// layer — not merely dispatch `Exit` somewhere unobserved.
 #[test]
-fn mx_exit_commands_propagate_exit() {
-    for name in ["exit-erax", "exit-without-save", "exit-and-save"] {
+fn named_exit_commands_propagate_exit() {
+    for name in ["quit", "quit-without-saving", "quit-and-save"] {
         let mut rig = rig_for(KEYBINDINGS);
         let facility_keys: Vec<KeyPress> = named_facility_binding(KEYBINDINGS).keys.to_vec();
         let mut exit = feed(&mut rig, &facility_keys);
         assert!(
             rig.app.focus_manager.current_state().is_some(),
-            "M-x must open the minibuffer before typing {name}"
+            "run-command must open the minibuffer before typing {name}"
         );
         if !exit {
             exit = type_named(&mut rig, name);
         }
         assert!(
             exit,
-            "M-x {name} must propagate the exit signal out of the event handler"
+            "run-command {name} must propagate the exit signal out of the event handler"
         );
     }
 }

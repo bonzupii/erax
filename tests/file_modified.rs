@@ -268,19 +268,19 @@ fn newer_external_change_rearms_the_question() {
 
 #[test]
 fn palette_save_buffer_raises_the_real_question() {
-    // The Standard palette / M-x path goes through the prompt handler.
+    // The Standard palette / run-command path goes through the prompt handler.
     let mut fx = fixture("original\n");
     external_write(&fx.path, "changed\n");
     let exit = erax::core::prompt::handle_prompt_action(
         &mut fx.app,
         InputAction::ExecuteNamedCommand,
-        "save-buffer".to_string(),
+        "save".to_string(),
     )
     .expect("prompt handler does not error");
     assert!(!exit);
     assert!(
         confirm_pending(&fx),
-        "M-x save-buffer must raise the real question"
+        "run-command save must raise the reload question"
     );
     feed(&mut fx, KeyPress::plain(Key::Char('y')));
     assert_eq!(buffer_text(&fx.app, fx.bid), "changed\n");

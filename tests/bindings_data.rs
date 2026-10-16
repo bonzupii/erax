@@ -37,8 +37,15 @@ const ALLOWLIST: &[(&str, usize, &str)] = &[
     (
         "src/core/prompt.rs",
         1,
-        "the M-x named-command facility resolves names through \
+        "the run-command named-command facility resolves names through \
          Command::from_name",
+    ),
+    (
+        "src/core/commands/control.rs",
+        4,
+        "the exit-refused message and the run-command prompt derive \
+         command names via Command::name(); derivation from the typed \
+         table, never hardcoded name strings",
     ),
     (
         "src/core/menu.rs",
@@ -53,7 +60,7 @@ const ALLOWLIST: &[(&str, usize, &str)] = &[
     ),
     (
         "src/core/dispatcher.rs",
-        125,
+        128,
         "the dispatcher: the one place mapping commands to implementations",
     ),
 ];
@@ -367,7 +374,7 @@ fn allowlist_covers_every_config_table_consumer() {
             "{consumer} must read its mappings from the config tables"
         );
     }
-    // The M-x facility's mapping is the typed command name table itself.
+    // The run-command facility's mapping is the typed command name table itself.
     let prompt = std::fs::read_to_string(root.join("src/core/prompt.rs")).expect("readable");
     assert!(
         prompt.contains("Command::from_name"),

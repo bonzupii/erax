@@ -452,7 +452,7 @@ pub const STANDARD_BINDINGS: &[KeyBinding] = &[
     KeyBinding { keys: &[ctrl('f')], command: Command::SearchForward, policy: PrefixPolicy::ExecuteLeaf },
     KeyBinding { keys: &[ctrl('h')], command: Command::QueryReplace, policy: PrefixPolicy::ExecuteLeaf },
     // -- command palette: the Standard model's named-command facility,
-    // the CUA-idiom counterpart to Emacs M-x and Vim `:` --
+    // the CUA-idiom counterpart to the run-command prompt and Vim `:` --
     KeyBinding { keys: &[KeyPress::mods(Key::Char('p'), true, false, true)], command: Command::ExecuteNamedCommand, policy: PrefixPolicy::ExecuteLeaf },
     // -- select all --
     KeyBinding { keys: &[ctrl('a')], command: Command::MarkWholeBuffer, policy: PrefixPolicy::ExecuteLeaf },
@@ -574,7 +574,7 @@ pub const DIFF_KEYS: &[(KeyPress, Command)] = &[
 pub const FACILITY_BINDINGS: &[(InputModel, &str, &[Command])] = &[
     (
         InputModel::KeyTrie,
-        "M-x",
+        "run-command",
         &[
             Command::BufferInfo,
             Command::DeleteWindow,

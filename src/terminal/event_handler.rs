@@ -570,7 +570,7 @@ fn handle_focus_input(
                 app.focus_manager.pop();
 
                 // The prompt handler reports exit through Ok(true)
-                // (M-x exit-erax, palette quit, vim `:` ex commands that
+                // (run-command quit, palette quit, vim `:` ex commands that
                 // dispatch Exit). Checking only Err discarded it, so those
                 // commands ran, requested exit, and the editor stayed open.
                 match crate::core::prompt::handle_prompt_action(app, action, input) {

@@ -468,7 +468,8 @@ impl ModalEngine {
 
     /// Run a dispatch and map `Exit` to the modal outcome. Informational
     /// results surface as the app message — a `:`-invoked command must show
-    /// its output just like M-x does. Prompt-requesting results enter the
+    /// its output just like the run-command prompt does. Prompt-requesting
+    /// results enter the
     /// focus manager like the TUI event loop does, so `/` and `?` start
     /// incremental search instead of dying silently.
     fn run(&mut self, app: &mut EditorApp, cmd: Command, count: usize) -> ModalOutcome {
@@ -3671,7 +3672,7 @@ mod tests {
     fn cmdline_resolves_named_commands() {
         let mut app = app_with("hello world\n");
         // A typed command with no vim default binding runs through `:`.
-        let keys: Vec<KeyPress> = ":count-words"
+        let keys: Vec<KeyPress> = ":word-count"
             .chars()
             .map(kp)
             .chain(std::iter::once(enter()))

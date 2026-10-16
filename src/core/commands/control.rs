@@ -5,20 +5,25 @@ use crate::core::dispatcher::{DispatchResult, InputAction};
 
 pub fn exit_eras(app: &mut EditorApp, _count: usize) -> DispatchResult {
     // L-008: never silently discard unsaved work. The pristine docs promised
-    // `^X^C` prompts on unsaved work; the old default binding pointed at
-    // `exit-without-save` instead, quitting with data loss. Now `^X^C`
-    // targets this command, which refuses to exit while modified buffers
-    // exist and says exactly what to do instead. Explicit discard remains
-    // available as `exit-without-save` (e.g. vim's `:q!`).
+    // Ctrl+x-Ctrl+c prompts on unsaved work; the old default binding pointed
+    // at `quit-without-saving` instead, quitting with data loss. Now
+    // Ctrl+x-Ctrl+c targets this command, which refuses to exit while
+    // modified buffers exist and says exactly what to do instead. Explicit
+    // discard remains available as `quit-without-saving` (e.g. vim's `:q!`).
     let modified = app.buffers.values().filter(|b| b.modified).count();
     if modified == 0 {
         return DispatchResult::Exit;
     }
+    // The alternatives name the commands by their standard names, derived
+    // from the same table the prompt and menus use: no second copy to drift.
     app.message = Some(format!(
         "{modified} modified buffer{} not saved; exit refused. \
-         Save them (save-buffer) or exit-and-save, \
-         or exit-without-save to discard.",
-        if modified == 1 { "" } else { "s" }
+         Save them ({}) or {}, \
+         or {} to discard.",
+        if modified == 1 { "" } else { "s" },
+        crate::core::command::Command::SaveBuffer.name(),
+        crate::core::command::Command::ExitAndSave.name(),
+        crate::core::command::Command::ExitWithoutSave.name(),
     ));
     DispatchResult::Success
 }
@@ -77,8 +82,10 @@ pub fn describe_key(_app: &mut EditorApp, _count: usize) -> DispatchResult {
     }
 
 pub fn execute_named_command(_app: &mut EditorApp, _count: usize) -> DispatchResult {
+        // The prompt is the command's own standard name: no model
+        // vocabulary ("M-x", ":") leaks into the product surface.
         DispatchResult::NeedsInput {
-            prompt: "M-x ".to_string(),
+            prompt: format!("{}: ", crate::core::command::Command::ExecuteNamedCommand.name()),
             action: InputAction::ExecuteNamedCommand,
         }
     }
@@ -112,7 +119,7 @@ mod tests {
             "message names the problem, got: {message}"
         );
         assert!(
-            message.contains("exit-without-save"),
+            message.contains("quit-without-saving"),
             "message names the explicit-discard alternative, got: {message}"
         );
     }

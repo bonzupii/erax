@@ -90,7 +90,14 @@ pub fn dispatch(app: &mut EditorApp, command: Command, count: usize) -> Dispatch
 
     let result = execute(app, command, count);
 
-    if result == DispatchResult::Success && !command.name().starts_with("kill-") {
+    // Consecutive cut commands append to one kill-ring entry; any other
+    // successful command resets the flag. Matched on the variants, not on
+    // name text, so a rename can never silently change the set.
+    let is_cut = matches!(
+        command,
+        Command::KillToEndOfLine | Command::KillWord | Command::KillRegion
+    );
+    if result == DispatchResult::Success && !is_cut {
         app.reset_kill_flag();
     }
 
