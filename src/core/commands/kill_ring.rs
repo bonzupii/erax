@@ -33,16 +33,52 @@ pub fn kill_to_end_of_line(app: &mut EditorApp, _count: usize) -> DispatchResult
 
             // Now we can safely modify app
             if let Some((kill_text, byte_pos)) = kill_data {
+                // At end of line the kill is the line break itself:
+                // uemacs kills it (chunk = 1), joining the lines. The
+                // old code killed nothing here, so lines could never
+                // be joined. The break is read from the buffer (a CRLF
+                // file's break is two bytes), not assumed to be "\n".
+                let (kill_text, kill_len) = if kill_text.is_empty() {
+                    let newline_text: Option<String> = app
+                        .windows
+                        .get(&active_window_id)
+                        .and_then(|w| {
+                            let b = app.buffers.get(&buffer_id)?;
+                            let next_start = b.line_to_byte(w.cursor_y + 1)?;
+                            Some(b.get_range_as_string(byte_pos, next_start - byte_pos))
+                        });
+                    match newline_text {
+                        // No next line: nowhere to join to, a true
+                        // no-op like uemacs at end of buffer.
+                        None => (kill_text, 0),
+                        Some(text) => {
+                            let len = text.len();
+                            (text, len)
+                        }
+                    }
+                } else {
+                    let len = kill_text.len();
+                    (kill_text, len)
+                };
                 // Kill the text (add to kill ring)
                 let append = app.last_command_was_kill;
-                app.kill_ring.push(&kill_text, append);
+                let stored = app.kill_ring.push(&kill_text, append);
                 app.set_kill_flag();
 
                 // Delete the text from buffer using clean Buffer API
-                if !kill_text.is_empty()
+                if kill_len > 0
                     && let Some(buffer) = app.buffers.get_mut(&buffer_id) {
-                        buffer.delete(byte_pos, kill_text.len());
+                        buffer.delete(byte_pos, kill_len);
                     }
+
+                if !stored {
+                    return DispatchResult::Info(
+                        crate::core::kill_ring::KillRing::oversize_report(
+                            kill_text.len(),
+                            true,
+                        ),
+                    );
+                }
             }
         }
         DispatchResult::Success
@@ -83,7 +119,7 @@ pub fn kill_word(app: &mut EditorApp, _count: usize) -> DispatchResult {
 
             if let Some((text_to_kill, start_byte, _, _)) = kill_data {
                 let append = app.last_command_was_kill;
-                app.kill_ring.push(&text_to_kill, append);
+                let stored = app.kill_ring.push(&text_to_kill, append);
                 app.set_kill_flag();
 
                 if !text_to_kill.is_empty()
@@ -91,6 +127,14 @@ pub fn kill_word(app: &mut EditorApp, _count: usize) -> DispatchResult {
                         buffer.delete(start_byte, text_to_kill.len());
                     }
                     // Cursor position stays the same for forward kill
+                if !stored {
+                    return DispatchResult::Info(
+                        crate::core::kill_ring::KillRing::oversize_report(
+                            text_to_kill.len(),
+                            true,
+                        ),
+                    );
+                }
             }
         }
         DispatchResult::Success
@@ -126,7 +170,7 @@ pub fn backward_kill_word(app: &mut EditorApp, _count: usize) -> DispatchResult 
 
             if let Some((text_to_kill, start_byte, _end_byte)) = kill_data {
                 let append = app.last_command_was_kill;
-                app.kill_ring.push(&text_to_kill, append);
+                let stored = app.kill_ring.push(&text_to_kill, append);
                 app.set_kill_flag();
 
                 if !text_to_kill.is_empty() {
@@ -148,6 +192,14 @@ pub fn backward_kill_word(app: &mut EditorApp, _count: usize) -> DispatchResult 
                                     );
                                 }
                         }
+                    if !stored {
+                        return DispatchResult::Info(
+                            crate::core::kill_ring::KillRing::oversize_report(
+                                text_to_kill.len(),
+                                true,
+                            ),
+                        );
+                    }
                 }
             }
         }
