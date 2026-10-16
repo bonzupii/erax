@@ -84,6 +84,15 @@ pub enum MacroStep {
 /// Records the step when a macro is recording, executes it through the
 /// exhaustive match below, and maintains the kill-ring/yank chaining flags.
 pub fn dispatch(app: &mut EditorApp, command: Command, count: usize) -> DispatchResult {
+    // Universal argument: a pending C-u prefix supplies the count for
+    // the next non-prefix command, then clears. The prefix command
+    // itself accumulates rather than consuming.
+    let count = if matches!(command, Command::UniversalArgument) {
+        count
+    } else {
+        app.universal_argument.take().unwrap_or(count)
+    };
+
     if app.is_recording_macro
         && !matches!(command, Command::BeginMacro | Command::EndMacro)
     {
@@ -350,6 +359,33 @@ mod tests {
         let mut app = setup_test_app();
         let result = dispatch(&mut app, Command::ForwardCharacter, 1);
         assert_eq!(result, DispatchResult::Success);
+    }
+
+    #[test]
+    fn universal_argument_supplies_the_next_commands_count() {
+        // X-20: C-u accumulated state nothing read. The dispatcher now
+        // consumes it as the count for the next non-prefix command.
+        let mut app = setup_test_app();
+        app.active_buffer_mut().unwrap().insert(0, "hello world");
+        dispatch(&mut app, Command::UniversalArgument, 1);
+        assert_eq!(app.universal_argument, Some(4));
+        dispatch(&mut app, Command::ForwardCharacter, 1);
+        // The count came from the prefix (4), not the passed 1.
+        let window = app.active_window_ref().unwrap();
+        assert_eq!(window.cursor_x, 4);
+        // Consumed: the next command uses its own count.
+        assert_eq!(app.universal_argument, None);
+        dispatch(&mut app, Command::ForwardCharacter, 1);
+        let window = app.active_window_ref().unwrap();
+        assert_eq!(window.cursor_x, 5);
+    }
+
+    #[test]
+    fn universal_argument_accumulates_across_prefixes() {
+        let mut app = setup_test_app();
+        dispatch(&mut app, Command::UniversalArgument, 1);
+        dispatch(&mut app, Command::UniversalArgument, 1);
+        assert_eq!(app.universal_argument, Some(16));
     }
 
     #[test]
