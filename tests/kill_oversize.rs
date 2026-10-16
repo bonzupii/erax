@@ -21,7 +21,7 @@ fn kill_region_reports_oversize_instead_of_claiming_killed() {
     let mut app = app_with(&big);
     // Mark at (0,0), cursor at end: the region is the whole text.
     if let Some(window) = app.windows.get_mut(&app.active_window) {
-        window.mark = Some((0, 0));
+        window.selection_manager.set_mark(0);
         window.cursor_x = big.chars().count();
     }
     let result = dispatch(&mut app, Command::KillRegion, 1);

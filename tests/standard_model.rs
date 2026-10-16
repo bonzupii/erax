@@ -57,11 +57,20 @@ fn set_cursor(app: &mut EditorApp, x: usize, y: usize) {
 
 /// Set the mark (selection anchor) directly; cursor stays where it is.
 fn set_mark(app: &mut EditorApp, x: usize, y: usize) {
-    app.active_window_mut().unwrap().mark = Some((x, y));
+    let byte = {
+        let w = app.active_window_ref().unwrap();
+        let b = app.active_buffer().unwrap();
+        w.get_byte_offset_at(b, x, y).unwrap_or(0)
+    };
+    app.active_window_mut()
+        .unwrap()
+        .selection_manager
+        .set_mark(byte);
 }
 
-fn mark(app: &EditorApp) -> Option<(usize, usize)> {
-    app.active_window_ref().unwrap().mark
+/// The mark as a buffer byte offset.
+fn mark(app: &EditorApp) -> Option<usize> {
+    app.active_window_ref().unwrap().selection_manager.mark
 }
 
 /// KeyBindingManager loaded with the Standard (CUA) binding table.
@@ -276,7 +285,7 @@ fn mark_whole_buffer_selects_everything() {
     let mut app = app_with("hello\nworld\n");
     dispatch(&mut app, Command::MarkWholeBuffer, 1);
     // Mark anchored at buffer start, cursor at buffer end.
-    assert_eq!(mark(&app), Some((0, 0)));
+    assert_eq!(mark(&app), Some(0));
     assert_eq!(cursor(&app), (0, 2));
     // The whole buffer is now the selection: Standard copy grabs it all.
     copy_region_in_model(&mut app, 1, InputModel::Standard);
@@ -292,42 +301,42 @@ fn extend_selection_all_directions() {
         &mut standard_manager(),
         KeyPress::shift(Key::Right),
     );
-    assert_eq!(mark(&app), Some((0, 0)));
+    assert_eq!(mark(&app), Some(0));
     assert_eq!(cursor(&app), (1, 0));
 
     // Left (anchor stays where the cursor was when the shift press started).
     let mut app = app_with("hello\n");
     set_cursor(&mut app, 3, 0);
     press_cmd(&mut app, &mut standard_manager(), KeyPress::shift(Key::Left));
-    assert_eq!(mark(&app), Some((3, 0)));
+    assert_eq!(mark(&app), Some(3));
     assert_eq!(cursor(&app), (2, 0));
 
     // Down.
     let mut app = app_with("ab\ncd\n");
     set_cursor(&mut app, 1, 0);
     press_cmd(&mut app, &mut standard_manager(), KeyPress::shift(Key::Down));
-    assert_eq!(mark(&app), Some((1, 0)));
+    assert_eq!(mark(&app), Some(1));
     assert_eq!(cursor(&app), (1, 1));
 
     // Up.
     let mut app = app_with("ab\ncd\n");
     set_cursor(&mut app, 1, 1);
     press_cmd(&mut app, &mut standard_manager(), KeyPress::shift(Key::Up));
-    assert_eq!(mark(&app), Some((1, 1)));
+    assert_eq!(mark(&app), Some(4)); // "ab\n" + 1
     assert_eq!(cursor(&app), (1, 0));
 
     // Home: Shift+Home extends to the smart-home position.
     let mut app = app_with("    foo\n");
     set_cursor(&mut app, 4, 0);
     press_cmd(&mut app, &mut standard_manager(), KeyPress::shift(Key::Home));
-    assert_eq!(mark(&app), Some((4, 0)));
+    assert_eq!(mark(&app), Some(4));
     assert_eq!(cursor(&app), (0, 0));
 
     // End.
     let mut app = app_with("hello\n");
     set_cursor(&mut app, 2, 0);
     press_cmd(&mut app, &mut standard_manager(), KeyPress::shift(Key::End));
-    assert_eq!(mark(&app), Some((2, 0)));
+    assert_eq!(mark(&app), Some(2));
     assert_eq!(cursor(&app), (5, 0));
 }
 
@@ -377,7 +386,7 @@ fn keytrie_typing_preserves_mark() {
     set_cursor(&mut app, 3, 0);
     dispatch_insert_in_model(&mut app, 'X', 1, InputModel::KeyTrie);
     assert_eq!(text(&app), "helXlo");
-    assert_eq!(mark(&app), Some((0, 0)));
+    assert_eq!(mark(&app), Some(0));
 }
 
 #[test]
@@ -387,7 +396,7 @@ fn modal_typing_preserves_mark() {
     set_cursor(&mut app, 3, 0);
     dispatch_insert_in_model(&mut app, 'X', 1, InputModel::Modal);
     assert_eq!(text(&app), "helXlo");
-    assert_eq!(mark(&app), Some((0, 0)));
+    assert_eq!(mark(&app), Some(0));
 }
 
 #[test]
@@ -411,7 +420,7 @@ fn keytrie_backspace_preserves_mark_behavior() {
     set_cursor(&mut app, 3, 0);
     delete_previous_character_in_model(&mut app, 1, InputModel::KeyTrie);
     assert_eq!(text(&app), "helo");
-    assert_eq!(mark(&app), Some((0, 0)));
+    assert_eq!(mark(&app), Some(0));
 }
 
 #[test]
@@ -536,7 +545,7 @@ fn standard_cut_paste_round_trip_via_bindings() {
     for _ in 0..5 {
         press_cmd(&mut app, &mut mgr, KeyPress::shift(Key::Left));
     }
-    assert_eq!(mark(&app), Some((5, 0)));
+    assert_eq!(mark(&app), Some(5));
     assert_eq!(cursor(&app), (0, 0));
     kill_region_in_model(&mut app, 1, InputModel::Standard); // Ctrl+X
     assert_eq!(text(&app), " world");

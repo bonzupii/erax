@@ -64,10 +64,13 @@ mod tests {
         assert!(!plain.contains("selected"), "{plain}");
         app.active_buffer_mut().unwrap().insert(0, "hello");
         {
+            // Mark at byte 0, cursor at byte 5: the selection derives
+            // from the mark. The window starts with the cursor at 0,
+            // so move it to the end of "hello" first.
             let window_id = app.active_window;
             let window = app.windows.get_mut(&window_id).unwrap();
-            window.selection_manager.primary =
-                Some(crate::core::selection::Selection::range(0, 5));
+            window.cursor_x = 5;
+            window.selection_manager.set_mark(0);
         }
         let selected = info_text(&mut app);
         assert!(selected.contains("5 bytes selected"), "{selected}");

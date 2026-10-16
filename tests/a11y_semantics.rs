@@ -130,8 +130,13 @@ fn selection_annotation_reflects_the_selection_manager() {
         .any(|a| matches!(a.kind, AnnotationKind::Selection)));
 
     let window_id = app.active_window;
-    app.windows.get_mut(&window_id).unwrap().selection_manager.primary =
-        Some(erax::core::selection::Selection::range(0, 5));
+    // Mark at byte 0, cursor at byte 5: the selection derives from the
+    // mark. Move the cursor off the mark first.
+    {
+        let window = app.windows.get_mut(&window_id).unwrap();
+        window.cursor_x = 5;
+        window.selection_manager.set_mark(0);
+    }
 
     let snap = capture(&app).unwrap();
     assert_eq!(
@@ -152,7 +157,7 @@ fn selection_annotation_reflects_the_selection_manager() {
         .get_mut(&window_id)
         .unwrap()
         .selection_manager
-        .primary = None;
+        .clear_mark();
     let snap = capture(&app).unwrap();
     assert!(snap.selection.is_none());
     assert!(!snap
@@ -165,8 +170,12 @@ fn selection_annotation_reflects_the_selection_manager() {
 fn mark_annotation_is_a_point_at_the_mark_byte() {
     let mut app = app_with("ab\ncd\n");
     let window_id = app.active_window;
-    // Mark at grapheme (1, 1): line 2 (0-based 1), column 1 -> byte 4.
-    app.windows.get_mut(&window_id).unwrap().mark = Some((1, 1));
+    // Mark at byte 4: line 2 (0-based 1), column 1 of "ab\ncd\n".
+    app.windows
+        .get_mut(&window_id)
+        .unwrap()
+        .selection_manager
+        .set_mark(4);
     let snap = capture(&app).unwrap();
     assert_eq!(snap.mark, Some(4));
     let marks: Vec<_> = snap

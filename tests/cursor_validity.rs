@@ -66,31 +66,42 @@ fn dispatch_reconciles_an_invalid_cursor() {
 }
 
 #[test]
-fn deleted_line_drops_orphaned_mark() {
+fn deleted_line_keeps_mark_within_buffer() {
     let mut app = app_with("one\ntwo\nthree\n");
-    // Mark on line 1 ("two").
+    // Mark at the start of line 1 ("two"): byte 4.
     dispatch(&mut app, Command::NextLine, 1);
     dispatch(&mut app, Command::SetMark, 1);
     {
         let window = app.windows.get(&app.active_window).expect("active window");
-        assert_eq!(window.mark, Some((0, 1)));
+        assert_eq!(window.selection_manager.mark, Some(4));
     }
     // Delete the marked line through the dispatch seam.
     dispatch(&mut app, Command::KillToEndOfLine, 1);
     dispatch(&mut app, Command::DeleteNextCharacter, 1);
+    // The mark is a byte offset: it must never name a byte past the
+    // end of the buffer, even when its line was deleted.
     let window = app.windows.get(&app.active_window).expect("active window");
-    match window.mark {
-        Some((mx, my)) => {
-            let buffer = app.active_buffer().expect("buffer");
-            let line = buffer.line(my).expect("marked line resolves");
-            assert!(
-                mx <= erax::core::utf8::grapheme_count(&line),
-                "mark left stale: {:?}",
-                window.mark
-            );
-        }
-        None => {}
+    let buffer = app.active_buffer().expect("buffer");
+    if let Some(mark_byte) = window.selection_manager.mark {
+        assert!(
+            mark_byte <= buffer.len(),
+            "mark left stale: {mark_byte} > {}",
+            buffer.len()
+        );
     }
+}
+
+#[test]
+fn mark_past_end_clamps_to_buffer_end() {
+    let mut app = app_with("abc");
+    {
+        let window = app.windows.get_mut(&app.active_window).expect("active window");
+        window.selection_manager.set_mark(999);
+    }
+    // Any dispatch runs the reconciliation seam.
+    dispatch(&mut app, Command::ForwardCharacter, 1);
+    let window = app.windows.get(&app.active_window).expect("active window");
+    assert_eq!(window.selection_manager.mark, Some(3));
 }
 
 #[test]
