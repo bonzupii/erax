@@ -2316,7 +2316,19 @@ impl ModalEngine {
                     if let Some(buffer) = app.active_buffer_mut() {
                         buffer.insert(pos, &inserted);
                     }
-                    move_cursor_to_byte(app, pos + inserted.len());
+                    // Vim leaves the cursor on the last inserted
+                    // character for a repeated change (cf. the plain
+                    // Insert arm, which moves past the text).
+                    let last_start = pos
+                        + crate::core::utf8::GraphemeIterator::new(&inserted)
+                            .scan(0usize, |offset, g| {
+                                let start = *offset;
+                                *offset += g.len();
+                                Some(start)
+                            })
+                            .last()
+                            .unwrap_or(0);
+                    move_cursor_to_byte(app, last_start);
                     ensure_visible(app);
                 }
                 // The replay itself becomes the repeatable change.
