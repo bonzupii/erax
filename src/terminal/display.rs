@@ -373,6 +373,11 @@ impl Display {
 
     /// Render the editor state to the terminal (double-buffering logic only)
     pub fn render(&mut self, app: &mut EditorApp) -> Result<(), Box<dyn std::error::Error>> {
+        // Deferred encoding notices (lazy UTF-8 validation on mapped
+        // buffers) surface here like open-time notices. This is the one
+        // per-frame choke point: the TUI, the native GUI, and the web
+        // session all build their frames through this render.
+        app.poll_deferred_notices();
         // Sync message and focus state from EditorApp
         if let Some(msg) = &app.message {
             if self.message != *msg {

@@ -256,6 +256,32 @@ impl EditorApp {
         self.buffers.get_mut(&buffer_id)
     }
 
+    /// Surface deferred encoding notices on the message line. Mapped
+    /// buffers validate UTF-8 lazily, so a file that proves invalid deep
+    /// inside reports here — once per buffer — instead of at open. Every
+    /// frontend calls this at the top of its frame build (see
+    /// `Display::render`), so a notice appears at most one frame after
+    /// the read that discovered it.
+    pub fn poll_deferred_notices(&mut self) {
+        let mut notices = Vec::new();
+        for buffer in self.buffers.values() {
+            if let Some(notice) = buffer.take_encoding_notice() {
+                notices.push(notice);
+            }
+        }
+        if notices.is_empty() {
+            return;
+        }
+        let joined = notices.join("; ");
+        match &mut self.message {
+            Some(existing) => {
+                existing.push_str("; ");
+                existing.push_str(&joined);
+            }
+            None => self.message = Some(joined),
+        }
+    }
+
     /// Get the active window
     pub fn active_window_ref(&self) -> Option<&Window> {
         self.windows.get(&self.active_window)

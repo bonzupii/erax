@@ -446,6 +446,11 @@ pub enum DetectionMethod {
     Bom,
     /// The bytes are valid UTF-8 (byte-exact, no loss possible).
     Utf8Validation,
+    /// The leading probe window validated as UTF-8; the tail is read
+    /// lazily and validated on first text access (see
+    /// [`Buffer::take_encoding_notice`]). The probe is the whole file for
+    /// files smaller than the window.
+    Utf8Probe,
     /// NUL-byte position pattern matched BOM-less UTF-16/32.
     NulPattern,
     /// The user's locale suggested a legacy encoding (fallback only).
@@ -1050,20 +1055,43 @@ pub fn buffer_from_bytes(path: PathBuf, bytes: Vec<u8>) -> LoadedBuffer {
     }
 }
 
-/// Load a file like [`Buffer::from_file`], but instead of failing on
-/// non-UTF-8 bytes, detect the encoding and return a buffer tagged with it.
-///
-/// * Valid UTF-8 (the common case) behaves exactly like `from_file`, plus a
-///   UTF-8 BOM is reported when present.
-/// * Anything else goes through [`buffer_from_bytes`]: the buffer holds the
-///   decoded text for display/editing, keeps the original bytes for
-///   byte-exact save while unmodified, and reports the detection
-///   (method + confidence) so the UI can show it and offer an explicit
-///   encoding override.
-///
-/// `LoadError::Io` and `LoadError::InvalidPath` pass through unchanged.
-pub fn load_file_with_encoding(path: impl AsRef<Path>) -> Result<LoadedBuffer, LoadError> {
-    match Buffer::from_file(path.as_ref()) {
+/// Leading bytes read to decide the open path. Sized to cover every
+/// deterministic detection stage: the BOM sniff needs 4 bytes and the
+/// NUL-pattern heuristic samples 32 KiB by design (`NUL_SAMPLE_LEN`);
+/// 64 KiB leaves margin for both. UTF-8 validation of the probe must not
+/// see a probe cut mid-code-point (`read_probe` trims to the boundary).
+/// The probe is O(1) in file size by construction.
+const PROBE_LEN: usize = 64 * 1024;
+
+/// Read the leading [`PROBE_LEN`] bytes of `path` (fewer for short files).
+/// A probe cut inside a multi-byte sequence is trimmed back to the last
+/// char boundary, so a valid file is never misjudged by the cut itself;
+/// only a genuinely incomplete trailing sequence (an invalid file) keeps
+/// the probe short. An incomplete sequence is distinguishable from an
+/// invalid one: `Utf8Error::error_len` is `None` only at the end of input.
+fn read_probe(path: &Path) -> Result<Vec<u8>, LoadError> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).map_err(LoadError::Io)?;
+    let mut probe = Vec::new();
+    file.take(PROBE_LEN as u64)
+        .read_to_end(&mut probe)
+        .map_err(LoadError::Io)?;
+    if let Err(e) = std::str::from_utf8(&probe)
+        && e.error_len().is_none()
+    {
+        probe.truncate(e.valid_up_to());
+    }
+    Ok(probe)
+}
+
+/// The old whole-file behavior, kept for the probe-driven rare path:
+/// non-UTF-8 content (BOM'd UTF-16/32, NUL-pattern hits, undecodable
+/// bytes) and zero-length files that still produce bytes (`/proc`-style
+/// regular files with `st_size == 0`). Reads the whole file exactly once,
+/// like before — this branch is taken on the probe's verdict, never
+/// speculatively.
+fn load_file_eager(path: &Path) -> Result<LoadedBuffer, LoadError> {
+    match Buffer::from_file(path) {
         Ok(buffer) => {
             // Valid UTF-8 by construction. `char_at` is boundary-safe, so
             // this BOM check cannot panic (unlike byte-slicing the rope).
@@ -1087,6 +1115,58 @@ pub fn load_file_with_encoding(path: impl AsRef<Path>) -> Result<LoadedBuffer, L
         Err(LoadError::InvalidUtf8 { path, bytes, .. }) => Ok(buffer_from_bytes(path, bytes)),
         Err(other) => Err(other),
     }
+}
+
+/// Load a file like [`Buffer::from_file`], but instead of failing on
+/// non-UTF-8 bytes, detect the encoding and return a buffer tagged with it.
+///
+/// Open-path selection is probe-driven and O(1) in file size:
+///
+/// * The probe validates as UTF-8 (the common case): the file opens mapped
+///   ([`Buffer::open_mapped`], fstat only). The tail is not validated at
+///   open; the first text read that meets an invalid sequence records it
+///   on the buffer and the app surfaces it on the message line via
+///   [`Buffer::take_encoding_notice`]. Byte-exact save needs no
+///   preservation copy: an unmodified mapped buffer streams the file's
+///   own bytes back.
+/// * Anything else (BOM'd UTF-16/32, NUL-pattern legacy encodings,
+///   undecodable bytes, zero-length files that still produce bytes):
+///   [`load_file_eager`] — the whole file is read once, exactly the old
+///   behavior, driven by the probe's verdict rather than speculation.
+///
+/// `LoadError::Io` and `LoadError::InvalidPath` pass through unchanged.
+pub fn load_file_with_encoding(path: impl AsRef<Path>) -> Result<LoadedBuffer, LoadError> {
+    let path = path.as_ref();
+    let validated_path =
+        crate::core::path::validate_existing_file(path).map_err(LoadError::InvalidPath)?;
+    let probe = read_probe(&validated_path)?;
+    // A zero-length stat that still produced probe bytes is a virtual
+    // file (`/proc`, sysfs): the mapped path would see length 0 and lose
+    // the content, so it goes eager like before.
+    let stat_len = std::fs::metadata(&validated_path)
+        .map_err(LoadError::Io)?
+        .len();
+    if stat_len == 0 && !probe.is_empty() {
+        return load_file_eager(&validated_path);
+    }
+    if detect(&probe).encoding != Encoding::Utf8 {
+        return load_file_eager(&validated_path);
+    }
+    let bom = probe.starts_with(Bom::Utf8.bytes()).then_some(Bom::Utf8);
+    // `open_mapped` marks the buffer `ProbeOnly`: only this probe was
+    // validated, the tail is checked lazily (see `Buffer::validity`).
+    let buffer = Buffer::open_mapped(&validated_path)?;
+    Ok(LoadedBuffer {
+        buffer,
+        detected: DetectedEncoding {
+            encoding: Encoding::Utf8,
+            bom,
+            method: DetectionMethod::Utf8Probe,
+            confidence: Confidence::High,
+        },
+        had_errors: false,
+        byte_exact: false,
+    })
 }
 
 #[cfg(test)]
@@ -1742,5 +1822,137 @@ mod tests {
         let d = detect(&wide);
         assert_eq!(d.encoding, Encoding::Utf16Le);
         assert_eq!(d.method, DetectionMethod::NulPattern);
+    }
+
+    // ---------------- probe-driven open path ----------------
+
+    #[test]
+    fn probe_utf8_small_file_opens_mapped() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path().join("small.txt");
+        std::fs::write(&p, b"hello\nworld\n").expect("write");
+        let l = load_file_with_encoding(&p).expect("load");
+        assert_eq!(l.detected.encoding, Encoding::Utf8);
+        assert_eq!(l.detected.method, DetectionMethod::Utf8Probe);
+        assert!(!l.had_errors);
+        assert!(!l.byte_exact);
+        assert_eq!(l.buffer.content_string(), "hello\nworld\n");
+        // Nothing invalid seen: no deferred notice.
+        assert_eq!(l.buffer.take_encoding_notice(), None);
+    }
+
+    #[test]
+    fn probe_utf8_empty_file_opens_mapped() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path().join("empty.txt");
+        std::fs::write(&p, b"").expect("write");
+        let l = load_file_with_encoding(&p).expect("load");
+        assert_eq!(l.detected.method, DetectionMethod::Utf8Probe);
+        assert_eq!(l.buffer.content_string(), "");
+    }
+
+    #[test]
+    fn probe_utf8_bom_file_reports_bom() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path().join("bom.txt");
+        std::fs::write(&p, b"\xEF\xBB\xBFbommed").expect("write");
+        let l = load_file_with_encoding(&p).expect("load");
+        assert_eq!(l.detected.method, DetectionMethod::Utf8Probe);
+        assert_eq!(l.detected.bom, Some(Bom::Utf8));
+        assert_eq!(l.buffer.content_string(), "\u{FEFF}bommed");
+    }
+
+    #[test]
+    fn probe_cut_mid_codepoint_stays_mapped() {
+        // The probe cut must not misjudge a valid file: a 2-byte code
+        // point straddling the 64 KiB boundary is trimmed, not condemned.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path().join("cut.txt");
+        let mut raw = vec![b'a'; PROBE_LEN - 1];
+        raw.extend_from_slice("é".as_bytes());
+        raw.extend_from_slice(b"tail");
+        std::fs::write(&p, &raw).expect("write");
+        let l = load_file_with_encoding(&p).expect("load");
+        assert_eq!(l.detected.method, DetectionMethod::Utf8Probe);
+        assert_eq!(
+            l.buffer.content_string(),
+            String::from_utf8(raw).expect("valid")
+        );
+    }
+
+    #[test]
+    fn probe_invalid_deep_in_file_defers_notice() {
+        // Invalid bytes AFTER the probe window: mapped open, notice only
+        // after the first text read that meets them, unmodified save
+        // byte-exact.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path().join("deep.bin");
+        let mut raw = vec![b'a'; 100_000];
+        raw.extend_from_slice(b"\nline2 has \xFF\xFE bad bytes\n");
+        raw.extend_from_slice(&vec![b'z'; 10_000]);
+        std::fs::write(&p, &raw).expect("write");
+        assert!(std::str::from_utf8(&raw[..PROBE_LEN]).is_ok());
+
+        let l = load_file_with_encoding(&p).expect("load");
+        assert_eq!(l.detected.method, DetectionMethod::Utf8Probe);
+        // Nothing read yet: no notice pending.
+        assert_eq!(l.buffer.take_encoding_notice(), None);
+        // Read the line holding the bad bytes (line 1).
+        let line = l.buffer.line_with_newline(1).expect("line");
+        assert!(line.contains('\u{FFFD}'));
+        // The deferred notice is now pending, delivered exactly once.
+        let notice = l.buffer.take_encoding_notice().expect("notice");
+        assert!(notice.contains("U+FFFD"), "notice: {notice}");
+        assert!(notice.contains("byte-exact"), "notice: {notice}");
+        assert_eq!(l.buffer.take_encoding_notice(), None);
+        // Unmodified save stays byte-exact through the mapped path.
+        let out = dir.path().join("out.bin");
+        let mut buf = l.buffer;
+        buf.save_as(&out).expect("save");
+        assert_eq!(std::fs::read(&out).expect("read"), raw);
+    }
+
+    #[test]
+    fn probe_invalid_inside_probe_goes_eager() {
+        // Invalid bytes INSIDE the probe: the eager path, unchanged.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path().join("early.bin");
+        let raw = b"ok prefix \xFF\xFE then more text".to_vec();
+        std::fs::write(&p, &raw).expect("write");
+        let l = load_file_with_encoding(&p).expect("load");
+        assert_ne!(l.detected.method, DetectionMethod::Utf8Probe);
+        assert!(l.buffer.original_bytes.is_some());
+        assert!(l.byte_exact);
+        let out = dir.path().join("out.bin");
+        let mut buf = l.buffer;
+        buf.save_as(&out).expect("save");
+        assert_eq!(std::fs::read(&out).expect("read"), raw);
+    }
+
+    #[test]
+    fn deferred_notice_reaches_app_message_line() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path().join("deep.txt");
+        let mut raw = vec![b'a'; 100_000];
+        raw.extend_from_slice(b"\nbad \xFF bytes\n");
+        std::fs::write(&p, &raw).expect("write");
+
+        let mut app = crate::core::app::EditorApp::new();
+        let buffer_id = app.load_file(&p).expect("load");
+        // Discovery happens on read; before that, polling stays quiet.
+        app.poll_deferred_notices();
+        assert!(app.message.is_none());
+        let line = app
+            .buffers
+            .get(&buffer_id)
+            .expect("buffer")
+            .line_with_newline(1);
+        assert!(line.is_some());
+        app.poll_deferred_notices();
+        let msg = app.message.clone().expect("message");
+        assert!(msg.contains("U+FFFD"), "message: {msg}");
+        // Delivered once: a second poll does not duplicate it.
+        app.poll_deferred_notices();
+        assert_eq!(app.message.as_deref(), Some(msg.as_str()));
     }
 }

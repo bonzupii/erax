@@ -6,7 +6,7 @@
 //! The Buffer API is byte-positioned end to end — no char/byte translation
 //! layer — because the tree itself is encoding-dumb (bytes are bytes).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::fs;
 use std::io::Write;
@@ -132,6 +132,27 @@ pub struct Buffer {
     /// / [`Buffer::take_pager_error`].
     /// Interior mutability so read-path accessors can stay `&self`.
     pager_error: RefCell<Option<PagerError>>,
+    /// UTF-8 validation state of the text. The eager path validates the
+    /// whole file at open; the mapped path validates only a probe prefix
+    /// (see `encoding::load_file_with_encoding`). The first text read that
+    /// meets an invalid sequence records it here; the app surfaces it once
+    /// via [`Buffer::take_encoding_notice`]. Interior mutability for the
+    /// same reason as `pager_error`.
+    validity: Cell<TextValidity>,
+}
+
+/// UTF-8 validation state of a buffer's text (see `Buffer::validity`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TextValidity {
+    /// Whole content validated (eager loads, in-memory buffers, the lossy
+    /// view of explicitly-accepted invalid files).
+    Validated,
+    /// Only the open probe was validated; the tail is unchecked (mapped).
+    ProbeOnly,
+    /// A text read met an invalid sequence; the user has not been told.
+    InvalidUnreported,
+    /// The notice was delivered; further invalid reads stay silent.
+    InvalidReported,
 }
 
 /// A diagnostic anchor after mapping through an edit.
@@ -166,6 +187,7 @@ impl Buffer {
             syntax_state_cache: Vec::new(),
             original_bytes: None,
             pager_error: RefCell::new(None),
+            validity: Cell::new(TextValidity::Validated),
         }
     }
 
@@ -187,6 +209,7 @@ impl Buffer {
             syntax_state_cache: Vec::new(),
             original_bytes: None,
             pager_error: RefCell::new(None),
+            validity: Cell::new(TextValidity::Validated),
         }
     }
 
@@ -239,6 +262,7 @@ impl Buffer {
                     syntax_state_cache: Vec::new(),
                     original_bytes: None,
                     pager_error: RefCell::new(None),
+                    validity: Cell::new(TextValidity::Validated),
                 })
             }
             Err(utf8_error) => Err(LoadError::InvalidUtf8 {
@@ -291,6 +315,7 @@ impl Buffer {
             syntax_state_cache: Vec::new(),
             original_bytes: None,
             pager_error: RefCell::new(None),
+            validity: Cell::new(TextValidity::ProbeOnly),
         })
     }
 
@@ -324,6 +349,7 @@ impl Buffer {
             syntax_state_cache: Vec::new(),
             original_bytes: None,
             pager_error: RefCell::new(None),
+            validity: Cell::new(TextValidity::ProbeOnly),
         })
     }
 
@@ -342,6 +368,9 @@ impl Buffer {
             .ok()
             .and_then(|m| m.modified().ok());
 
+        // Bytes are unvalidated by construction here (fstat only); the
+        // first text read that meets an invalid sequence records it on
+        // the buffer (see `take_encoding_notice`).
         let text = BText::open_mapped_mmap(&validated_path)
             .map_err(|e| LoadError::Io(std::io::Error::other(e.to_string())))?;
         Ok(Self {
@@ -360,6 +389,7 @@ impl Buffer {
             syntax_state_cache: Vec::new(),
             original_bytes: None,
             pager_error: RefCell::new(None),
+            validity: Cell::new(TextValidity::ProbeOnly),
         })
     }
 
@@ -388,6 +418,7 @@ impl Buffer {
             syntax_state_cache: Vec::new(),
             original_bytes: Some(bytes),
             pager_error: RefCell::new(None),
+            validity: Cell::new(TextValidity::Validated),
         }
     }
 
@@ -410,6 +441,39 @@ impl Buffer {
     /// surfaces the recorded error (e.g. in the status bar).
     fn record_pager_error(&self, err: PagerError) {
         *self.pager_error.borrow_mut() = Some(err);
+    }
+
+    // ==================== Deferred encoding notice ====================
+
+    /// Record that a text read met invalid UTF-8. Called by the two text
+    /// funnels (`line_with_newline`, `content_string`) when
+    /// `from_utf8` fails: the mapped path validates lazily, so invalid
+    /// bytes can surface long after open. Latches once; already-delivered
+    /// notices stay delivered.
+    fn note_invalid_utf8(&self) {
+        if self.validity.get() != TextValidity::InvalidReported {
+            self.validity.set(TextValidity::InvalidUnreported);
+        }
+    }
+
+    /// Take the deferred invalid-UTF-8 notice, if one is pending. The app
+    /// polls this once per frame (see `EditorApp::poll_deferred_notices`)
+    /// and shows the result on the message line — the lazy counterpart of
+    /// the eager path's open-time notice. Returns `None` after delivery.
+    pub fn take_encoding_notice(&self) -> Option<String> {
+        if self.validity.get() != TextValidity::InvalidUnreported {
+            return None;
+        }
+        self.validity.set(TextValidity::InvalidReported);
+        let name = self
+            .filename
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<unnamed>".to_string());
+        Some(format!(
+            "{name}: invalid UTF-8 sequences shown as U+FFFD; \
+             saving unmodified writes the file back byte-exact"
+        ))
     }
 
     // ==================== Content Access ====================
@@ -461,7 +525,17 @@ impl Buffer {
     /// operations; this is for APIs that require an owned String.
     pub fn content_string(&self) -> String {
         match self.text.collect_bytes() {
-            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+            // Lossy contract unchanged (invalid UTF-8 becomes U+FFFD), but
+            // the valid fast path avoids the lossy copy, and an invalid
+            // read on a lazily-validated buffer records the deferred
+            // encoding notice (see `take_encoding_notice`).
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(s) => s,
+                Err(e) => {
+                    self.note_invalid_utf8();
+                    String::from_utf8_lossy(e.as_bytes()).into_owned()
+                }
+            },
             Err(e) => {
                 self.record_pager_error(e);
                 String::new()
@@ -614,11 +688,16 @@ impl Buffer {
         match self.text.slice_bytes(start..end) {
             // `String::from_utf8` reuses the Vec's allocation when valid
             // (no copy); `from_utf8_lossy(&bytes).into_owned()` always copied:
-            // one fewer allocation per `line()` call.
-            Ok(bytes) => Some(
-                String::from_utf8(bytes)
-                    .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
-            ),
+            // one fewer allocation per `line()` call. An invalid read on a
+            // lazily-validated buffer records the deferred encoding notice
+            // (see `take_encoding_notice`); the lossy display is unchanged.
+            Ok(bytes) => Some(match String::from_utf8(bytes) {
+                Ok(s) => s,
+                Err(e) => {
+                    self.note_invalid_utf8();
+                    String::from_utf8_lossy(e.as_bytes()).into_owned()
+                }
+            }),
             Err(e) => {
                 self.record_pager_error(e);
                 None
@@ -1273,6 +1352,7 @@ impl Buffer {
         self.syntax_state_cache = fresh.syntax_state_cache;
         self.original_bytes = fresh.original_bytes;
         self.pager_error = fresh.pager_error;
+        self.validity.set(fresh.validity.get());
     }
 
     // ==================== Diagnostics ====================
