@@ -35,11 +35,6 @@ pub const PAGE_CACHE_MAX_PAGES: usize = 256;
 /// one tree leaf per region; regions are split into pages on first touch.
 pub const MAP_REGION_BYTES: u64 = 1024 * 1024;
 
-/// Files at or below this size open eagerly (fully read and validated).
-/// Larger files open lazily via the pager: open is O(1) in file size and
-/// files larger than RAM work.
-pub const LAZY_LOAD_THRESHOLD_BYTES: u64 = 64 * 1024 * 1024;
-
 /// Owned leaves larger than this are split after edits (keeps leaves small
 /// enough for cheap splice operations). A 64 KiB leaf makes every 1-byte
 /// insert pay a 64 KiB memmove; 8 KiB keeps splices cheap and the tree

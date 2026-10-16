@@ -202,7 +202,7 @@ pub fn handle_prompt_action(
         InputAction::ShellCommand => {
             if !input.is_empty() {
                 // Execute command
-                let output = std::process::Command::new("sh")
+                let output = std::process::Command::new(crate::config::editor::SHELL)
                     .arg("-c")
                     .arg(&input)
                     .output();
@@ -281,7 +281,7 @@ pub fn handle_prompt_action(
                         return Ok(false);
                     }
                 };
-                let child = std::process::Command::new("sh")
+                let child = std::process::Command::new(crate::config::editor::SHELL)
                     .arg("-c")
                     .arg(&input)
                     .stdin(std::process::Stdio::piped())

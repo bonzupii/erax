@@ -36,7 +36,16 @@ pub fn insert_tab(app: &mut EditorApp, _count: usize) -> DispatchResult {
         if let Some(buffer_id) = buffer_id
             && let Some(window) = app.windows.get_mut(&active_window_id)
                 && let Some(buffer) = app.buffers.get_mut(&buffer_id) {
-                    window.insert_char(buffer, '\t');
+                    if crate::config::editor::USE_TABS {
+                        window.insert_char(buffer, '\t');
+                    } else {
+                        // Spaces to the next tab stop.
+                        let tab_width = crate::config::editor::TAB_WIDTH;
+                        let spaces = tab_width - (window.cursor_x % tab_width);
+                        for _ in 0..spaces {
+                            window.insert_char(buffer, ' ');
+                        }
+                    }
                 }
         DispatchResult::Success
     }

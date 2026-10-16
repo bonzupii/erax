@@ -103,8 +103,9 @@ pub struct UndoGrouper {
 }
 
 impl UndoGrouper {
-    /// Maximum small edits to batch together (reduces undo stack pressure)
-    const SMALL_EDIT_BATCH_SIZE: usize = 100;
+    /// Maximum small edits to batch together (reduces undo stack pressure).
+    /// The value lives in the config; this impl reads it.
+    const SMALL_EDIT_BATCH_SIZE: usize = crate::config::editor::UNDO_SMALL_EDIT_BATCH;
 
     /// Create a new UndoGrouper
     pub fn new() -> Self {

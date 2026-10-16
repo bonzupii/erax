@@ -6,7 +6,7 @@ use crate::core::terminal_host::TerminalHost;
 use std::path::PathBuf;
 
 pub fn spawn_terminal(app: &mut EditorApp, _count: usize) -> DispatchResult {
-        let shell = "sh";
+        let shell = crate::config::editor::SHELL;
 
         // Initial dimensions - will be updated by renderer/resize
         let cols = 80;
