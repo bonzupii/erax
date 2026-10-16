@@ -386,19 +386,39 @@ mod tests {
     fn test_check_token() {
         let checker = SpellChecker::new();
         let config = LanguageConfig::rust();
-        // Use words from the dictionary: "is", "a", "comment", "the"
+        // All words are in the dictionary: "This", "is", "a", "comment",
+        // "with", "the", "code".
         let input = r#"// This is a comment with the code"#;
 
         let tokens: Vec<_> = Lexer::new(input, &config).collect();
+        assert!(!tokens.is_empty(), "lexer produced no tokens");
 
         for token in &tokens {
             let misspellings = checker.check_token(token);
-            if !token.kind.is_prose() {
-                // Non-prose tokens should have no misspellings
-                assert!(misspellings.is_empty());
-            }
-            // Prose tokens may have misspellings for words not in dictionary
+            assert!(
+                misspellings.is_empty(),
+                "unexpected misspellings in {token:?}: {misspellings:?}"
+            );
         }
+    }
+
+    #[test]
+    fn test_check_token_flags_misspelling() {
+        let checker = SpellChecker::new();
+        let config = LanguageConfig::rust();
+        let input = r#"// This is a cmment with the code"#;
+
+        let tokens: Vec<_> = Lexer::new(input, &config).collect();
+        let mut flagged_words: Vec<String> = Vec::new();
+        for token in &tokens {
+            for m in checker.check_token(token) {
+                flagged_words.push(m.word.clone());
+            }
+        }
+        assert!(
+            flagged_words.iter().any(|w| w.contains("cmment")),
+            "expected 'cmment' to be flagged, got: {flagged_words:?}"
+        );
     }
 
     #[test]
