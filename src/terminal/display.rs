@@ -15,7 +15,7 @@ pub use crate::terminal::color::Color;
 pub use super::model::{Cell, CellRole, ClusterText, ScreenBuffer};
 
 use crate::terminal::theme::Theme;
-use crate::config::display::CursorStyle;
+use crate::core::cursor_style::CursorStyle;
 use crate::config::keys::INPUT_MODEL;
 use crate::core::bindings::{InputModel, ModalMode};
 use crate::core::modal::ModalEngine;

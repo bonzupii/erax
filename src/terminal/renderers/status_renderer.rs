@@ -441,7 +441,7 @@ mod tests {
         // Cursor style unchanged: steady block.
         assert_eq!(
             cursor_style_for(InputModel::KeyTrie, &engine, false),
-            crate::config::display::CursorStyle::SteadyBlock
+            crate::core::cursor_style::CursorStyle::SteadyBlock
         );
     }
 
@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn cursor_style_per_model_and_state() {
-        use crate::config::display::CursorStyle;
+        use crate::core::cursor_style::CursorStyle;
         let mut app = crate::core::app::EditorApp::new();
         let mut engine = crate::core::modal::ModalEngine::new();
         // Modal: Normal = block.

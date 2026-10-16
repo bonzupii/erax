@@ -78,7 +78,7 @@ pub enum FindEdge {
 
 /// What a modal keypress does.
 ///
-/// `Command` variants compose over the existing typed [`Command`] set — the
+/// `Command` variants compose over the existing typed [`Command`] set: the
 /// modal engine never forks editing logic; operators are built from
 /// SetMark + motion + KillRegion/CopyRegion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,7 +130,7 @@ pub enum ModalAction {
     /// Vim `{`: backward to the previous paragraph boundary.
     VimParagraphBackward,
     /// Vim `$` in Normal mode: onto the last character of the line. The
-    /// shared [`Command::EndOfLine`] stops one past the last character —
+    /// shared [`Command::EndOfLine`] stops one past the last character:
     /// that is the cursor-exclusive visual selection's end, not a
     /// Normal-mode cursor. As an operator motion `$` is the to-end-of-line
     /// motion.

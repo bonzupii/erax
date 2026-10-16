@@ -40,7 +40,7 @@ pub const SELECTION_EDGE_DELTA: f32 = 0.06;
 /// Blend the cells neighboring the cursor toward the cursor cell's
 /// background: a one-cell halo around the cursor block.
 ///
-/// Off by default: on real GPUs the halo reads as color bleeding into
+/// Off by default: on GPUs the halo reads as color bleeding into
 /// adjacent cells and UI chrome.
 pub const CURSOR_HALO: bool = false;
 

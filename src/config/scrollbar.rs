@@ -12,8 +12,9 @@
 //! (▀ ▄ ▌ ▐), quadrants (▘ ▙ ▚ ▛ ▜ ▝ ▞ ▟), box drawing
 //! (─ ━ │ ┃ ┄ ┅ ┆ ┇ ┈ ┉ ┊ ┋), braille dots (⠁ ⠃ ⠉ ⠒ ⠤ ⠦ ⠧),
 //! arrows (▲ ▼ ◀ ▶ △ ▽ ◁ ▷ ↑ ↓ ← →). A track glyph reads as
-//! background; a thumb glyph must contrast it. The presets combine
-//! surveyed families into coherent sets.
+//! background; a thumb glyph must contrast it. The survey informed the
+//! glyph presets, which are [`ScrollbarGlyphs`] associated consts in
+//! [`crate::core::geometry`]; [`GLYPHS`] selects the active set.
 
 use crate::core::geometry::{ScrollbarGlyphs, VerticalSide};
 
