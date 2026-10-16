@@ -147,35 +147,32 @@ pub fn handle_prompt_action(
             }
         }
         InputAction::SwitchToBuffer => {
-            let mut found = false;
-            let mut target_id = None;
-            let mut target_name = String::new();
-
-            for (&buffer_id, buffer) in app.buffers.iter() {
-                if let Some(filename) = &buffer.filename {
-                    let name = filename
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string());
-                    let name = name.unwrap_or_default();
-                    if name == input || filename.to_string_lossy().contains(&input) {
-                        target_id = Some(buffer_id);
-                        target_name = name;
-                        found = true;
-                        break;
-                    }
-                }
-            }
-            if found {
-                if let Some(window) = app.windows.get_mut(&app.active_window)
-                    && let Some(bid) = target_id {
+            // Match against display names so unnamed buffers (*scratch*)
+            // are reachable. Collect all matches and pick the
+            // alphabetically first for deterministic multi-match
+            // behavior (HashMap iteration order is not stable).
+            let mut matches: Vec<(String, crate::core::id::BufferId)> = app
+                .buffers
+                .iter()
+                .map(|(&id, b)| (b.display_name(), id))
+                .filter(|(name, _)| name == &input || name.contains(&input))
+                .collect();
+            matches.sort_by(|a, b| a.0.cmp(&b.0));
+            match matches.into_iter().next() {
+                Some((target_name, bid)) => {
+                    if let Some(window) = app.windows.get_mut(&app.active_window) {
                         window.buffer_id = bid;
                         window.cursor_x = 0;
                         window.cursor_y = 0;
                         window.scroll_offset = 0;
+                        window.scroll_x = 0;
+                        window.selection_manager.clear_mark();
                         app.message = Some(format!("Switched to {}", target_name));
                     }
-            } else {
-                app.message = Some(format!("Buffer not found: {}", input));
+                }
+                None => {
+                    app.message = Some(format!("Buffer not found: {}", input));
+                }
             }
         }
         InputAction::RenameSymbol => {
