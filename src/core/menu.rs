@@ -14,9 +14,6 @@ use crate::core::bindings::{InputModel, ModalAction, ModalMode};
 use crate::core::command::Command;
 use crate::core::input::KeyPress;
 
-/// Height of the menu bar in cells
-pub const MENU_BAR_HEIGHT_CELLS: usize = 1;
-
 /// One menu's structure, as data: the tables in [`crate::config::menu`]
 /// are written in this vocabulary.
 #[derive(Clone, Copy, Debug)]
