@@ -102,12 +102,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Textures hold one u32 per cell (R32Uint); textureLoad needs no sampler.
     let coord = vec2<i32>(cell);
-    var color = unpack_color(textureLoad(bg_tex, coord, 0).x);
+    let packed = unpack_color(textureLoad(bg_tex, coord, 0).x);
     let role = textureLoad(role_tex, coord, 0).x;
+    // Treatments adjust the color channels; naga rejects assignment to
+    // swizzles, so the channels live in their own variable.
+    var rgb = packed.rgb;
 
     // Panel depth: one uniform luminance step for panel roles.
     if (is_panel_role(role)) {
-        color.rgb += vec3<f32>(uniforms.panel_shift);
+        rgb = rgb + vec3<f32>(uniforms.panel_shift);
     }
 
     // Neighbor roles for run-edge detection. An out-of-grid neighbor reads
@@ -127,11 +130,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (is_panel_role(role)) {
         let row_top = f32(cell.y) * uniforms.cell_size.y;
         if (above_role != role && pixel.y - row_top < 1.0) {
-            color.rgb += vec3<f32>(uniforms.panel_edge);
+            rgb = rgb + vec3<f32>(uniforms.panel_edge);
         }
         let row_bottom = row_top + uniforms.cell_size.y;
         if (below_role != role && row_bottom - pixel.y < 1.0) {
-            color.rgb += vec3<f32>(uniforms.panel_edge);
+            rgb = rgb + vec3<f32>(uniforms.panel_edge);
         }
     }
 
@@ -140,7 +143,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (role == ROLE_SELECTION && above_role != ROLE_SELECTION) {
         let row_top = f32(cell.y) * uniforms.cell_size.y;
         if (pixel.y - row_top < 1.0) {
-            color.rgb += vec3<f32>(uniforms.selection_edge);
+            rgb = rgb + vec3<f32>(uniforms.selection_edge);
         }
     }
 
@@ -158,11 +161,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 && u32(n.y) < uniforms.grid_dims.y
                 && textureLoad(role_tex, n, 0).x == ROLE_CURSOR) {
                 let halo = unpack_color(textureLoad(bg_tex, n, 0).x).rgb;
-                color.rgb = mix(color.rgb, halo, uniforms.cursor_halo);
+                rgb = mix(rgb, halo, uniforms.cursor_halo);
                 break;
             }
         }
     }
 
-    return color;
+    return vec4<f32>(rgb, packed.a);
 }
