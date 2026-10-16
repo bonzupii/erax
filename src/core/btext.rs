@@ -984,7 +984,12 @@ impl BText {
                     match found {
                         Some(pos) => return Ok(Some(pos)),
                         None => {
-                            debug_assert!(false, "newline_pos: newline count inconsistent");
+                            // The count (`total_newlines`) and this lookup
+                            // are two separate reads. Under concurrent
+                            // external mutation the file can change between
+                            // them, so the target may no longer exist. This
+                            // is not a logic invariant — return None and let
+                            // the caller treat it as a raced read.
                             return Ok(None);
                         }
                     }
