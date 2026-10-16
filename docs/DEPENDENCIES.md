@@ -33,6 +33,27 @@ Cargo.lock: 354 packages.
 | similar | 3.2.0 | diff/hunk computation (sed review) | Keep — diff is algorithmic; in-house must beat it on tests+benches first |
 | printers | 2.3.0 | cross-platform printing (N-267) | Interim per N-267 → N-266 path |
 
+## Speech backend (optional `speech` cargo feature; off by default)
+
+Enabled only when the `SPEECH_BACKEND` config const is not `Off`.
+All crates below are GPL-2.0-compatible (taken under their MIT leg
+where dual-licensed). The full 137-crate transitive closure was
+audited 2026-10-16: no GPL-3.0/AGPL anywhere, and no espeak-ng code
+in the tree (the phonemizer is misaki-rs with its espeak fallback
+disabled; see the session 26 PROGRESS entry for the audit table).
+
+| crate | version | license (leg taken) | why it's here |
+|---|---|---|---|
+| whisper-rs | =0.16.0 | Unlicense | Safe bindings to whisper.cpp for the built-in STT (Whisper large-v3-turbo q5_0) |
+| floravox-core | =0.8.8 | MIT (of Apache-2.0 OR MIT) | Pure-Rust TTS: G2P orchestration, SSML, word timings; drives our embedded-weights `VoiceBackend` impl |
+| floravox-g2p | =0.8.8 | MIT (of Apache-2.0 OR MIT) | misaki-rs wrapper: Rust-native English/Japanese G2P (dictionaries compiled in) |
+| ort | =2.0.0-rc.14 | MIT (of MIT OR Apache-2.0) | ONNX Runtime inference for the embedded Kokoro-82M int8 model (pinned to floravox's version) |
+| anyhow | 1 | MIT (of MIT OR Apache-2.0) | Error type for the `VoiceBackend` trait impl |
+| sha2 | 0.10 | MIT (of MIT OR Apache-2.0) | build-dependency: sha256 verification of provisioned weights in build.rs |
+| misaki-rs | 0.3.0 | MIT | (transitive via floravox-g2p) Rust-native phonemizer; no runtime file reads |
+| language-tokenizer | 0.1.0 | WTFPL (per its GitHub repo LICENSE.md; the crates.io metadata has no license field) | (transitive via misaki-rs) tokenizer |
+| r-efi | 6.0.0 | MIT (of MIT OR Apache-2.0 OR LGPL-2.1-or-later) | (transitive) UEFI types, pulled via the crypto stack |
+
 ## Replace — slated for in-house (no upgrade effort spent)
 
 | crate | version | plan | status |

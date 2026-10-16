@@ -1,17 +1,15 @@
 # erax accessibility profile: deaf
 #
-# Operation without hearing. Enables the accessibility cue bus; the
-# stock config already sets CUE_VISUAL_FLASH, the visual equivalent
-# of the audio cues, so the only change is the bus master. Applies
-# with: patch -p1 --forward. Reversible with: patch -R -p1
-# --forward (see accessibility.sh).
-diff --git a/src/config/accessibility/mod.rs b/tmp/a11y-new/mod.rs
-index 2962139..b737b8d 100644
---- a/src/config/accessibility/mod.rs
-+++ b/src/config/accessibility/mod.rs
-@@ -20,4 +20,4 @@ pub mod hearing;
- /// the user asking for it is a regression for everyone else. Users
- /// who want the cues set this to `true`. The per-class modules hold
- /// the individual cue senses; this constant gates the bus itself.
--pub const CUES_ENABLED: bool = false;
-+pub const CUES_ENABLED: bool = true;
+# Visual equivalents of audio cues. Enables the deafness profile
+# master, which brings the accessibility cue bus live for the visual
+# senses (the stock config already sets CUE_VISUAL_FLASH). Applies
+# with: patch -p1 --forward. Reversible with: patch -R -p1 --forward
+# (see accessibility.sh).
+--- a/src/config/accessibility/hearing.rs
++++ b/src/config/accessibility/hearing.rs
+@@ -16,4 +16,4 @@
+ /// this module. This is the constant the `deaf` accessibility profile
+ /// flips; it exists so profiles compose by class without sharing
+ /// patch ground.
+-pub const DEAF_PROFILE: bool = false;
++pub const DEAF_PROFILE: bool = true;

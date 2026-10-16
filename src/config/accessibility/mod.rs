@@ -16,8 +16,10 @@ pub mod hearing;
 /// Master switch for accessibility cue events (mode-change earcons,
 /// error bells, save/reload notices).
 ///
-/// Off by default: a terminal bell or a screen flash firing without
-/// the user asking for it is a regression for everyone else. Users
-/// who want the cues set this to `true`. The per-class modules hold
-/// the individual cue senses; this constant gates the bus itself.
-pub const CUES_ENABLED: bool = false;
+/// Derived, not set directly: each disability class owns a profile
+/// constant, and the bus is live when any profile is enabled. Off by
+/// default: a terminal bell or a screen flash firing without the user
+/// asking for it is a regression for everyone else. The per-class
+/// modules hold the individual cue senses; this constant gates the
+/// bus itself.
+pub const CUES_ENABLED: bool = blindness::BLIND_PROFILE || hearing::DEAF_PROFILE;

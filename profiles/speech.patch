@@ -1,0 +1,20 @@
+# erax accessibility profile: speech
+#
+# Voice input and spoken output. Selects the built-in speech backend
+# (Whisper large-v3-turbo q5_0 STT, Kokoro-82M int8 TTS); build.rs
+# provisions the pinned weights only when this is not Off, and the
+# speech.flags file passes --features speech to the build. Applies
+# with: patch -p1 --forward. Reversible with: patch -R -p1 --forward
+# (see accessibility.sh).
+diff --git a/src/config/accessibility/blindness.rs b/tmp/a11y-new/blindness.rs
+--- a/src/config/accessibility/blindness.rs
++++ b/src/config/accessibility/blindness.rs
+@@ -47,7 +47,7 @@
+ /// Speech backend selection. Off by default: enabling it pulls
+ /// ~690 MiB of weights at build time and links the inference
+ /// runtimes.
+-pub const SPEECH_BACKEND: SpeechBackend = SpeechBackend::Off;
++pub const SPEECH_BACKEND: SpeechBackend = SpeechBackend::BuiltIn;
+ 
+ /// Kokoro voice for the built-in TTS, one variant per provisioned
+ /// voice file. The default is the upstream default voice.
