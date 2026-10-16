@@ -9,7 +9,15 @@
 use crate::cli::ShellMode;
 
 /// Default frontend when no CLI flag selects one.
-pub const SHELL_MODE: ShellMode = ShellMode::Tui;
+///
+/// The native GUI: with a display reachable it opens the window; without
+/// one the resolver degrades the preference to the best terminal rung
+/// the environment supports (piped stdin: stream-editor mode), and the
+/// shell reports the degradation on stderr. Explicit CLI flags
+/// (`-g`, `-u`, `-a`, `-s`, `--web-server`, `--web-bind`) override this
+/// default per invocation; the override is a typed invocation parameter
+/// and never mutates the constant.
+pub const SHELL_MODE: ShellMode = ShellMode::Gui;
 
 /// Default bind address for `--web-server` (`ADDR:PORT`).
 pub const WEB_BIND: &str = "127.0.0.1:8080";

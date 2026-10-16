@@ -26,6 +26,7 @@ fn set_timeout(ws: &mut ClientWs, timeout: Option<Duration>) {
 fn test_invocation_with_theme(theme: Option<ThemeId>) -> Invocation {
     Invocation {
         mode: InvocationMode::WebServer,
+        degradation: None,
         files: vec![],
         theme,
         wrap: None,

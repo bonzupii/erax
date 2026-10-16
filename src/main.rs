@@ -11,7 +11,7 @@ use erax::run;
 
 use std::process::ExitCode;
 
-use cli::{Invocation, InvocationMode, ParseFailure};
+use cli::{Degradation, Invocation, InvocationMode, ParseFailure};
 
 fn main() -> ExitCode {
     match cli::parse() {
@@ -39,6 +39,11 @@ fn main() -> ExitCode {
 
 /// The single dispatch router (N-004): one match over the invocation mode.
 fn run(invocation: Invocation) -> ExitCode {
+    // Environment degradation of the configured preference is reported
+    // here, at the impure shell: never silent, never an error exit.
+    if let Some(degradation) = invocation.degradation {
+        eprintln!("erax: {}", degradation_notice(degradation));
+    }
     match invocation.mode {
         InvocationMode::Sed => match run::run_sed_mode(&invocation) {
             Ok(()) => ExitCode::SUCCESS,
@@ -56,13 +61,30 @@ fn run(invocation: Invocation) -> ExitCode {
                 }
             }
         }
-        InvocationMode::Gui => match run::run_gui_mode(&invocation) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("erax: gui: {e}");
-                ExitCode::FAILURE
+        InvocationMode::Gui => {
+            #[cfg(target_os = "windows")]
+            println!("erax: Windows detected. The editor works fine. The operating system remains the problem.");
+            match run::run_gui_mode(&invocation) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(run::GuiError::EventLoop(_)) => {
+                    // The display claimed present but produced no event
+                    // loop: degrade in the shell exactly as the resolver
+                    // would, instead of failing the invocation.
+                    eprintln!("erax: {}", degradation_notice(Degradation::ToTerminal));
+                    match run::run_terminal_mode(&invocation, cli::ColorMode::detect()) {
+                        Ok(()) => ExitCode::SUCCESS,
+                        Err(e) => {
+                            eprintln!("erax: {e}");
+                            ExitCode::FAILURE
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("erax: gui: {e}");
+                    ExitCode::FAILURE
+                }
             }
-        },
+        }
         InvocationMode::WebServer => {
             match erax::web::server::run_web_server(
                 &invocation,
@@ -76,5 +98,13 @@ fn run(invocation: Invocation) -> ExitCode {
                 }
             }
         }
+    }
+}
+
+/// The one-line stderr notice naming a degradation outcome.
+fn degradation_notice(degradation: Degradation) -> &'static str {
+    match degradation {
+        Degradation::ToTerminal => "no graphical environment; running in terminal mode",
+        Degradation::ToSed => "piped standard input; running in stream-editor mode",
     }
 }

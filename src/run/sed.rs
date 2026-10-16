@@ -329,6 +329,7 @@ mod tests {
         // Without -e/-f, the first positional is input, never a script.
         let inv = Invocation {
             mode: crate::cli::InvocationMode::Sed,
+            degradation: None,
             files: vec![Path::new("somefile.txt").to_path_buf()],
             theme: None,
             wrap: None,

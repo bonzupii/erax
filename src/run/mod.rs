@@ -9,6 +9,6 @@ mod gui;
 mod sed;
 mod tui;
 
-pub use gui::run_gui_mode;
+pub use gui::{run_gui_mode, GuiError};
 pub use sed::run_sed_mode;
 pub use tui::run_terminal_mode;

@@ -99,6 +99,10 @@ pub struct Args {
 pub struct Invocation {
     /// Which mode to run in.
     pub mode: InvocationMode,
+    /// Environment degradation the resolver applied to the configured
+    /// preference, if any. The shell reports it on stderr; it is never
+    /// silent and never an error exit.
+    pub degradation: Option<Degradation>,
     /// Files to open.
     pub files: Vec<PathBuf>,
     /// Theme override from `--theme` (typed; `None` means the config default).
@@ -121,6 +125,11 @@ pub enum ShellMode {
     Tui,
     /// UTF-8 terminal UI (full color per environment detection).
     Utf8,
+    /// Native GUI. The shipped default. Degrades by environment: piped
+    /// stdin selects stream-editor mode, and no graphical display selects
+    /// the best terminal rung the environment supports. Neither
+    /// degradation is silent: the shell reports it on stderr.
+    Gui,
     /// WebUI server: Core+TUI run headless here, the presentation core
     /// runs in the browser. Non-loopback binds require the
     /// `--web-allow-remote` acknowledgement.
@@ -138,6 +147,142 @@ pub enum InvocationMode {
     Gui,
     /// WebUI server mode (headless Core+TUI + WebSocket protocol).
     WebServer,
+}
+
+/// Snapshot of the impure environment, gathered once at the boundary.
+///
+/// Mode resolution is a pure function over (flags, `SHELL_MODE`, this
+/// snapshot): nothing inside the resolver reads process state, so the
+/// whole decision table is unit-testable with synthetic snapshots.
+/// Reading the live process is the boundary's job
+/// ([`Environment::capture`]); tests must never manipulate the real
+/// environment to drive the resolver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Environment {
+    /// A graphical display is reachable: inherently true on Windows and
+    /// macOS, `DISPLAY` or `WAYLAND_DISPLAY` set on unix-likes.
+    pub graphical_display_present: bool,
+    /// Standard input is a terminal (false when piped).
+    pub stdin_is_tty: bool,
+    /// Terminal color capability, per the existing [`ColorMode`]
+    /// detection.
+    pub color_mode: ColorMode,
+}
+
+impl Environment {
+    /// Read the process state once, at the impure CLI boundary.
+    pub fn capture() -> Self {
+        Environment {
+            graphical_display_present: display_present(),
+            stdin_is_tty: {
+                use std::io::IsTerminal;
+                std::io::stdin().is_terminal()
+            },
+            color_mode: ColorMode::detect(),
+        }
+    }
+}
+
+/// Whether a graphical display is reachable from this process.
+fn display_present() -> bool {
+    // Windows and macOS always have a display server to talk to.
+    if cfg!(target_os = "windows") || cfg!(target_os = "macos") {
+        return true;
+    }
+    std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok()
+}
+
+/// How the environment degraded a configured preference.
+///
+/// Returned by the pure resolver so the (impure) shell can report the
+/// degradation on stderr. Degradation is never silent and never an
+/// error exit: the editor still starts, in the named fallback mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Degradation {
+    /// The preference fell back to the best terminal rung the
+    /// environment supports.
+    ToTerminal,
+    /// The preference fell back to stream-editor mode (piped stdin).
+    ToSed,
+}
+
+/// The CLI mode flags that participate in mode resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ModeFlags {
+    /// `--web-server`.
+    pub web_server: bool,
+    /// `-s`, or a sed script from `-e`/`-f`.
+    pub sed: bool,
+    /// `-g`.
+    pub gui: bool,
+    /// `-a`.
+    pub ascii: bool,
+    /// `-u`.
+    pub utf8: bool,
+}
+
+/// The resolved invocation mode plus any environment degradation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedMode {
+    pub mode: InvocationMode,
+    pub degradation: Option<Degradation>,
+}
+
+/// Pure mode resolution over (flags, config const, environment snapshot).
+///
+/// Precedence: explicit CLI mode flags, then the `SHELL_MODE` const,
+/// then environment degradation of that preference. The `WebUi`
+/// preference is never degraded (the server is headless by design); an
+/// explicit `-g` is never degraded either (a dead display surfaces as an
+/// event-loop error, which the dispatch boundary degrades to terminal
+/// mode with the same stderr notice).
+pub fn resolve_mode(flags: ModeFlags, shell: ShellMode, env: &Environment) -> ResolvedMode {
+    let (mode, degradation) = if flags.web_server {
+        (InvocationMode::WebServer, None)
+    } else if flags.sed {
+        (InvocationMode::Sed, None)
+    } else if flags.gui {
+        (InvocationMode::Gui, None)
+    } else if flags.ascii {
+        (InvocationMode::Terminal(ColorMode::Mono), None)
+    } else if flags.utf8 {
+        (
+            InvocationMode::Terminal(utf8_color_mode(env.color_mode)),
+            None,
+        )
+    } else {
+        match shell {
+            ShellMode::Tui => {
+                if env.stdin_is_tty {
+                    (InvocationMode::Terminal(env.color_mode), None)
+                } else {
+                    // Piped stdin: stream editor mode (the unconfigured
+                    // fallback; not a degradation of a GUI preference).
+                    (InvocationMode::Sed, None)
+                }
+            }
+            ShellMode::Gui => {
+                if !env.stdin_is_tty {
+                    (InvocationMode::Sed, Some(Degradation::ToSed))
+                } else if env.graphical_display_present {
+                    (InvocationMode::Gui, None)
+                } else {
+                    // No display: the best terminal rung the capability
+                    // inputs support — the same rung Tui would take.
+                    (
+                        InvocationMode::Terminal(env.color_mode),
+                        Some(Degradation::ToTerminal),
+                    )
+                }
+            }
+            ShellMode::Utf8 => (
+                InvocationMode::Terminal(utf8_color_mode(env.color_mode)),
+                None,
+            ),
+            ShellMode::WebUi => (InvocationMode::WebServer, None),
+        }
+    };
+    ResolvedMode { mode, degradation }
 }
 
 /// Terminal color capability for TUI output.
@@ -271,37 +416,24 @@ fn convert(args: Args) -> Result<Invocation, ParseFailure> {
         (false, false) => None,
     };
 
-    // Mode selection is a pure function of the typed flags (N-002).
-    // Explicit flags win; with none, the SHELL_MODE config const decides.
-    let mode = if args.web_server {
-        InvocationMode::WebServer
-    } else if args.sed || !args.expression.is_empty() || args.script_file.is_some() {
-        InvocationMode::Sed
-    } else if args.gui {
-        InvocationMode::Gui
-    } else if args.ascii {
-        InvocationMode::Terminal(ColorMode::Mono)
-    } else if args.utf8 {
-        // UTF-8 mode: full color per environment detection.
-        InvocationMode::Terminal(utf8_color_mode())
-    } else {
-        match SHELL_MODE {
-            ShellMode::Tui => {
-                if is_stdin_tty() {
-                    InvocationMode::Terminal(ColorMode::detect())
-                } else {
-                    // Piped stdin: stream editor mode (preserves the old
-                    // detect_mode behavior).
-                    InvocationMode::Sed
-                }
-            }
-            ShellMode::Utf8 => InvocationMode::Terminal(utf8_color_mode()),
-            ShellMode::WebUi => InvocationMode::WebServer,
-        }
+    // Mode selection is a pure function of the typed flags, the
+    // SHELL_MODE const, and the environment snapshot (N-002). Explicit
+    // flags win; with none, the const decides, degraded by the
+    // environment. The snapshot is captured once here, at the impure
+    // boundary; the resolver itself reads no process state.
+    let flags = ModeFlags {
+        web_server: args.web_server,
+        sed: args.sed || !args.expression.is_empty() || args.script_file.is_some(),
+        gui: args.gui,
+        ascii: args.ascii,
+        utf8: args.utf8,
     };
+    let env = Environment::capture();
+    let resolved = resolve_mode(flags, SHELL_MODE, &env);
 
     Ok(Invocation {
-        mode,
+        mode: resolved.mode,
+        degradation: resolved.degradation,
         files: args.files,
         theme,
         wrap,
@@ -317,16 +449,11 @@ fn convert(args: Args) -> Result<Invocation, ParseFailure> {
 }
 
 /// Color mode for UTF-8 terminal mode: full color per detection, never Mono.
-fn utf8_color_mode() -> ColorMode {
-    match ColorMode::detect() {
+fn utf8_color_mode(detected: ColorMode) -> ColorMode {
+    match detected {
         ColorMode::Mono => ColorMode::Ansi16,
         other => other,
     }
-}
-
-fn is_stdin_tty() -> bool {
-    use std::io::IsTerminal;
-    std::io::stdin().is_terminal()
 }
 
 #[cfg(test)]
@@ -416,18 +543,176 @@ mod tests {
         assert!(matches!(err, ParseFailure::Clap(_)));
     }
 
+    /// Synthetic environment snapshots: the resolver never reads process
+    /// state, so tests drive it with constructed inputs only. Touching
+    /// the real environment here is forbidden.
+    fn snapshot(display: bool, tty: bool, color: ColorMode) -> Environment {
+        Environment {
+            graphical_display_present: display,
+            stdin_is_tty: tty,
+            color_mode: color,
+        }
+    }
+
+    /// Fully capable environment: display present, tty stdin.
+    fn capable() -> Environment {
+        snapshot(true, true, ColorMode::TrueColor)
+    }
+
+    fn flags_with(mk: fn(&mut ModeFlags)) -> ModeFlags {
+        let mut flags = ModeFlags::default();
+        mk(&mut flags);
+        flags
+    }
+
+    #[test]
+    fn gui_const_with_display_selects_gui() {
+        let r = resolve_mode(ModeFlags::default(), ShellMode::Gui, &capable());
+        assert_eq!(r.mode, InvocationMode::Gui);
+        assert_eq!(r.degradation, None);
+    }
+
+    #[test]
+    fn gui_const_without_display_degrades_to_terminal() {
+        let env = snapshot(false, true, ColorMode::Ansi16);
+        let r = resolve_mode(ModeFlags::default(), ShellMode::Gui, &env);
+        assert_eq!(r.mode, InvocationMode::Terminal(ColorMode::Ansi16));
+        assert_eq!(r.degradation, Some(Degradation::ToTerminal));
+    }
+
+    #[test]
+    fn gui_const_degraded_terminal_uses_detected_rung() {
+        // The fallback rung is the detected capability, not a second
+        // detector: every ColorMode round-trips through unchanged.
+        for color in [ColorMode::TrueColor, ColorMode::Ansi16, ColorMode::Mono] {
+            let env = snapshot(false, true, color);
+            let r = resolve_mode(ModeFlags::default(), ShellMode::Gui, &env);
+            assert_eq!(r.mode, InvocationMode::Terminal(color));
+            assert_eq!(r.degradation, Some(Degradation::ToTerminal));
+        }
+    }
+
+    #[test]
+    fn gui_const_with_piped_stdin_degrades_to_sed() {
+        // Piped stdin is checked before the display: the oracle order.
+        for display in [true, false] {
+            let env = snapshot(display, false, ColorMode::TrueColor);
+            let r = resolve_mode(ModeFlags::default(), ShellMode::Gui, &env);
+            assert_eq!(r.mode, InvocationMode::Sed);
+            assert_eq!(r.degradation, Some(Degradation::ToSed));
+        }
+    }
+
+    #[test]
+    fn explicit_gui_flag_is_not_degraded() {
+        // An explicit -g is never degraded: a dead display surfaces as an
+        // event-loop error, which the dispatch boundary degrades instead.
+        let flags = flags_with(|f| f.gui = true);
+        let env = snapshot(false, true, ColorMode::Mono);
+        let r = resolve_mode(flags, ShellMode::Tui, &env);
+        assert_eq!(r.mode, InvocationMode::Gui);
+        assert_eq!(r.degradation, None);
+    }
+
+    #[test]
+    fn explicit_flags_beat_the_gui_const() {
+        let env = capable();
+        let cases = [
+            (
+                flags_with(|f| f.web_server = true),
+                InvocationMode::WebServer,
+            ),
+            (flags_with(|f| f.sed = true), InvocationMode::Sed),
+            (flags_with(|f| f.gui = true), InvocationMode::Gui),
+            (
+                flags_with(|f| f.ascii = true),
+                InvocationMode::Terminal(ColorMode::Mono),
+            ),
+            (
+                flags_with(|f| f.utf8 = true),
+                InvocationMode::Terminal(ColorMode::TrueColor),
+            ),
+        ];
+        for (flags, expected) in cases {
+            let r = resolve_mode(flags, ShellMode::Gui, &env);
+            assert_eq!(r.mode, expected);
+            assert_eq!(r.degradation, None);
+        }
+    }
+
+    #[test]
+    fn flag_precedence_is_web_server_sed_gui_ascii_utf8() {
+        let env = capable();
+        let both = |a: fn(&mut ModeFlags), b: fn(&mut ModeFlags)| {
+            let mut flags = ModeFlags::default();
+            a(&mut flags);
+            b(&mut flags);
+            flags
+        };
+        assert_eq!(
+            resolve_mode(both(|f| f.web_server = true, |f| f.sed = true), ShellMode::Tui, &env).mode,
+            InvocationMode::WebServer
+        );
+        assert_eq!(
+            resolve_mode(both(|f| f.sed = true, |f| f.gui = true), ShellMode::Tui, &env).mode,
+            InvocationMode::Sed
+        );
+        assert_eq!(
+            resolve_mode(both(|f| f.gui = true, |f| f.ascii = true), ShellMode::Tui, &env).mode,
+            InvocationMode::Gui
+        );
+        assert_eq!(
+            resolve_mode(both(|f| f.ascii = true, |f| f.utf8 = true), ShellMode::Tui, &env).mode,
+            InvocationMode::Terminal(ColorMode::Mono)
+        );
+    }
+
+    #[test]
+    fn webui_const_ignores_missing_display() {
+        // The server is headless by design: no local display is needed.
+        let env = snapshot(false, true, ColorMode::TrueColor);
+        let r = resolve_mode(ModeFlags::default(), ShellMode::WebUi, &env);
+        assert_eq!(r.mode, InvocationMode::WebServer);
+        assert_eq!(r.degradation, None);
+    }
+
+    #[test]
+    fn tui_const_paths_unchanged() {
+        let env = snapshot(false, true, ColorMode::Ansi16);
+        let r = resolve_mode(ModeFlags::default(), ShellMode::Tui, &env);
+        assert_eq!(r.mode, InvocationMode::Terminal(ColorMode::Ansi16));
+        assert_eq!(r.degradation, None);
+        // Piped stdin keeps the unconfigured fallback, without a notice.
+        let piped = snapshot(false, false, ColorMode::Ansi16);
+        let r = resolve_mode(ModeFlags::default(), ShellMode::Tui, &piped);
+        assert_eq!(r.mode, InvocationMode::Sed);
+        assert_eq!(r.degradation, None);
+    }
+
+    #[test]
+    fn utf8_const_unchanged() {
+        // Utf8 means full color per detection: never Mono.
+        let env = snapshot(true, true, ColorMode::Mono);
+        let r = resolve_mode(ModeFlags::default(), ShellMode::Utf8, &env);
+        assert_eq!(r.mode, InvocationMode::Terminal(ColorMode::Ansi16));
+        assert_eq!(r.degradation, None);
+        let env = snapshot(true, true, ColorMode::TrueColor);
+        let r = resolve_mode(ModeFlags::default(), ShellMode::Utf8, &env);
+        assert_eq!(r.mode, InvocationMode::Terminal(ColorMode::TrueColor));
+        assert_eq!(r.degradation, None);
+    }
+
     #[test]
     fn default_frontend_follows_shell_mode_const() {
-        // No CLI mode flag: the SHELL_MODE config const decides. (Test
-        // stdin is never a tty, so Tui degrades to Sed here exactly as
-        // the unconfigured fallback would.)
-        let inv = parse_args(&["erax"]).unwrap();
+        // No CLI mode flag: the SHELL_MODE config const decides, against a
+        // fully capable environment so no degradation interferes.
+        let r = resolve_mode(ModeFlags::default(), SHELL_MODE, &capable());
+        assert_eq!(r.degradation, None);
         match SHELL_MODE {
-            ShellMode::Tui => assert_eq!(inv.mode, InvocationMode::Sed),
-            ShellMode::Utf8 => {
-                assert!(matches!(inv.mode, InvocationMode::Terminal(_)))
-            }
-            ShellMode::WebUi => assert_eq!(inv.mode, InvocationMode::WebServer),
+            ShellMode::Tui => assert!(matches!(r.mode, InvocationMode::Terminal(_))),
+            ShellMode::Gui => assert_eq!(r.mode, InvocationMode::Gui),
+            ShellMode::Utf8 => assert!(matches!(r.mode, InvocationMode::Terminal(_))),
+            ShellMode::WebUi => assert_eq!(r.mode, InvocationMode::WebServer),
         }
     }
 
