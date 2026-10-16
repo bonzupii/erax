@@ -102,3 +102,27 @@ fn braille_resolves_to_distinct_glyphs() {
         "braille patterns collapsed to fewer glyphs than patterns"
     );
 }
+
+#[test]
+fn zwj_sequences_resolve_to_the_color_font() {
+    if !stack_resolves("Noto Color Emoji") {
+        eprintln!("skip: Noto Color Emoji not installed on this machine");
+        return;
+    }
+    // ZWJ sequences the color font covers must compose as color glyphs,
+    // not fall back to monochrome. Each sequence should shape to glyphs
+    // from Noto Color Emoji.
+    let sequences = [
+        "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}", // family
+        "\u{1F441}\u{FE0F}\u{200D}\u{1F5E8}\u{FE0F}", // eye in speech bubble
+        "\u{1F469}\u{200D}\u{2695}\u{FE0F}", // woman health worker
+    ];
+    for seq in sequences {
+        let family = winning_family(seq);
+        assert_eq!(
+            family.as_deref(),
+            Some("Noto Color Emoji"),
+            "ZWJ sequence {seq:?} must resolve to the color font, got {family:?}"
+        );
+    }
+}
