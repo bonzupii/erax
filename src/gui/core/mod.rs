@@ -10,6 +10,7 @@
 //! N-273 `CellRole` metadata) and stays a dumb passthrough (principle 12).
 
 pub mod atlas;
+pub mod chrome;
 pub mod cursor;
 pub mod font_manager;
 pub mod quad_renderer;

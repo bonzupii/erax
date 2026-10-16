@@ -17,5 +17,5 @@ pub mod scrollbar;
 pub mod theme;
 
 /// Shader effect constants (same source as native).
-#[path = "../../../src/config/effects.rs"]
-pub mod effects;
+#[path = "../../../src/config/chrome.rs"]
+pub mod chrome;

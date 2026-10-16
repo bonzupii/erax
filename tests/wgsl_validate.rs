@@ -10,7 +10,7 @@
 /// The live shader set, as loaded by `src/gui/core/renderer.rs` and
 /// `src/gui/core/quad_renderer.rs`.
 const SHADERS: &[&str] = &[
-    "src/gui/core/shaders/background.wgsl",
+    "src/gui/core/shaders/composite.wgsl",
     "src/gui/core/shaders/glyph.wgsl",
     "src/gui/core/shaders/cursor.wgsl",
 ];

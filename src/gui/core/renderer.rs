@@ -29,14 +29,15 @@ use cosmic_text::{
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::core::cursor_style::CursorStyle;
-use crate::config::effects;
+use crate::config::chrome;
 use crate::core::geometry::GridMetrics;
 use crate::terminal::display::{Cell, CellRole, ScreenBuffer};
+use crate::terminal::theme::Theme;
 
 use super::atlas::{Atlas, CachedGlyph, GlyphKey};
 use super::cursor::{cursor_overlay_rects, PxRect};
 use super::font_manager::{FontManager, FontSource};
-use super::quad_renderer::{BackgroundUniforms, EffectKnobs, QuadRenderer, resolve_effect_uniforms};
+use super::quad_renderer::{ChromeKnobs, CompositeUniforms, QuadRenderer, resolve_chrome_uniforms};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -806,7 +807,7 @@ impl Renderer {
 
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Glyph Uniforms"),
-            size: std::mem::size_of::<BackgroundUniforms>() as u64,
+            size: std::mem::size_of::<CompositeUniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -1243,9 +1244,18 @@ impl Renderer {
         self.metrics.offset_x
     }
 
+    /// Render one frame of the screen model.
+    ///
+    /// The active theme arrives with the screen model: the caller passes
+    /// the same theme the cells were painted with (the backend's resolved
+    /// theme, invocation overrides included). The core never reads the
+    /// config default itself — a second theme source would diverge the
+    /// frame clear color, the out-of-grid background, and the effect
+    /// signing from the cells whenever an override is active.
     pub fn render(
         &mut self,
         screen_buffer: &ScreenBuffer,
+        theme: &Theme,
     ) -> Result<FrameOutcome, RenderError> {
         let cols = screen_buffer.width as usize;
         let rows = screen_buffer.height as usize;
@@ -1348,9 +1358,9 @@ impl Renderer {
         //
         // The theme is the single source of the background: the render pass
         // clears to it and the shader paints it outside the grid.
-        // Effect magnitudes are signed here from the theme's darkness so the
-        // shader stays theme-agnostic; all zero with effects disabled.
-        let theme = crate::config::theme::THEME.theme();
+        // Chrome magnitudes are resolved here from the theme's darkness
+        // so the shader stays theme-agnostic; all zero with chrome
+        // disabled, which is exactly the identity over the cell colors.
         let (tbr, tbg, tbb) = theme.bg.rgb8();
         let theme_bg = [
             f32::from(tbr) / 255.0,
@@ -1358,30 +1368,38 @@ impl Renderer {
             f32::from(tbb) / 255.0,
             1.0,
         ];
-        let fx = resolve_effect_uniforms(
-            EffectKnobs {
-                enabled: effects::EFFECTS_ENABLED,
-                panel: effects::PANEL_DEPTH,
-                panel_shift: effects::PANEL_SHIFT,
-                panel_edge: effects::PANEL_EDGE,
-                panel_edge_delta: effects::PANEL_EDGE_DELTA,
-                selection_edge: effects::SELECTION_EDGE,
-                selection_edge_delta: effects::SELECTION_EDGE_DELTA,
-                cursor_halo: effects::CURSOR_HALO,
-                cursor_halo_alpha: effects::CURSOR_HALO_ALPHA,
+        let fx = resolve_chrome_uniforms(
+            ChromeKnobs {
+                enabled: chrome::CHROME_ENABLED,
+                glass: chrome::CHROME_GLASS,
+                blur: chrome::CHROME_BLUR,
+                blur_radius_px: chrome::CHROME_BLUR_RADIUS_PX,
+                glass_tint: chrome::CHROME_GLASS_TINT,
+                specular: chrome::CHROME_SPECULAR,
+                specular_strength: chrome::CHROME_SPECULAR_STRENGTH,
+                shadow: chrome::CHROME_SHADOW,
+                shadow_strength: chrome::CHROME_SHADOW_STRENGTH,
+                shadow_px: chrome::CHROME_SHADOW_PX,
+                solid_panels: chrome::CHROME_SOLID_PANELS,
+                panel_shift: chrome::CHROME_PANEL_SHIFT,
+                panel_edge_delta: chrome::CHROME_PANEL_EDGE_DELTA,
             },
             theme.is_dark,
         );
-        let uniforms = BackgroundUniforms {
+        let uniforms = CompositeUniforms {
             screen_size: [self.size.0 as f32, self.size.1 as f32],
             cell_size: [cw, ch],
             grid_offset: [self.metrics.offset_x, self.metrics.offset_y],
             grid_dims: [cols as u32, rows as u32],
             bg: theme_bg,
-            panel_shift: fx[0],
-            panel_edge: fx[1],
-            selection_edge: fx[2],
-            cursor_halo: fx[3],
+            glass: fx[0],
+            blur_radius_px: fx[1],
+            glass_tint: fx[2],
+            specular: fx[3],
+            shadow_strength: fx[4],
+            shadow_px: fx[5],
+            panel_shift: fx[6],
+            panel_edge: fx[7],
         };
         self.quad_renderer.update_uniforms(&self.queue, &uniforms);
         self.quad_renderer.upload_cells(

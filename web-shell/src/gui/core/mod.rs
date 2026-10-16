@@ -3,6 +3,9 @@
 #[path = "../../../../src/gui/core/atlas.rs"]
 pub mod atlas;
 
+#[path = "../../../../src/gui/core/chrome.rs"]
+pub mod chrome;
+
 #[path = "../../../../src/gui/core/cursor.rs"]
 pub mod cursor;
 

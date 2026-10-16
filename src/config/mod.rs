@@ -12,7 +12,7 @@
 //! - [`accessibility`]: accessibility behavior, one module per disability class
 //! - [`display`]: display and rendering toggles
 //! - [`editor`]: editing behavior (tab width, kill ring, undo, shell)
-//! - [`effects`]: GUI shader effect toggles
+//! - [`chrome`]: GUI chrome style and shader layer toggles
 //! - [`font`]: GUI font stack
 //! - [`frontend`]: default frontend and WebUI server defaults
 //! - [`keys`]: keybindings and input model
@@ -25,7 +25,7 @@
 pub mod accessibility;
 pub mod display;
 pub mod editor;
-pub mod effects;
+pub mod chrome;
 pub mod font;
 pub mod frontend;
 pub mod keys;
