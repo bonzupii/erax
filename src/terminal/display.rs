@@ -4,7 +4,6 @@ use crate::core::spell::SpellChecker;
 use crate::core::syntax::SyntaxHighlighter;
 use crate::terminal::capabilities::DisplayMode;
 use crate::terminal::prompt::PromptState;
-use crate::terminal::renderers::DirtyTracker;
 use unicode_segmentation::UnicodeSegmentation;
 
 // Re-export Color from color module for backward compatibility
@@ -248,7 +247,6 @@ pub struct Display {
     /// Whether to show the menu bar
     pub show_menu_bar: bool,
     /// Dirty region tracker for incremental rendering
-    pub dirty_tracker: DirtyTracker,
     /// Software mouse cursor position (for TTYs)
     pub mouse_cursor: Option<(u16, u16)>,
     /// Display mode (TrueColor, Ansi, Ascii) for color fallback
@@ -310,7 +308,6 @@ impl Display {
             spell_checker: SpellChecker::new(),
             menu_bar: crate::core::menu::MenuBar::default(),
             show_menu_bar: true,
-            dirty_tracker: DirtyTracker::new(width, height),
             mouse_cursor: None,
             display_mode: DisplayMode::detect(),
             bar: BarState::empty(),
@@ -363,9 +360,6 @@ impl Display {
         // gets repainted properly.
         self.front_buffer = ScreenBuffer::new(cols, rows);
         self.back_buffer = ScreenBuffer::new(cols, rows);
-
-        // Sync dirty tracker (marks full redraw internally)
-        self.dirty_tracker.resize(cols, rows);
 
         self.dirty = true;
         self.needs_full_redraw = true; // Force full redraw on resize
@@ -427,12 +421,6 @@ impl Display {
             self.cursor_style = style;
         }
 
-        // Handle full redraw request (e.g. after resize)
-        if self.needs_full_redraw {
-            self.dirty_tracker.mark_full_redraw();
-            self.needs_full_redraw = false;
-        }
-
         // 1. Clear back buffer (the one we are drawing to)
         self.back_buffer.clear();
 
@@ -471,9 +459,6 @@ impl Display {
 
         for pane in &frame.panes {
             let window_id = pane.window;
-            // Mark this window's rect as dirty for incremental rendering
-            self.dirty_tracker.mark_rect(&pane.frame);
-
             if let Some(window) = app.windows.get(&window_id)
                 && let Some(buffer) = app.buffers.get_mut(&window.buffer_id) {
                     let is_active = window_id == app.active_window;
@@ -488,7 +473,6 @@ impl Display {
                             theme: &self.theme,
                             syntax_highlighter: &mut self.syntax_highlighter,
                             spell_checker: &self.spell_checker,
-                            dirty_tracker: &self.dirty_tracker,
                             is_active,
                             show_line_numbers: self.show_line_numbers,
                             diff_state: app.diff_state.as_ref(),
@@ -601,7 +585,6 @@ impl Display {
         // self.swap_buffers_with_validation();
         self.dirty = false; // Clear dirty flag after successful render
 
-        // NOTE: dirty_tracker is cleared in swap_buffers(), not here, so that
         // render_display_to_terminal can still check dirty state
 
         // The flash is consumed by the frame just painted: one frame,
@@ -845,8 +828,6 @@ impl Display {
     pub fn swap_buffers(&mut self) {
         self.swap_buffers_with_validation();
         self.dirty = false;
-        // Clear dirty tracker AFTER terminal output is complete
-        self.dirty_tracker.clear();
     }
 
     /// Internal swap implementation
@@ -1754,13 +1735,17 @@ mod golden_tests {
     #[test]
     fn golden_stacked_split_hscroll_rect_map() {
         let mut app = app_100_lines();
+        // Content wider than any viewport: a 200-column line, so the
+        // renderer measures a wide visible width and the scrollbar
+        // decision sees it.
+        let wide = "x".repeat(200);
+        app.active_buffer_mut().unwrap().insert(0, &format!("{wide}\n"));
         app.split_window_vertically();
-        // Content wider than any viewport: the scrollbar decision reads
-        // the cached width the renderer maintains.
-        for window in app.windows.values_mut() {
-            window.cached_content_width = 200;
-        }
         let mut display = Display::new(80, 24, None, None);
+        // Two frames: the first measures the wide content into the
+        // cache; the second lays out with the scrollbar present.
+        display.render(&mut app).expect("render");
+        display.dirty = true;
         display.render(&mut app).expect("render");
         let frame = frame_of(&app, 80, 24);
         assert_eq!(frame.panes.len(), 2);

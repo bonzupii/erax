@@ -8,7 +8,6 @@ use crate::core::terminal_host::TerminalHost;
 use crate::core::window::Window;
 use crate::core::commands::diff::DiffNavState;
 use crate::terminal::display::{Cell, CellRole, Color, ScreenBuffer};
-use crate::terminal::renderers::DirtyTracker;
 use crate::terminal::theme::Theme;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -43,7 +42,6 @@ pub struct WindowRenderParams<'a> {
     pub theme: &'a Theme,
     pub syntax_highlighter: &'a mut SyntaxHighlighter,
     pub spell_checker: &'a SpellChecker,
-    pub dirty_tracker: &'a DirtyTracker,
     pub is_active: bool,
     pub show_line_numbers: bool,
     pub diff_state: Option<&'a DiffNavState>,
@@ -62,7 +60,6 @@ impl WindowRenderer {
             theme,
             syntax_highlighter,
             spell_checker,
-            dirty_tracker,
             is_active,
             show_line_numbers,
             diff_state,
@@ -201,13 +198,6 @@ impl WindowRenderer {
         for y in 0..text_height {
             let buffer_line_idx = window.scroll_offset + y;
             let screen_y = (geom.text.y + y) as u16;
-
-            // Optimization: Skip rendering if row is not dirty
-            // Note: caller handles copying from front buffer if skipped
-            if !dirty_tracker.is_row_dirty(screen_y as usize) {
-                let _ = line_iter.next();
-                continue;
-            }
 
             // Check for diagnostics on this line
             let line_diagnostics: Vec<&crate::core::diagnostics::Diagnostic> = diagnostics_vec

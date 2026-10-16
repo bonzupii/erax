@@ -41,7 +41,7 @@ pub fn render_display<W: Write>(
     out.queue(Hide)?;
 
     // Full redraw on request (e.g. after resize).
-    let needs_full = display.needs_full_redraw || display.dirty_tracker.needs_full_redraw();
+    let needs_full = display.needs_full_redraw;
     if needs_full {
         out.queue(Clear(ClearType::All))?;
         out.queue(MoveTo(0, 0))?;
@@ -57,11 +57,9 @@ pub fn render_display<W: Write>(
     let mut last_bg: Option<CrosstermColor> = None;
     let mut cursor_moved = false;
 
+    // Unchanged cells are skipped by the per-cell diff below; no
+    // row-level tracker is needed.
     for y in 0..display.terminal_size.1 {
-        if !needs_full && !display.dirty_tracker.is_row_dirty(y as usize) {
-            continue;
-        }
-
         for x in 0..display.terminal_size.0 {
             let new_cell = match back_buffer.get(x, y) {
                 Some(cell) => cell,
