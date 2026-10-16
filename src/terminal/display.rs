@@ -262,6 +262,9 @@ pub struct Display {
     /// Whether any frame published a non-default cursor style. Drives
     /// restore-on-exit in the [`Drop`] impl.
     cursor_style_touched: bool,
+    /// Whether this display owns a TTY. The Drop restore writes to
+    /// stdout; GUI/web sessions must not emit terminal escapes.
+    owns_tty: bool,
     /// Cursor style the terminal emit path last wrote, for DECSCUSR dedup.
     /// Written by `terminal::render`; `None` before the first frame.
     pub last_emitted_cursor_style: Option<CursorStyle>,
@@ -313,6 +316,7 @@ impl Display {
             bar: BarState::empty(),
             cursor_style: CursorStyle::Default,
             cursor_style_touched: false,
+            owns_tty: false,
             last_emitted_cursor_style: None,
             flash: false,
         }
@@ -324,7 +328,9 @@ impl Display {
         wrap_override: Option<bool>,
     ) -> Result<Self, std::io::Error> {
         let (cols, rows) = Self::get_terminal_size()?;
-        Ok(Self::new(cols, rows, theme_override, wrap_override))
+        let mut display = Self::new(cols, rows, theme_override, wrap_override);
+        display.owns_tty = true;
+        Ok(display)
     }
 
     /// Get terminal size using crossterm
@@ -925,7 +931,10 @@ impl Drop for Display {
     /// leave a stray bar/underline cursor behind. In GUI mode no TTY is
     /// touched per frame, so this is a no-op unless a style was published.
     fn drop(&mut self) {
-        if self.cursor_style_touched {
+        // Only a TTY-owning display published a style to the terminal.
+        // GUI/web sessions share the Display type but never touch a TTY;
+        // emitting an escape there would corrupt their stdout protocol.
+        if self.owns_tty && self.cursor_style_touched {
             let seq = CursorStyle::Default.decscusr_bytes();
             let _ = std::io::Write::write_all(&mut std::io::stdout(), &seq);
         }
