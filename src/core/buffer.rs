@@ -320,9 +320,10 @@ impl Buffer {
     }
 
     /// Open a file lazily with the syscall-pager backend (explicit fallback;
-    /// the default on non-Unix). Content replacement at the same length is
-    /// served silently from the pager's cache (pinned snapshot) rather than
-    /// refused — the documented semantic difference from mmap.
+    /// the default on non-Unix). External-mutation semantics match the mmap
+    /// backend: a same-length content replacement under the open file is
+    /// refused with `PagerError::FileChanged`, never silently served from
+    /// the pager's cache.
     pub fn open_mapped_pager(path: impl AsRef<Path>) -> Result<Self, LoadError> {
         let path = path.as_ref();
         let validated_path =

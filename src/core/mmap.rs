@@ -4,12 +4,15 @@
 //!  1. **Validated length**: `len` comes from `fstat` at open; we never
 //!     build a slice at or beyond it (mitigation #1).
 //!  2. **Post-read snapshot validation**: one `fstat` after every guarded
-//!     read. Same length + different mtime means the content was replaced
+//!     read. A read range extending beyond the current length means the
+//!     snapshot shrank there — `Truncated` (the guard catches shrinks that
+//!     fault; the range check catches the ones within the last mapped page,
+//!     which fault nothing; a pure shrink still serves its intact prefix).
+//!     Same length + different mtime means the content was replaced
 //!     (truncate+regrow or in-place rewrite) — the bytes just read are
 //!     discarded with `PagerError::FileChanged`. Checking *after* the deref
-//!     is precise where a pre-read check has a TOCTOU window. Truncation is
-//!     caught by the guard; the length cache short-circuits repeat faults.
-//!     (mitigation #2).
+//!     is precise where a pre-read check has a TOCTOU window. The length
+//!     cache short-circuits repeat faults. (mitigation #2).
 //!  3. **SIGBUS handler with scoped recovery**: a fault inside a guarded
 //!     read becomes `PagerError::Truncated`, never process death
 //!     (mitigation #3).
@@ -729,19 +732,31 @@ impl MmapRegion {
         Ok(())
     }
 
-    /// Post-read snapshot validation (one fstat): same length + different
-    /// mtime means the content was replaced (truncate+regrow or in-place
-    /// rewrite) — the bytes just read cannot be trusted, discard them.
-    /// A changed length is fine: shrinks are caught by the guard above,
-    /// and appends are invisible by design (semantic 1). The cache is
-    /// refreshed as a side effect.
+    /// Post-read snapshot validation (one fstat). A read range extending
+    /// beyond the current length means the pinned snapshot is gone there —
+    /// `Truncated`, the pager's short-pread counterpart. (The guard catches
+    /// shrinks that fault, but a shrink within the last mapped page serves
+    /// stale bytes silently without this range check.) A pure shrink still
+    /// serves its intact prefix byte-exact; only the gone region refuses.
+    /// Same length + different mtime means the content was replaced
+    /// (truncate+regrow or in-place rewrite) — the bytes just read cannot
+    /// be trusted, discard them: `FileChanged`. A longer length is a
+    /// tolerated append: reads are clamped to the pinned length, so the
+    /// new tail is never read (semantic 1). The cache is refreshed as a
+    /// side effect.
     ///
     /// Residuals (documented): a replacement preserving mtime, or one
     /// racing this fstat itself, is not detected — same as the pager.
-    fn post_read_check(&self, offset: u64) -> Result<(), PagerError> {
+    fn post_read_check(&self, offset: u64, len: usize) -> Result<(), PagerError> {
         if let Ok(meta) = self._file.metadata() {
             let cur_len = meta.len();
             self.cached_len.set(cur_len);
+            if (offset as u64).saturating_add(len as u64) > cur_len {
+                return Err(PagerError::Truncated {
+                    offset,
+                    wanted: len as u64,
+                });
+            }
             if cur_len == self.len
                 && let Some(cur_mtime) = meta.modified().ok()
                 && let Some(open_mtime) = self.open_mtime
@@ -788,7 +803,7 @@ impl MmapRegion {
                 });
             }
         };
-        self.post_read_check(offset)?;
+        self.post_read_check(offset, len)?;
         Ok(out)
     }
 
@@ -844,7 +859,7 @@ impl MmapRegion {
                 });
             }
         }
-        if let Err(e) = self.post_read_check(offset) {
+        if let Err(e) = self.post_read_check(offset, len) {
             out.clear();
             return Err(e);
         }

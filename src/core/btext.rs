@@ -224,10 +224,45 @@ impl Pager {
         })
     }
 
+    /// Revalidate the snapshot against the live file (one fstat). A read
+    /// range extending beyond the current length means the pinned snapshot
+    /// is gone there — `Truncated` (a pure shrink still serves its intact
+    /// prefix byte-exact; only the gone region refuses). Same length +
+    /// different mtime means the content was replaced (truncate+regrow or
+    /// in-place rewrite) — `FileChanged`. Anything else (tolerated append,
+    /// intact prefix of a shrink) proceeds; reads are clamped to the pinned
+    /// length. This is the shared external-mutation rule for both backends
+    /// — the mmap backend's `post_read_check` implements the same arms.
+    fn revalidate(&self, offset: u64, wanted: u64) -> Result<(), PagerError> {
+        if let Some(open_mtime) = self.open_mtime
+            && let Ok(meta) = self.file.metadata()
+        {
+            let cur_len = meta.len();
+            if offset.saturating_add(wanted) > cur_len {
+                return Err(PagerError::Truncated { offset, wanted });
+            }
+            if cur_len == self.len
+                && let Ok(mtime) = meta.modified()
+                && mtime != open_mtime
+            {
+                return Err(PagerError::FileChanged { offset });
+            }
+        }
+        Ok(())
+    }
+
     /// Fetch a page into the cache (no-op if resident). Computes and stores
     /// the page's metrics on first fetch.
     fn ensure_page(&mut self, page_idx: u64) -> Result<(), PagerError> {
-        if self.pages.contains_key(&page_idx) {
+        if let Some(page) = self.pages.get(&page_idx) {
+            // Cache hit: a resident page is not a license to serve stale
+            // bytes as current — revalidate every hit, like the miss path
+            // and like the mmap backend's post-read check. The range is the
+            // cached page's actual length: a partial last page must not
+            // trip the truncation arm when the file is intact.
+            let offset = page_idx * self.page_size as u64;
+            let page_len = page.len() as u64;
+            self.revalidate(offset, page_len)?;
             self.touch(page_idx);
             return Ok(());
         }
@@ -239,22 +274,13 @@ impl Pager {
                 file_len: self.len,
             });
         }
-        // Snapshot-integrity revalidation: the fd pins the inode, but the
-        // inode's *content* can be replaced under us (truncate+regrow,
-        // in-place overwrite). On a cache miss the old bytes are gone, so
-        // re-stat: same length + different mtime means the pinned snapshot
-        // no longer exists on disk — refuse the read rather than silently
-        // substituting new bytes. A grown file is a (tolerated) append; a
-        // shrunk file surfaces as Truncated below.
-        if let Some(open_mtime) = self.open_mtime
-            && let Ok(meta) = self.file.metadata()
-            && meta.len() == self.len
-            && let Ok(mtime) = meta.modified()
-            && mtime != open_mtime
-        {
-            return Err(PagerError::FileChanged { offset });
-        }
+        // Snapshot-integrity revalidation on a cache miss: the old bytes
+        // are gone, so refuse the fetch rather than silently substituting
+        // the replacement's bytes. The range checked is the actual fetch
+        // (`want`), not the full page: a partial last page must not trip
+        // the truncation arm when the file is intact.
         let want = (self.len - offset).min(self.page_size as u64) as usize;
+        self.revalidate(offset, want as u64)?;
         let mut buf = vec![0u8; want];
         let got = pread_partial(&self.file, &mut buf, offset)
             .map_err(|source| PagerError::Io { offset, source })?;
@@ -322,6 +348,11 @@ impl Pager {
             cur += take as u64;
             remaining -= take;
         }
+        // Post-read revalidation: a replacement racing the fetch must not
+        // silently substitute. Checking after the copy is precise where a
+        // pre-read check has a TOCTOU window — the same reason the mmap
+        // backend checks after the guarded deref (`post_read_check`).
+        self.revalidate(offset, len as u64)?;
         Ok(out)
     }
 
@@ -766,9 +797,10 @@ impl BText {
     /// recovery, post-read snapshot validation, immutable mapping,
     /// fault-injection tested) in `crate::core::mmap`. A fault becomes a
     /// typed `PagerError`, never process death; a same-length content
-    /// replacement becomes `FileChanged` (the pager instead serves its
-    /// cache silently — see `open_mapped_pager`). On non-Unix, and via
-    /// `open_mapped_pager` everywhere, the syscall pager is used.
+    /// replacement becomes `FileChanged` on both backends (the pager
+    /// revalidates the snapshot on every read — see `open_mapped_pager`).
+    /// On non-Unix, and via `open_mapped_pager` everywhere, the syscall
+    /// pager is used.
     pub fn open_mapped(path: &Path) -> Result<Self, PagerError> {
         #[cfg(unix)]
         {
@@ -795,10 +827,8 @@ impl BText {
     /// fault becomes `PagerError::Truncated`, never process death),
     /// post-read snapshot validation (a same-length replacement becomes
     /// `PagerError::FileChanged`, never silent substitution), immutable
-    /// `PROT_READ` mapping, and fault-injection tests. The one semantic
-    /// difference from the pager: content *replacement* (same length, new
-    /// mtime) is refused with `FileChanged` instead of serving cached
-    /// pages — mmap has no page cache to pin a snapshot in.
+    /// `PROT_READ` mapping, and fault-injection tests. External-mutation
+    /// semantics match the pager exactly (see `open_mapped_pager`).
     #[cfg(unix)]
     pub fn open_mapped_mmap(path: &Path) -> Result<Self, PagerError> {
         let file = std::fs::File::open(path)
@@ -817,9 +847,10 @@ impl BText {
     }
 
     /// Open with the syscall-pager backend (the non-Unix default; also the
-    /// explicit fallback on Unix). Content replacement at the same length
-    /// is served silently from the pager's cache (pinned snapshot) rather
-    /// than refused — the documented semantic difference from mmap.
+    /// explicit fallback on Unix). External-mutation semantics match mmap:
+    /// a same-length content replacement under the open file is refused
+    /// with `PagerError::FileChanged` — on a cache hit, a cache miss, and
+    /// after the copy (TOCTOU) — never silently served from the cache.
     pub fn open_mapped_pager(path: &Path) -> Result<Self, PagerError> {
         let pager = Pager::open(path)?;
         let len = pager.len();

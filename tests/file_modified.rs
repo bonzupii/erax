@@ -131,6 +131,25 @@ fn yes_reloads_buffer_from_disk() {
     );
 }
 
+/// The mapped snapshot is gone after an external shrink: reads surface
+/// the typed `Truncated` error instead of silently serving mixed old/new
+/// bytes. (The eager path's "buffer keeps the old bytes" was a copy; a
+/// lazy view cannot conjure bytes the file no longer has.)
+fn assert_diverged_typed(fx: &Fixture) {
+    assert_eq!(buffer_text(&fx.app, fx.bid), "");
+    assert!(
+        matches!(
+            fx.app
+                .buffers
+                .get(&fx.bid)
+                .expect("buffer")
+                .take_pager_error(),
+            Some(erax::core::btext::PagerError::Truncated { .. })
+        ),
+        "divergence must be a typed error, not silent"
+    );
+}
+
 #[test]
 fn no_keeps_buffer_and_stops_asking_for_that_state() {
     let mut fx = fixture("original\n");
@@ -140,19 +159,30 @@ fn no_keeps_buffer_and_stops_asking_for_that_state() {
 
     feed(&mut fx, KeyPress::plain(Key::Char('n')));
 
-    assert_eq!(buffer_text(&fx.app, fx.bid), "original\n");
+    assert_diverged_typed(&fx);
     assert!(
         fx.app.message.as_deref().unwrap_or("").contains("Not saved"),
         "user sees why the save did not happen, got {:?}",
         fx.app.message
     );
-    // A second save is the deliberate overwrite: no second question.
+    // A second save is the deliberate overwrite: no second question — but
+    // the diverged mapped content cannot be written, so the save itself
+    // fails typed instead of silently writing a mix. The file is untouched.
     save(&mut fx);
     assert!(!confirm_pending(&fx), "declined state must not re-ask");
+    assert!(
+        fx.app
+            .message
+            .as_deref()
+            .unwrap_or("")
+            .contains("Save failed"),
+        "diverged save fails typed, got {:?}",
+        fx.app.message
+    );
     assert_eq!(
         std::fs::read_to_string(&fx.path).expect("read back"),
-        "original\n",
-        "the second save overwrites the external change"
+        "changed\n",
+        "the failed save must not touch the file"
     );
 }
 
@@ -165,7 +195,7 @@ fn enter_declines_without_reloading() {
 
     feed(&mut fx, KeyPress::plain(Key::Enter));
 
-    assert_eq!(buffer_text(&fx.app, fx.bid), "original\n");
+    assert_diverged_typed(&fx);
     save(&mut fx);
     assert!(!confirm_pending(&fx), "Enter declines like n");
 }
@@ -181,7 +211,7 @@ fn stray_keys_do_not_answer() {
     feed(&mut fx, KeyPress::plain(Key::Char(' ')));
 
     assert!(confirm_pending(&fx), "unrelated keys leave the question up");
-    assert_eq!(buffer_text(&fx.app, fx.bid), "original\n");
+    assert_diverged_typed(&fx);
 }
 
 #[test]
@@ -229,8 +259,11 @@ fn unsaved_edits_declined_keeps_the_edits() {
 
     feed(&mut fx, KeyPress::plain(Key::Char('n')));
 
-    assert_eq!(buffer_text(&fx.app, fx.bid), "edited original\n");
+    // The owned edit survives (the buffer is still modified); the mapped
+    // region the edit sits beside reports the divergence typed instead of
+    // silently serving the replacement's bytes.
     assert!(fx.app.buffers.get(&fx.bid).expect("buffer").modified);
+    assert_diverged_typed(&fx);
 }
 
 #[test]

@@ -106,10 +106,11 @@ fn line_payload(target_len: usize) -> Vec<u8> {
 // ---------------------------------------------------------------------------
 // Backend parameterization (session 7): every test in this suite runs
 // against BOTH the pager (default) and the mmap backend (Unix only).
-// The backends share the snapshot contract, with ONE documented divergence:
-// content replacement at the same length is served silently from the
-// pager's cache (pinned snapshot) but refused with `FileChanged` by mmap
-// (no page cache to pin a snapshot in). See `extmut_regrow_cached_pages_stay_pinned_impl`.
+// The backends share the snapshot contract with NO divergence: a
+// same-length content replacement under the open file is refused with
+// `FileChanged` by both — the pager revalidates the snapshot on every
+// read (cache hit, cache miss, and post-copy), exactly like mmap's
+// post-read check. See `extmut_regrow_cached_pages_refused_impl`.
 // ---------------------------------------------------------------------------
 
 /// Which storage backend `open_mapped` uses for a test.
@@ -359,10 +360,15 @@ fn extmut_truncate_zero_then_regrow_impl(backend: Backend) {
     assert!(!fresh.has_pager_error());
 }
 
-fn extmut_regrow_cached_pages_stay_pinned_impl(backend: Backend) {
+fn extmut_regrow_cached_pages_refused_impl(backend: Backend) {
     // Companion to extmut_truncate_zero_then_regrow: pages that WERE read
-    // (resident in the pager cache) before the mutation must keep serving
-    // the pinned snapshot after truncate+regrow.
+    // (resident in the pager cache, or already faulted in the mapping)
+    // before the mutation must NOT be served as current after
+    // truncate+regrow at the same length. Both backends refuse with
+    // `FileChanged` once revalidation observes the replacement; if the
+    // replacement is not observed (mtime granularity), the served bytes
+    // must still be the pinned old ones. Silent substitution of the new
+    // bytes is a violation for either backend.
     let path = tmp_path(&format!("{}-regrow-cached", backend.tag()));
     let _guard = TempGuard::new(vec![path.clone()]);
 
@@ -385,14 +391,6 @@ fn extmut_regrow_cached_pages_stay_pinned_impl(backend: Backend) {
         .expect("truncate failed");
     write_file(&path, &new_content);
 
-    // THE documented backend divergence (session 7):
-    // - Pager: cached pages are the immutable snapshot — old bytes, no error.
-    // - Mmap: no page cache exists. Already-faulted MAP_PRIVATE pages still
-    //   hold the old bytes (honest pinned snapshot), but the mtime check
-    //   refuses with `FileChanged` once revalidation observes the
-    //   replacement — instead of risking mixed old/new bytes. Both are
-    //   honest; silent substitution of the new bytes is a violation for
-    //   either backend.
     let after = buf.bytes();
     let err = buf.take_pager_error();
     eprintln!(
@@ -406,30 +404,20 @@ fn extmut_regrow_cached_pages_stay_pinned_impl(backend: Backend) {
         "SNAPSHOT VIOLATION [{}]: silently served the NEW bytes as the pinned snapshot",
         backend.tag(),
     );
-    match backend {
-        Backend::Pager => {
-            assert_eq!(
-                after, old_content,
-                "cached pages must keep serving the pinned snapshot after regrow"
-            );
-            assert!(
-                err.is_none(),
-                "no pager error expected when serving from cache, got {err:?}"
-            );
-        }
-        #[cfg(unix)]
-        Backend::Mmap => match err {
-            // Detected replacement: the honest refusal.
-            Some(PagerError::FileChanged { .. }) => {}
-            // Not yet detected (stale revalidation epoch): the already-
-            // faulted pages genuinely are the old bytes — still the pinned
-            // snapshot, and the mtime check fires within 1024 reads.
-            None => assert_eq!(
-                after, old_content,
-                "[mmap] without a FileChanged error, must serve the pinned old bytes"
-            ),
-            Some(other) => panic!("[mmap] expected FileChanged or pinned bytes, got {other:?}"),
-        },
+    match err {
+        // Detected replacement: the honest refusal (both backends).
+        Some(PagerError::FileChanged { .. }) => {}
+        // Not observed (mtime granularity): the already-resident bytes
+        // genuinely are the old ones — still the pinned snapshot.
+        None => assert_eq!(
+            after, old_content,
+            "[{}] without a FileChanged error, must serve the pinned old bytes",
+            backend.tag(),
+        ),
+        Some(other) => panic!(
+            "[{}] expected FileChanged or pinned bytes, got {other:?}",
+            backend.tag()
+        ),
     }
     assert_eq!(buf.len(), LEN);
 }
@@ -811,9 +799,9 @@ backend_tests!(
     extmut_truncate_zero_then_regrow_mmap
 );
 backend_tests!(
-    extmut_regrow_cached_pages_stay_pinned_impl,
-    extmut_regrow_cached_pages_stay_pinned_pager,
-    extmut_regrow_cached_pages_stay_pinned_mmap
+    extmut_regrow_cached_pages_refused_impl,
+    extmut_regrow_cached_pages_refused_pager,
+    extmut_regrow_cached_pages_refused_mmap
 );
 backend_tests!(
     extmut_rename_over_inode_swap_impl,
