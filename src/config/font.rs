@@ -21,6 +21,11 @@ pub const FONT_STACK: &[&str] = &[
     "Noto Color Emoji",
     "DejaVu Sans Mono",
     "Liberation Mono",
+    // Braille: DejaVu Sans supplies U+2800..U+28FF (full 256-pattern
+    // coverage, monospace advances). None of the mono fonts above cover
+    // braille, so this changes no existing resolution; it pins the
+    // braille provider instead of leaving it to system fallback.
+    "DejaVu Sans",
     // CJK: last. Nothing earlier covers CJK, so placing it here changes
     // no existing resolution (box drawing and blocks still resolve to the
     // fonts above). The monospaced CJK variant preserves the cell model;

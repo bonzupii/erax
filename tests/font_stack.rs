@@ -65,3 +65,40 @@ fn cjk_resolves_to_the_cjk_font() {
         "CJK must resolve to the CJK font"
     );
 }
+
+#[test]
+fn braille_resolves_to_distinct_glyphs() {
+    use std::collections::HashSet;
+    if !stack_resolves("DejaVu Sans") {
+        eprintln!("skip: DejaVu Sans not installed on this machine");
+        return;
+    }
+    // Distinct braille patterns must produce distinct glyphs through the
+    // real shaping path; collapsing them to one glyph renders uniform
+    // dense blocks instead of dot patterns.
+    let fonts = resolve_config_fonts();
+    let mut manager = FontManager::from_font_stack(16.0, 19.2, &fonts);
+    let metrics = Metrics::new(16.0, 19.2);
+    let patterns = ['\u{2800}', '\u{2801}', '\u{281F}', '\u{28FF}'];
+    let mut glyph_ids = HashSet::new();
+    for &ch in &patterns {
+        let mut buffer = Buffer::new(&mut manager.font_system, metrics);
+        buffer.set_text(
+            &ch.to_string(),
+            &Attrs::new().family(Family::Monospace),
+            Shaping::Advanced,
+            Some(Align::Left),
+        );
+        buffer.shape_until_scroll(&mut manager.font_system, false);
+        for run in buffer.layout_runs() {
+            for glyph in run.glyphs {
+                glyph_ids.insert((glyph.font_id, glyph.glyph_id));
+            }
+        }
+    }
+    assert_eq!(
+        glyph_ids.len(),
+        patterns.len(),
+        "braille patterns collapsed to fewer glyphs than patterns"
+    );
+}
