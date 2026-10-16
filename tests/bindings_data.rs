@@ -42,7 +42,7 @@ const ALLOWLIST: &[(&str, usize, &str)] = &[
     ),
     (
         "src/core/commands/control.rs",
-        4,
+        6,
         "the exit-refused message and the run-command prompt derive \
          command names via Command::name(); derivation from the typed \
          table, never hardcoded name strings",
