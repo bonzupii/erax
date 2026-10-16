@@ -55,9 +55,14 @@ pub fn execute_macro(app: &mut EditorApp, count: usize) -> DispatchResult {
         for (step, cnt) in &steps {
             let step_result = match step {
                 MacroStep::Command(Command::ExecuteMacro) => {
-                    // Nested execution is rejected; the flag above guards
-                    // the direct case, this guards macro-contained nesting.
-                    DispatchResult::Info("Macros cannot invoke execute-macro".to_string())
+                    // Nested execution is rejected, not recursive: the
+                    // flag above guards the direct case, this guards
+                    // macro-contained nesting. NotHandled (not Info) is
+                    // the stop signal, so the rejection still halts the
+                    // replay instead of being folded in by the Info rule.
+                    app.message =
+                        Some("Macros cannot invoke execute-macro".to_string());
+                    DispatchResult::NotHandled
                 }
                 MacroStep::Command(cmd) => dispatch(app, *cmd, *cnt),
                 MacroStep::Insert(c) => dispatch_insert(app, *c, *cnt),
@@ -66,7 +71,15 @@ pub fn execute_macro(app: &mut EditorApp, count: usize) -> DispatchResult {
                 // A step that only asks for a repaint folds into the
                 // final Success: the replay's caller repaints anyway.
                 DispatchResult::Success | DispatchResult::Redraw => {}
-                // Anything else (Exit, NeedsInput, AwaitKey, Info,
+                // Info is a successful step carrying its own message
+                // (set-mark says "Mark set", kill-region says "Region
+                // killed"): the message is shown and the replay
+                // continues. Treating Info as a stop aborted every
+                // macro containing a mark or kill command.
+                DispatchResult::Info(msg) => {
+                    app.message = Some(msg);
+                }
+                // Anything else (Exit, NeedsInput, AwaitKey,
                 // NotHandled, FileModified) stops the replay so the
                 // signal reaches the event layer instead of being
                 // swallowed mid-macro.
@@ -131,10 +144,44 @@ mod tests {
         dispatch(&mut app, Command::ExecuteMacro, 1);
         dispatch(&mut app, Command::EndMacro, 1);
         let result = dispatch(&mut app, Command::ExecuteMacro, 1);
-        assert_eq!(
-            result,
-            DispatchResult::Info("Macros cannot invoke execute-macro".to_string())
-        );
+        // Rejected, not recursive: the replay halts on the rejection and
+        // the message names it.
+        assert_eq!(result, DispatchResult::NotHandled);
+        assert!(app
+            .message
+            .as_deref()
+            .is_some_and(|m| m.contains("Macros cannot invoke execute-macro")));
+    }
+
+    #[test]
+    fn replay_continues_past_info_returning_steps() {
+        // set-mark and kill-region report Info ("Mark set", "Region
+        // killed"): a macro containing them must run to completion,
+        // not abort at the first Info result.
+        let mut app = test_app();
+        if let Some(buffer) = app.active_buffer_mut() {
+            buffer.insert(0, "hello world");
+        }
+        dispatch(&mut app, Command::BeginMacro, 1);
+        dispatch(&mut app, Command::SetMark, 1);
+        dispatch(&mut app, Command::ForwardCharacter, 3);
+        dispatch(&mut app, Command::KillRegion, 1);
+        dispatch(&mut app, Command::EndMacro, 1);
+
+        let result = dispatch(&mut app, Command::ExecuteMacro, 1);
+        assert_eq!(result, DispatchResult::Success);
+
+        // Every step ran. Recording executes the commands live, so the
+        // recording-time kill left "lo world"; the replay-time kill must
+        // run too. If the replay had aborted at set-mark's Info, the
+        // text would still be "lo world".
+        let text = app.active_buffer().expect("buffer").content_string();
+        assert_eq!(text, "world");
+        // ...and the kill's message reached the message line.
+        assert!(app
+            .message
+            .as_deref()
+            .is_some_and(|m| m.contains("Region killed")));
     }
 
     #[test]
