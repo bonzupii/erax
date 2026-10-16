@@ -4,9 +4,8 @@
 //! (tests/fixtures/demo-expectations.json) are produced by
 //! gen_demo_corpus.py from pinned Unicode data files. This test runs the
 //! editor's own segmentation and width code over every sample line and
-//! asserts the canonical cluster counts and cell widths. Lines whose
-//! expectations the editor currently misses live in `expected_failures`
-//! as data, never as weakened expectations.
+//! asserts the canonical cluster counts and cell widths unconditionally:
+//! every corpus line is asserted, no exemption mechanism exists.
 
 use erax::core::utf8::{grapheme_count, layout_grapheme_width, GraphemeIterator};
 use serde_json::Value;
@@ -38,10 +37,6 @@ fn load_entries() -> Vec<Entry> {
         })
         .collect()
 }
-
-/// Lines with known-broken expectations. Data, not weakened assertions:
-/// `corpus_expectations` skips these; `expected_failures` documents them.
-const EXPECTED_FAILURE_LINES: &[u64] = &[];
 
 fn check_entry(e: &Entry) -> Option<String> {
     let got_clusters = grapheme_count(&e.text) as u64;
@@ -80,7 +75,6 @@ fn corpus_sidecar_matches_corpus_file() {
 fn corpus_expectations() {
     let failures: Vec<String> = load_entries()
         .iter()
-        .filter(|e| !EXPECTED_FAILURE_LINES.contains(&e.line))
         .filter_map(check_entry)
         .collect();
     assert!(
@@ -88,33 +82,5 @@ fn corpus_expectations() {
         "canonical expectation mismatches ({}):\n{}",
         failures.len(),
         failures.join("\n")
-    );
-}
-
-#[test]
-#[ignore]
-fn expected_failures() {
-    let entries = load_entries();
-    let mut unlisted: Vec<u64> = Vec::new();
-    let mut now_passing: Vec<u64> = Vec::new();
-    for line in EXPECTED_FAILURE_LINES {
-        match entries.iter().find(|e| e.line == *line) {
-            None => unlisted.push(*line),
-            Some(e) => {
-                if check_entry(e).is_none() {
-                    now_passing.push(*line);
-                }
-            }
-        }
-    }
-    assert!(
-        unlisted.is_empty() && now_passing.is_empty(),
-        "expected-failure list is stale: unlisted lines {:?}, now passing {:?}",
-        unlisted,
-        now_passing
-    );
-    assert!(
-        !EXPECTED_FAILURE_LINES.is_empty(),
-        "expected_failures runs only when EXPECTED_FAILURE_LINES is non-empty"
     );
 }
