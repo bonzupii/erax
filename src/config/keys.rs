@@ -339,10 +339,8 @@ pub const MODAL_BINDINGS: &[ModalBinding] = &[
 // key completes the pending sequence and what it selects.
 // ---------------------------------------------------------------------------
 
-/// What the key after a `g` prefix selects is defined in
-/// [`crate::core::bindings::ModalGAction`].
-
-/// The `g`-prefix continuations: `gg`, `ge`, `gE`, `g CTRL-G`.
+/// The `g`-prefix continuations: `gg`, `ge`, `gE`, `g CTRL-G`. The
+/// continuation vocabulary is [`crate::core::bindings::ModalGAction`].
 pub const MODAL_PREFIX_G: &[(KeyPress, ModalGAction)] = &[
     (
         KeyPress::plain(Key::Char('g')),
@@ -362,9 +360,8 @@ pub const MODAL_PREFIX_G: &[(KeyPress, ModalGAction)] = &[
     ),
 ];
 
-/// The continuation vocabulary is [`crate::core::bindings::ModalTextObject`].
-
-/// The text-object continuations after `i`/`a` (`iw`, `a(`, `i"`, …).
+/// The text-object continuations after `i`/`a` (`iw`, `a(`, `i"`, …). The
+/// vocabulary is [`crate::core::bindings::ModalTextObject`].
 pub const MODAL_TEXT_OBJECTS: &[(KeyPress, ModalTextObject)] = &[
     (
         KeyPress::plain(Key::Char('w')),
@@ -508,12 +505,11 @@ pub const STANDARD_BINDINGS: &[KeyBinding] = &[
 // typed command table, so `:buffer-info` works without an ex entry.
 // ---------------------------------------------------------------------------
 
-/// The action vocabulary is [`crate::core::bindings::ExAction`]: plain
-/// commands and command compositions are data; the engine interprets the
-/// variants. The `:q` refusal logic (modified buffers) stays in the engine:
-/// it is a state decision, not a mapping.
-
-/// The vim ex-command vocabulary: command name to action.
+/// The vim ex-command vocabulary: command name to action. The action
+/// vocabulary is [`crate::core::bindings::ExAction`]: plain commands and
+/// command compositions are data; the engine interprets the variants. The
+/// `:q` refusal logic (modified buffers) stays in the engine: it is a
+/// state decision, not a mapping.
 pub const EX_COMMANDS: &[(&str, ExAction)] = &[
     ("w", ExAction::Run(Command::SaveBuffer)),
     ("q", ExAction::ConditionalQuit),
@@ -528,11 +524,9 @@ pub const EX_COMMANDS: &[(&str, ExAction)] = &[
     ("hardcopy", ExAction::Run(Command::PrintBuffer)),
 ];
 
-/// The argument-action vocabulary is
-/// [`crate::core::bindings::ExArgAction`].
-
 /// Ex commands that take a path argument. The engine only consults this
-/// table when the command line carries a non-empty argument.
+/// table when the command line carries a non-empty argument. The
+/// argument-action vocabulary is [`crate::core::bindings::ExArgAction`].
 pub const EX_ARG_COMMANDS: &[(&str, ExArgAction)] = &[
     ("w", ExArgAction::SaveAs),
     ("e", ExArgAction::Open),
