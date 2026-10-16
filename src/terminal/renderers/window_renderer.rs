@@ -415,11 +415,11 @@ impl WindowRenderer {
                                     for i in 1..cluster_width {
                                         let wide_x = x + i as u16;
                                         if wide_x < (text_start_x + text_width) as u16 {
-                                            screen_buffer.set(wide_x, screen_y, Cell::hidden());
-                                            // The implementation of Cell::hidden wasn't public.
-                                            // For now Cell::empty with hidden flag logic.
-                                            // Wait, I saw Cell definition, it has hidden.
-                                            // I should make it public or use a constructor.
+                                            screen_buffer.set(
+                                                wide_x,
+                                                screen_y,
+                                                Cell::hidden_with_bg(bg_color),
+                                            );
                                         }
                                     }
                                 }

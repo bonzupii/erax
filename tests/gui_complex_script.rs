@@ -35,7 +35,7 @@ fn cells_for(text: &str) -> Vec<Cell> {
             CellRole::EditorText,
         ));
         if grapheme_width(grapheme) > 1 {
-            cells.push(Cell::hidden());
+            cells.push(Cell::hidden_with_bg(TermColor::Reset));
         }
     }
     cells

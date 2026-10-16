@@ -24,7 +24,7 @@
 
 use bytemuck::{Pod, Zeroable};
 use cosmic_text::{
-    Align, Attrs, Buffer, CacheKey, Family, LayoutRun, Metrics, Shaping, SwashContent,
+    Align, Attrs, Buffer, CacheKey, Family, FontSystem, LayoutRun, Metrics, Shaping, SwashContent,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -45,6 +45,12 @@ struct GlyphInstance {
     uv_pos: [f32; 2],
     uv_size: [f32; 2],
     color: [f32; 4],
+    /// 1.0 when the glyph lives in the RGBA color atlas (the shader
+    /// paints it verbatim); 0.0 for mask glyphs (tinted by `color`).
+    flags: f32,
+    /// Clip rectangle (x0, y0, x1, y1): fragments outside are discarded,
+    /// so no row paints outside its text region.
+    clip: [f32; 4],
 }
 
 /// One vertex of the cursor overlay: NDC position + solid color.
@@ -297,16 +303,219 @@ pub fn caret_x_for_byte_offset(
     clusters.last().map_or(0.0, |cluster| cluster.trailing_edge())
 }
 
+/// CPU-side layout for one screen row: shaped glyph placements plus the
+/// row's full-width caret map. No GPU work; the renderer rasterizes the
+/// returned glyphs into instances.
+///
+/// Chrome (gutter, scrollbar) never enters the bidi paragraph: only
+/// the text region shapes, so an RTL or complex-script run cannot
+/// reorder the line numbers, displace the gutter, or drag the
+/// scrollbar glyph into the text. Every text cluster origin snaps to
+/// the integer grid (its visual-left column times the whole cell
+/// width); chrome glyphs land literally on their grid columns. The
+/// returned glyph positions are absolute pixels; the caret map holds
+/// line-origin-relative x values, one per grid column plus end of line.
+///
+/// Pure over its inputs except for the shaping scratch state
+/// (`font_system`, `shape_buffer`), which makes it directly testable:
+/// the corpus invariant test shapes every demo-corpus row through
+/// this function and asserts no glyph leaves its grid cell range.
+pub fn layout_row(
+    cells: &[Cell],
+    row_y: f32,
+    ascent: f32,
+    metrics: &GridMetrics,
+    font_system: &mut FontSystem,
+    shape_buffer: &mut Buffer,
+    family: Option<&str>,
+) -> (Vec<ShapedGlyph>, Vec<f32>) {
+    let cols = cells.len();
+    let cw = metrics.cell_width;
+    let cell_h = metrics.cell_height;
+    let origin_x = metrics.offset_x;
+    let baseline = row_y + ascent;
+
+    // Partition: the gutter is the leading run of gutter-role cells;
+    // scrollbar-role cells are chrome wherever they sit; the rest is
+    // text. Chrome glyphs place literally and never shape with text.
+    let gutter_len = cells
+        .iter()
+        .take_while(|c| c.role == CellRole::Gutter)
+        .count();
+    let mut text_cells: Vec<Cell> = Vec::with_capacity(cols);
+    let mut text_index_of: Vec<Option<usize>> = vec![None; cols];
+    let mut chrome: Vec<(usize, Cell)> = Vec::new();
+    for (i, cell) in cells.iter().enumerate() {
+        if i < gutter_len || cell.role == CellRole::Scrollbar {
+            chrome.push((i, *cell));
+        } else {
+            text_index_of[i] = Some(text_cells.len());
+            text_cells.push(*cell);
+        }
+    }
+
+    // Shape the text region alone, with full run shaping.
+    let text_origin = origin_x + gutter_len as f32 * cw;
+    // The text region's clip rectangle: the shaper's natural width can
+    // exceed the model's cell allocation (unligated ZWJ sequences), so
+    // fragments clip here instead of painting over chrome or neighbors.
+    let text_clip = [
+        text_origin,
+        row_y,
+        text_origin + text_cells.len() as f32 * cw,
+        row_y + cell_h,
+    ];
+    let input = build_shaped_line(&text_cells);
+    let default_attrs = attrs_for(family, 0xFFFF_FFFF);
+    shape_buffer.set_rich_text(
+        input
+            .spans
+            .iter()
+            .map(|span| (&input.text[span.start..span.end], attrs_for(family, span.color))),
+        &default_attrs,
+        Shaping::Advanced,
+        Some(Align::Left),
+    );
+    shape_buffer.shape_until_scroll(font_system, false);
+
+    let mut placed: Vec<ShapedGlyph> = Vec::new();
+    let runs: Vec<LayoutRun<'_>> = shape_buffer.layout_runs().collect();
+    let clusters = clusters_from_runs(&runs);
+    // Snap every cluster's origin to the integer grid: the visual-left
+    // column the cluster starts in times the (whole-pixel) cell width.
+    // Glyphs keep their shaped offset inside the cluster, so kerning
+    // and mark placement are unchanged; each row derives its origins
+    // independently, so drift cannot accumulate down the frame.
+    let snapped: Vec<f32> = clusters
+        .iter()
+        .map(|c| cluster_first_col(&input.col_to_byte, c.start, c.end) as f32 * cw)
+        .collect();
+    // Clusters and glyphs walk in the same order, so a cursor finds
+    // each glyph's cluster.
+    let mut cluster_idx = 0usize;
+    for run in &runs {
+        for glyph in run.glyphs {
+            while cluster_idx + 1 < clusters.len()
+                && (clusters[cluster_idx].start != glyph.start
+                    || clusters[cluster_idx].end != glyph.end)
+                && clusters[cluster_idx].end <= glyph.start
+            {
+                cluster_idx += 1;
+            }
+            let placed_x = match clusters.get(cluster_idx).filter(|c| {
+                c.start == glyph.start && c.end == glyph.end
+            }) {
+                Some(c) => text_origin + snapped[cluster_idx] + (glyph.x - c.x),
+                // Degenerate: a glyph outside every cluster keeps the
+                // shaper's position; drift is bounded to this glyph.
+                None => text_origin + glyph.x,
+            };
+            let physical = glyph.physical((0.0, baseline), 1.0);
+            // Integer pixel grid: the cluster origin is whole by
+            // construction; the shaped intra-cluster offset rounds once
+            // against that stable origin, so the rounding cannot drift
+            // across rows.
+            placed.push(ShapedGlyph {
+                key: GlyphKey {
+                    font_id: physical.cache_key.font_id,
+                    glyph_index: physical.cache_key.glyph_id as u32,
+                },
+                cache_key: physical.cache_key,
+                x: placed_x.round() as i32,
+                y: physical.y,
+                color: glyph_color_f32(glyph.color_opt),
+                clip: text_clip,
+            });
+        }
+    }
+
+    // Chrome: each character shapes alone and lands on its own grid
+    // column. No bidi, no kerning across the chrome/text boundary, so
+    // the gutter and scrollbar stay on their grid columns whatever
+    // the text region's script direction.
+    for (col, cell) in &chrome {
+        let cell_text = cell.text();
+        if cell.hidden || cell_text.is_empty() || cell_text == "\0" {
+            continue;
+        }
+        let ch = match cell_text.chars().next() {
+            Some(ch) if !ch.is_control() => ch,
+            _ => continue,
+        };
+        // Chrome keeps its cell colors: the span color is the cell's
+        // foreground, as in the text region.
+        let (r, g, b) = cell.fg.rgb8();
+        shape_buffer.set_text(
+            &ch.to_string(),
+            &attrs_for(family, cosmic_text::Color::rgba(r, g, b, 255).0),
+            Shaping::Advanced,
+            Some(Align::Left),
+        );
+        shape_buffer.shape_until_scroll(font_system, false);
+        let col_x = origin_x + *col as f32 * cw;
+        let chrome_clip = [col_x, row_y, col_x + cw, row_y + cell_h];
+        let chrome_runs: Vec<LayoutRun<'_>> = shape_buffer.layout_runs().collect();
+        for run in &chrome_runs {
+            for glyph in run.glyphs {
+                let physical = glyph.physical((0.0, baseline), 1.0);
+                placed.push(ShapedGlyph {
+                    key: GlyphKey {
+                        font_id: physical.cache_key.font_id,
+                        glyph_index: physical.cache_key.glyph_id as u32,
+                    },
+                    cache_key: physical.cache_key,
+                    x: (col_x + glyph.x).round() as i32,
+                    y: physical.y,
+                    color: glyph_color_f32(glyph.color_opt),
+                    clip: chrome_clip,
+                });
+            }
+        }
+    }
+
+    // Full-row caret map: text columns resolve through the snapped
+    // clusters, chrome columns sit on their grid lines.
+    let snapped_clusters: Vec<ShapedCluster> = clusters
+        .iter()
+        .zip(snapped.iter())
+        .map(|(c, &x)| ShapedCluster { x, ..*c })
+        .collect();
+    let text_carets: Vec<f32> = input
+        .col_to_byte
+        .iter()
+        .map(|&byte| caret_x_for_byte_offset(&snapped_clusters, &input.text, byte))
+        .collect();
+    let gutter_offset = gutter_len as f32 * cw;
+    let mut caret_row = vec![0.0f32; cols + 1];
+    for (full_col, text_idx) in text_index_of.iter().enumerate() {
+        caret_row[full_col] = match text_idx {
+            Some(t) => gutter_offset + text_carets[*t],
+            None => full_col as f32 * cw,
+        };
+    }
+    caret_row[cols] = gutter_offset + text_carets[text_cells.len()];
+
+    (placed, caret_row)
+}
+
 /// A shaped glyph ready for atlas lookup and instancing.
+///
+/// Public because [`layout_row`] returns these; the positions are
+/// absolute pixels on the integer grid.
 #[derive(Clone, Copy, Debug)]
-struct ShapedGlyph {
-    key: GlyphKey,
-    cache_key: CacheKey,
+pub struct ShapedGlyph {
+    pub key: GlyphKey,
+    pub cache_key: CacheKey,
     /// Integer pen position from `LayoutGlyph::physical`. The atlas bitmap is
     /// placed relative to it; the subpixel detail lives in `cache_key`.
-    x: i32,
-    y: i32,
-    color: [f32; 4],
+    pub x: i32,
+    pub y: i32,
+    pub color: [f32; 4],
+    /// Clip rectangle (x0, y0, x1, y1, absolute pixels) the fragment
+    /// shader discards outside of. Text glyphs clip to the text region,
+    /// chrome glyphs to their own cell: no row ever paints outside its
+    /// grid, whatever the shaper's natural width.
+    pub clip: [f32; 4],
 }
 
 /// Text attributes for one color span: the configured primary family (or the
@@ -367,17 +576,20 @@ pub struct Renderer {
     size: (u32, u32),
     font_manager: FontManager,
     atlas: Atlas,
+    /// RGBA atlas for color-font glyphs (CBDT/COLR emoji). Mask glyphs
+    /// stay in the single-channel atlas; the fragment shader picks the
+    /// texture per instance.
+    color_atlas: Atlas,
     quad_renderer: QuadRenderer,
 
     shape_buffer: Buffer,
-    /// Scratch: shaped glyphs of the row currently being emitted.
-    pending_glyphs: Vec<ShapedGlyph>,
     /// Per-frame caret maps: `caret_maps[row][col]` is the screen-space
     /// caret x for grid column `col` (length `cols + 1` per row), built from
     /// the shaped clusters in `render()`.
     caret_maps: Vec<Vec<f32>>,
 
     last_atlas_gen: u64,
+    last_color_atlas_gen: u64,
 
     glyph_pipeline: wgpu::RenderPipeline,
     glyph_bind_group_layout: wgpu::BindGroupLayout,
@@ -540,6 +752,7 @@ impl Renderer {
         );
 
         let atlas = Atlas::new(&device, 2048, 2048);
+        let color_atlas = Atlas::new_rgba(&device, 2048, 2048);
         let quad_renderer = QuadRenderer::new(&device, format);
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -581,6 +794,16 @@ impl Renderer {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
                     count: None,
                 },
             ],
@@ -625,6 +848,16 @@ impl Renderer {
                         wgpu::VertexAttribute {
                             offset: 32,
                             shader_location: 4,
+                            format: wgpu::VertexFormat::Float32x4,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 48,
+                            shader_location: 5,
+                            format: wgpu::VertexFormat::Float32,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 52,
+                            shader_location: 6,
                             format: wgpu::VertexFormat::Float32x4,
                         },
                     ],
@@ -716,11 +949,12 @@ impl Renderer {
             size: (p.width, p.height),
             font_manager,
             atlas,
+            color_atlas,
             quad_renderer,
             shape_buffer,
-            pending_glyphs: Vec::new(),
             caret_maps: Vec::new(),
             last_atlas_gen: 0,
+            last_color_atlas_gen: 0,
             glyph_pipeline: pipeline,
             glyph_bind_group_layout: bind_layout,
             glyph_uniform_buffer: uniform_buf,
@@ -748,7 +982,7 @@ impl Renderer {
     /// Rasterize one glyph into the atlas (best effort). The atlas itself is
     /// the glyph cache — no separate char→glyph map is needed anymore.
     fn ensure_glyph_rasterized(&mut self, key: GlyphKey, cache_key: CacheKey) -> Option<CachedGlyph> {
-        if let Some(g) = self.atlas.get(key) {
+        if let Some(g) = self.atlas.get(key).or_else(|| self.color_atlas.get(key)) {
             return Some(g);
         }
 
@@ -759,16 +993,22 @@ impl Renderer {
 
         if let Some(img) = img_opt {
             if img.placement.width > 0 && img.placement.height > 0 {
-                if let Some(slot) = self
-                    .atlas
-                    .allocate(img.placement.width, img.placement.height)
-                {
+                // Color-font glyphs (CBDT/COLR emoji) keep their RGBA data
+                // in the color atlas; the fragment shader paints them
+                // verbatim instead of tinting with the text color.
+                let is_color = img.content == SwashContent::Color;
+                let atlas = if is_color {
+                    &mut self.color_atlas
+                } else {
+                    &mut self.atlas
+                };
+                if let Some(slot) = atlas.allocate(img.placement.width, img.placement.height) {
                     let px = (img.placement.width * img.placement.height) as usize;
                     let data: Vec<u8> = match img.content {
                         SwashContent::Mask => img.data.clone(),
-                        // N-127: color emoji keeps only its alpha here and
-                        // renders monochrome; a color atlas path is still open.
-                        SwashContent::Color => img.data.chunks(4).map(|c| c[3]).collect(),
+                        // Swash hands color images as RGBA bytes; the
+                        // color atlas uploads them verbatim.
+                        SwashContent::Color => img.data.clone(),
                         _ => {
                             if img.data.len() == px * 3 {
                                 img.data
@@ -780,14 +1020,20 @@ impl Renderer {
                             }
                         }
                     };
-                    self.atlas.insert(
+                    debug_assert_eq!(
+                        data.len(),
+                        px * if is_color { 4 } else { 1 },
+                        "atlas upload size must match the texel format"
+                    );
+                    atlas.insert(
                         key,
                         slot,
                         data,
                         img.placement.left as f32,
                         img.placement.top as f32,
+                        is_color,
                     );
-                    self.atlas.get(key)
+                    atlas.get(key)
                 } else {
                     None
                 }
@@ -953,12 +1199,15 @@ impl Renderer {
         let cols = screen_buffer.width as usize;
         let rows = screen_buffer.height as usize;
 
-        // Reset atlas if full (glyph cache is keyed stably, so nothing else
-        // needs clearing).
-        if self.atlas.is_full() {
+        // Reset either atlas when full (glyph cache is keyed stably, so
+        // nothing else needs clearing). Both atlases reset together so
+        // their generations stay in lockstep.
+        if self.atlas.is_full() || self.color_atlas.is_full() {
             self.atlas.reset();
+            self.color_atlas.reset();
         }
-        let atlas_changed = self.atlas.generation() != self.last_atlas_gen;
+        let atlas_changed = self.atlas.generation() != self.last_atlas_gen
+            || self.color_atlas.generation() != self.last_color_atlas_gen;
 
         // Backgrounds (the grid still owns background cells — N-259).
         self.bg_cache.clear();
@@ -979,118 +1228,38 @@ impl Renderer {
         let ch = self.metrics.cell_height;
         // One stable baseline per row (see module docs).
         let ascent = self.font_manager.ascent;
-        let origin_x = self.text_origin_x();
 
         for row in 0..rows {
             let y = self.metrics.row_y(row);
             let cells = &screen_buffer.cells[row * cols..(row + 1) * cols];
 
-            // 1. Extract the row's text, color spans, and column→byte map.
-            let input = build_shaped_line(cells);
-
-            // 2. Shape the whole row at once with full run shaping (N-120).
-            let family = self.font_manager.primary_family.as_deref();
-            let default_attrs = attrs_for(family, 0xFFFF_FFFF);
-            self.shape_buffer.set_rich_text(
-                input
-                    .spans
-                    .iter()
-                    .map(|span| (&input.text[span.start..span.end], attrs_for(family, span.color))),
-                &default_attrs,
-                Shaping::Advanced,
-                Some(Align::Left),
-            );
-            self.shape_buffer
-                .shape_until_scroll(&mut self.font_manager.font_system, false);
-
-            // 3. Collect shaped glyphs and build the row's caret map while
-            //    the layout borrows are live.
-            let baseline = y + ascent;
-            {
-                let shape_buffer = &self.shape_buffer;
-                let pending = &mut self.pending_glyphs;
-                let caret_row = &mut self.caret_maps[row];
-                pending.clear();
-                let runs: Vec<LayoutRun<'_>> = shape_buffer.layout_runs().collect();
-                let clusters = clusters_from_runs(&runs);
-                // Snap every cluster's origin to the integer grid: the
-                // visual-left column the cluster starts in times the
-                // (whole-pixel) cell width. Glyphs keep their shaped
-                // offset inside the cluster, so kerning and mark
-                // placement are unchanged; only the cluster origin is
-                // integral, and each row derives it independently, so
-                // drift cannot accumulate down the frame.
-                let snapped: Vec<f32> = clusters
-                    .iter()
-                    .map(|c| {
-                        cluster_first_col(&input.col_to_byte, c.start, c.end) as f32 * cw
-                    })
-                    .collect();
-                // Clusters and glyphs walk in the same order, so a cursor
-                // finds each glyph's cluster.
-                let mut cluster_idx = 0usize;
-                for run in &runs {
-                    for glyph in run.glyphs {
-                        while cluster_idx + 1 < clusters.len()
-                            && (clusters[cluster_idx].start != glyph.start
-                                || clusters[cluster_idx].end != glyph.end)
-                            && clusters[cluster_idx].end <= glyph.start
-                        {
-                            cluster_idx += 1;
-                        }
-                        let placed_x = match clusters.get(cluster_idx).filter(|c| {
-                            c.start == glyph.start && c.end == glyph.end
-                        }) {
-                            Some(c) => origin_x + snapped[cluster_idx] + (glyph.x - c.x),
-                            // Degenerate: a glyph outside every cluster
-                            // keeps the shaper's position; drift is
-                            // bounded to this glyph.
-                            None => origin_x + glyph.x,
-                        };
-                        let physical = glyph.physical((0.0, baseline), 1.0);
-                        // Integer pixel grid: the cluster origin is
-                        // whole by construction; the shaped intra-cluster
-                        // offset rounds once against that stable origin,
-                        // so the rounding cannot drift across rows.
-                        let x = placed_x.round() as i32;
-                        pending.push(ShapedGlyph {
-                            key: GlyphKey {
-                                font_id: physical.cache_key.font_id,
-                                glyph_index: physical.cache_key.glyph_id as u32,
-                            },
-                            cache_key: physical.cache_key,
-                            x,
-                            y: physical.y,
-                            color: glyph_color_f32(glyph.color_opt),
-                        });
-                    }
-                }
-                // Caret maps resolve through the snapped clusters, so
-                // caret stops sit on integer grid positions; ligature
-                // interiors keep their shaped fractional offset within
-                // the cluster.
-                let snapped_clusters: Vec<ShapedCluster> = clusters
-                    .iter()
-                    .zip(snapped.iter())
-                    .map(|(c, &x)| ShapedCluster { x, ..*c })
-                    .collect();
-                caret_row.clear();
-                caret_row.extend(
-                    input
-                        .col_to_byte
-                        .iter()
-                        .map(|&byte| caret_x_for_byte_offset(&snapped_clusters, &input.text, byte)),
-                );
-            }
+            // 1-3. CPU layout: partition chrome from text, shape the text
+            // region, snap cluster origins to the integer grid, place
+            // chrome literally. Pure over its inputs (shaping scratch
+            // aside); the corpus invariant test drives this directly.
+            let (placed, caret_row) = {
+                let metrics = &self.metrics;
+                let font_system = &mut self.font_manager.font_system;
+                let shape_buffer = &mut self.shape_buffer;
+                let family = self.font_manager.primary_family.as_deref();
+                layout_row(
+                    cells,
+                    y,
+                    ascent,
+                    metrics,
+                    font_system,
+                    shape_buffer,
+                    family,
+                )
+            };
+            self.caret_maps[row] = caret_row;
 
             // 4. Rasterize on demand and emit instances at shaped positions.
-            // (`pending` is a local take: the borrow of `self` inside the loop
-            // is fine, and assigning it back preserves the scratch capacity.)
-            let pending = std::mem::take(&mut self.pending_glyphs);
-            for glyph in &pending {
+            for glyph in &placed {
                 let entry = self
                     .atlas
                     .get(glyph.key)
+                    .or_else(|| self.color_atlas.get(glyph.key))
                     .or_else(|| self.ensure_glyph_rasterized(glyph.key, glyph.cache_key));
                 if let Some(cached) = entry {
                     // Bitmap top-left = integer pen + swash placement
@@ -1104,14 +1273,17 @@ impl Renderer {
                         uv_pos: [cached.uv_x, cached.uv_y],
                         uv_size: [cached.uv_w, cached.uv_h],
                         color: glyph.color,
+                        flags: if cached.is_color { 1.0 } else { 0.0 },
+                        clip: glyph.clip,
                     });
                 }
             }
-            self.pending_glyphs = pending;
         }
 
         self.last_atlas_gen = self.atlas.generation();
+        self.last_color_atlas_gen = self.color_atlas.generation();
         self.atlas.flush(&self.queue);
+        self.color_atlas.flush(&self.queue);
 
         // Update GPU
         let uniforms = BackgroundUniforms {
@@ -1148,6 +1320,12 @@ impl Renderer {
                         wgpu::BindGroupEntry {
                             binding: 2,
                             resource: wgpu::BindingResource::Sampler(self.atlas.sampler()),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::TextureView(
+                                self.color_atlas.texture_view(),
+                            ),
                         },
                     ],
                 }));

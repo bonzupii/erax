@@ -15,4 +15,7 @@ pub mod font_manager;
 pub mod quad_renderer;
 pub mod renderer;
 
-pub use renderer::{mouse_pos_to_grid, RenderError, Renderer, RendererParams, ShapedLineInput, TextSpan};
+pub use renderer::{
+    layout_row, mouse_pos_to_grid, RenderError, Renderer, RendererParams, ShapedCluster,
+    ShapedGlyph, ShapedLineInput, TextSpan,
+};

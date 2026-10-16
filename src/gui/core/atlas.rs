@@ -27,6 +27,9 @@ pub struct CachedGlyph {
     pub height: f32,
     pub bearing_x: f32,
     pub bearing_y: f32,
+    /// True when the glyph lives in the RGBA color atlas (color emoji);
+    /// false for the single-channel mask atlas.
+    pub is_color: bool,
 }
 
 struct PendingUpload {
@@ -40,6 +43,7 @@ pub struct Atlas {
     sampler: wgpu::Sampler,
     width: u32,
     height: u32,
+    bytes_per_pixel: u32,
     cursor_x: u32,
     cursor_y: u32,
     row_height: u32,
@@ -49,9 +53,41 @@ pub struct Atlas {
 }
 
 impl Atlas {
+    /// Single-channel mask atlas: one alpha byte per texel.
     pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+        Self::with_format(
+            device,
+            width,
+            height,
+            wgpu::TextureFormat::R8Unorm,
+            1,
+            "Glyph Atlas",
+        )
+    }
+
+    /// RGBA color atlas for color-font glyphs (CBDT/COLR emoji): four
+    /// bytes per texel, uploaded verbatim from the shaper's image data.
+    pub fn new_rgba(device: &wgpu::Device, width: u32, height: u32) -> Self {
+        Self::with_format(
+            device,
+            width,
+            height,
+            wgpu::TextureFormat::Rgba8Unorm,
+            4,
+            "Glyph Color Atlas",
+        )
+    }
+
+    fn with_format(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+        bytes_per_pixel: u32,
+        label: &str,
+    ) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Glyph Atlas"),
+            label: Some(label),
             size: wgpu::Extent3d {
                 width,
                 height,
@@ -60,7 +96,7 @@ impl Atlas {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Unorm,
+            format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -79,6 +115,7 @@ impl Atlas {
             sampler,
             width,
             height,
+            bytes_per_pixel,
             cursor_x: 0,
             cursor_y: 0,
             row_height: 0,
@@ -148,6 +185,7 @@ impl Atlas {
         pixels: Vec<u8>,
         bearing_x: f32,
         bearing_y: f32,
+        is_color: bool,
     ) {
         let cached = CachedGlyph {
             uv_x: slot.x as f32 / self.width as f32,
@@ -158,6 +196,7 @@ impl Atlas {
             height: slot.height as f32,
             bearing_x,
             bearing_y,
+            is_color,
         };
         self.cache.insert(key, cached);
         self.pending.push(PendingUpload { slot, pixels });
@@ -179,7 +218,7 @@ impl Atlas {
                 &upload.pixels,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(upload.slot.width),
+                    bytes_per_row: Some(upload.slot.width * self.bytes_per_pixel),
                     rows_per_image: Some(upload.slot.height),
                 },
                 wgpu::Extent3d {

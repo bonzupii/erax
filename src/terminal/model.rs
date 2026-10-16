@@ -175,11 +175,15 @@ impl Cell {
         self.text.as_str()
     }
 
-    pub fn hidden() -> Self {
+    /// A cell covered by the previous wide character: invisible text,
+    /// but the cluster's background continues through it. The
+    /// background is a construction parameter, so a continuation cell
+    /// cannot exist without inheriting it.
+    pub fn hidden_with_bg(bg: Color) -> Self {
         Self {
             text: ClusterText::new(" "),
             fg: Color::Reset,
-            bg: Color::Reset,
+            bg,
             hidden: true,
             role: CellRole::EditorText,
         }

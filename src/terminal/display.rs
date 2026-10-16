@@ -569,6 +569,20 @@ impl Display {
                 cell.bg = self.theme.cursor_bg;
                 cell.role = CellRole::Cursor;
             }
+            // A wide character under the cursor covers its continuation
+            // cells: they inherit the cursor background so the whole
+            // cluster inverts as one instead of leaving a themed
+            // trailing cell.
+            let mut nx = cx + 1;
+            while let (Some(gx), Some(gy)) =
+                (u16::try_from(nx).ok(), u16::try_from(cy).ok())
+                && self.back_buffer.get(gx, gy).is_some_and(|next| next.hidden)
+            {
+                if let Some(next) = self.back_buffer.get_cell_mut(nx, cy) {
+                    next.bg = self.theme.cursor_bg;
+                }
+                nx += 1;
+            }
 
             // Store cursor position for GUI access
             self.cursor_pos = Some((cx, cy));
@@ -1559,6 +1573,62 @@ mod golden_tests {
             CellRole::Scrollbar
         );
         assert_eq!(display.cursor_pos, Some((3, 1)));
+    }
+
+    #[test]
+    fn wide_char_continuation_inherits_cluster_background() {
+        // The cursor line carries a themed background; a wide
+        // character's continuation cell must inherit it, not paint
+        // the default background.
+        let mut app = EditorApp::new();
+        app.buffers
+            .insert(BufferId(0), Buffer::from_string("あx"));
+        let mut display = Display::new(80, 24, None, None);
+        display.render(&mut app).expect("render");
+        let row = 1;
+        let first = (0..80)
+            .find(|&x| {
+                display.back_buffer.get(x, row).map(|c| c.text()) == Some("あ")
+            })
+            .expect("wide char painted");
+        let first_cell = display.back_buffer.get(first, row).unwrap();
+        let cont_cell = display.back_buffer.get(first + 1, row).unwrap();
+        assert!(cont_cell.hidden, "second cell is the continuation");
+        assert_ne!(
+            first_cell.bg,
+            Color::Reset,
+            "fixture needs a themed cursor-line background"
+        );
+        assert_eq!(
+            cont_cell.bg, first_cell.bg,
+            "continuation cell inherits the cluster background"
+        );
+    }
+
+    #[test]
+    fn wide_char_under_cursor_inverts_as_one_cluster() {
+        // The cursor starts on the buffer's first character; when that
+        // character is wide, the cursor restyle must cover the
+        // continuation cell too, not leave a themed trailing cell.
+        let mut app = EditorApp::new();
+        app.buffers
+            .insert(BufferId(0), Buffer::from_string("あx"));
+        let mut display = Display::new(80, 24, None, None);
+        display.render(&mut app).expect("render");
+        let row = 1;
+        let first = (0..80)
+            .find(|&x| {
+                display.back_buffer.get(x, row).map(|c| c.text()) == Some("あ")
+            })
+            .expect("wide char painted");
+        assert_eq!(display.cursor_pos, Some((first as usize, row as usize)));
+        let cont_cell = display.back_buffer.get(first + 1, row).unwrap();
+        assert!(cont_cell.hidden, "second cell is the continuation");
+        assert_eq!(
+            cont_cell.bg,
+            display.theme.cursor_bg,
+            "continuation cell takes the cursor background"
+        );
     }
 
     /// Golden: horizontal split (side by side) on 80x24. Remainder rule:
