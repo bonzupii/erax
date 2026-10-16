@@ -698,7 +698,7 @@ fn handle_websocket(
                 crate::core::semantics::announce_diff(
                     old,
                     &summary,
-                    crate::config::accessibility::ANNOUNCE_CURSOR_LINE,
+                    crate::config::accessibility::blindness::ANNOUNCE_CURSOR_LINE,
                 )
             });
             last_summary = Some(summary);

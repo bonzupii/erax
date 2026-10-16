@@ -183,8 +183,8 @@ pub fn run_terminal_mode(
         crate::terminal::cue_sink::drain_cues_to_tui(
             &mut app,
             &mut display,
-            crate::config::accessibility::CUE_ERROR_BELL,
-            crate::config::accessibility::CUE_VISUAL_FLASH,
+            crate::config::accessibility::blindness::CUE_ERROR_BELL,
+            crate::config::accessibility::hearing::CUE_VISUAL_FLASH,
         );
 
         if display.dirty {
