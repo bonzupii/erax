@@ -6,6 +6,7 @@ use crate::cli::{ColorMode, Invocation};
 use crate::config::keys::bindings_for_model;
 use crate::core;
 use crate::terminal;
+#[cfg(target_os = "linux")]
 use crate::terminal::events::EditorEvent;
 
 /// Typed errors for terminal-mode startup and the event loop.
@@ -107,32 +108,37 @@ pub fn run_terminal_mode(
         if keybind_manager.is_awaiting() && await_deadline.is_none() {
             await_deadline = Some(std::time::Instant::now() + await_timeout);
         }
-        let mut event_processed = false;
-
         // Poll GPM events on Linux console (Non-blocking, Check First)
+        // Larry's mut.
         #[cfg(target_os = "linux")]
-        if gpm_client.is_connected()
-            && let Some(mouse_event) = gpm_client.poll() {
-                // Update mouse cursor position in display for rendering
-                let (gx, gy) = gpm_client.cursor_pos();
-                display.mouse_cursor = Some((gx, gy));
+        let event_processed = {
+            let mut processed = false;
+            if gpm_client.is_connected()
+                && let Some(mouse_event) = gpm_client.poll() {
+                    // Update mouse cursor position in display for rendering
+                    let (gx, gy) = gpm_client.cursor_pos();
+                    display.mouse_cursor = Some((gx, gy));
 
-                // Force redraw on mouse event to update cursor position
-                display.dirty = true;
+                    // Force redraw on mouse event to update cursor position
+                    display.dirty = true;
 
-                let event = EditorEvent::Mouse(mouse_event);
-                let exit = terminal::event_handler::process_terminal_event(
-                    &mut app,
-                    &mut display,
-                    &mut keybind_manager,
-                    event,
-                )
-                .map_err(|e| TuiError::Event(e.to_string()))?;
-                if exit {
-                    break;
+                    let event = EditorEvent::Mouse(mouse_event);
+                    let exit = terminal::event_handler::process_terminal_event(
+                        &mut app,
+                        &mut display,
+                        &mut keybind_manager,
+                        event,
+                    )
+                    .map_err(|e| TuiError::Event(e.to_string()))?;
+                    if exit {
+                        break;
+                    }
+                    processed = true;
                 }
-                event_processed = true;
-            }
+            processed
+        };
+        #[cfg(not(target_os = "linux"))]
+        let event_processed = false;
 
         // Poll crossterm events
         // If we processed a mouse event, don't block (poll immediately for keys).
