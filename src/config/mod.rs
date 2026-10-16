@@ -10,6 +10,7 @@
 //! re-merging the whole configuration:
 //!
 //! - [`editor`]: editing behavior (tab width, kill ring, undo, shell)
+//! - [`effects`]: GUI shader effect toggles
 //! - [`display`]: display and rendering toggles
 //! - [`font`]: GUI font stack (N-011, N-119)
 //! - [`frontend`]: default frontend and WebUI server defaults
@@ -23,6 +24,7 @@ pub mod accessibility;
 pub mod display;
 pub mod cursor_style;
 pub mod editor;
+pub mod effects;
 pub mod font;
 pub mod frontend;
 pub mod keys;
