@@ -84,15 +84,45 @@ fn raw_munmap(ptr: *mut libc::c_void, len: usize) {
     }
 }
 
-/// Build a byte slice over mapped memory at `base + offset`. Not
-/// dereferenced here.
-///
-/// SAFETY: `[base+offset, base+offset+len)` must lie within a live
-/// `PROT_READ` mapping. The caller dereferences only inside
-/// `guard::guarded`, which converts a fault into a typed error.
-#[allow(unsafe_code)]
-fn mapped_slice_at<'a>(base: *const u8, offset: usize, len: usize) -> &'a [u8] {
-    unsafe { std::slice::from_raw_parts(base.add(offset), len) }
+/// Brand token for the guarded window. Minted only by `guard::guarded`
+/// while the SIGBUS guard is armed, and handed to the read closure with an
+/// invariant lifetime. A `&'brand [u8]` built under the brand cannot be
+/// named outside the armed window: the closure's `for<'brand>` bound makes
+/// returning it a compile error. `Copy` (it is a pure marker) so the
+/// closure can hand it to both the slice builder and the inner closure.
+/// Zero-sized; erases at codegen.
+#[derive(Clone, Copy)]
+pub struct Scope<'brand> {
+    _brand: std::marker::PhantomData<&'brand mut &'brand ()>,
+}
+
+/// A validated range of mapped memory. Construction discharges the bounds
+/// proof (`offset + len <= region length`) once, in `MmapRegion::range`;
+/// slices are built from this only inside the armed window, so call sites
+/// never re-derive bounds arithmetic from a raw pointer.
+struct MappedRange {
+    base: std::ptr::NonNull<u8>,
+    len: usize,
+}
+
+impl MappedRange {
+    /// Build the slice inside the armed window, under the guard's brand.
+    /// The returned reference's lifetime is the brand, so the closure
+    /// cannot name it outside the window — returning it is a compile
+    /// error. This is the ONLY `from_raw_parts` over mapping memory left
+    /// in the crate; it runs only while the guard is armed.
+    ///
+    /// SAFETY (unsafe leaf): `[base, base+len)` must lie within a live
+    /// `PROT_READ` mapping — discharged by `MmapRegion::range` — and the
+    /// guard must be armed over it — proved by the `Scope`, which only
+    /// `guard::guarded` can mint.
+    #[allow(unsafe_code)]
+    fn slice<'brand>(&self, _scope: Scope<'brand>) -> &'brand [u8] {
+        if self.len == 0 {
+            return &[];
+        }
+        unsafe { std::slice::from_raw_parts(self.base.as_ptr(), self.len) }
+    }
 }
 
 /// SIGBUS recovery machinery (private).
@@ -437,6 +467,11 @@ mod guard {
     /// an address in `[base, end)` returns `Err(())` instead of killing the
     /// process. Faults elsewhere propagate to the previous disposition.
     ///
+    /// `f` receives the arming `Scope` under a higher-ranked brand: the
+    /// slice it reads is built inside this window (see `MappedRange`), and
+    /// the brand makes returning that slice a compile error — the reference
+    /// cannot outlive the armed window, by types rather than discipline.
+    ///
     /// Contract on `f`: it must not hold non-async-signal-safe locks across
     /// the call — `siglongjmp` skips destructors between here and the
     /// fault. (Our call sites satisfy this: the only work inside the
@@ -447,7 +482,11 @@ mod guard {
     /// here is still exactly one call; everything else in this function is
     /// safe code built on the leaves above.
     #[allow(unsafe_code)]
-    pub(super) fn guarded<T>(base: usize, end: usize, f: impl FnOnce() -> T) -> Result<T, ()> {
+    pub(super) fn guarded<T>(
+        base: usize,
+        end: usize,
+        f: impl for<'brand> FnOnce(super::Scope<'brand>) -> T,
+    ) -> Result<T, ()> {
         // Miri cannot install or deliver real signals, nor execute the raw
         // `__sigsetjmp`/`siglongjmp` FFI — so under Miri the recovery point
         // is never taken (`jmp_val` stays 0). The arming/disarming logic
@@ -493,7 +532,12 @@ mod guard {
             }
             ACTIVE.with(|slot| slot.set(&guard as *const Guard));
             let _disarm = Disarm { prev };
-            let out = f();
+            // The Scope is minted here, inside the armed window: the
+            // closure's brand is this window's lifetime, unnameable
+            // outside.
+            let out = f(super::Scope {
+                _brand: std::marker::PhantomData,
+            });
             // Liveness anchor: the signal handler reads `guard` and `env`
             // via ACTIVE, which the optimizer cannot see. After `slot.set`,
             // neither is read again in normal control flow — without this,
@@ -531,20 +575,20 @@ mod guard {
         #[test]
         fn guard_passthrough_no_fault() {
             // No fault: the closure runs and its value comes back.
-            let r: Result<u32, ()> = guarded(0x1000, 0x2000, || 42);
+            let r: Result<u32, ()> = guarded(0x1000, 0x2000, |_| 42);
             assert_eq!(r, Ok(42));
         }
 
         #[test]
         fn guard_restores_slot_after_use() {
-            let _: Result<(), ()> = guarded(0x1000, 0x2000, || ());
+            let _: Result<(), ()> = guarded(0x1000, 0x2000, |_| ());
             ACTIVE.with(|slot| assert!(slot.get().is_null(), "slot must be disarmed"));
         }
 
         #[test]
         fn guard_nesting_disarms_in_order() {
-            let r: Result<u32, ()> = guarded(0x1000, 0x2000, || {
-                let inner: Result<u32, ()> = guarded(0x3000, 0x4000, || 7);
+            let r: Result<u32, ()> = guarded(0x1000, 0x2000, |_| {
+                let inner: Result<u32, ()> = guarded(0x3000, 0x4000, |_| 7);
                 assert_eq!(inner, Ok(7));
                 ACTIVE.with(|slot| {
                     let p = slot.get();
@@ -687,6 +731,12 @@ impl MmapRegion {
     /// module boundary is the choke point, so every mapping deref is
     /// guarded by construction.
     ///
+    /// The closure receives the `Scope` brand and the slice under a
+    /// higher-ranked lifetime: the slice is built inside the armed window
+    /// (not before, as a previous shape did), and returning it from the
+    /// closure is a compile error. The bounds proof is discharged once in
+    /// `range`; the closure never sees a raw pointer.
+    ///
     /// Why the validation is *post*-read: `MAP_PRIVATE` read-faults map the
     /// page cache (not copy-on-write), so an in-place file rewrite is
     /// visible in already-faulted pages WITHOUT faulting — a pre-read mtime
@@ -751,7 +801,7 @@ impl MmapRegion {
         if let Ok(meta) = self._file.metadata() {
             let cur_len = meta.len();
             self.cached_len.set(cur_len);
-            if (offset as u64).saturating_add(len as u64) > cur_len {
+            if offset.saturating_add(len as u64) > cur_len {
                 return Err(PagerError::Truncated {
                     offset,
                     wanted: len as u64,
@@ -768,28 +818,46 @@ impl MmapRegion {
         Ok(())
     }
 
+    /// Validate `[offset, offset+len)` and wrap it as a `MappedRange`,
+    /// discharging the bounds proof once. Call sites never re-derive
+    /// bounds arithmetic from the raw pointer.
+    fn range(&self, offset: u64, len: usize) -> Result<MappedRange, PagerError> {
+        self.check_range(offset, len)?;
+        if len == 0 {
+            return Ok(MappedRange {
+                base: std::ptr::NonNull::dangling(),
+                len: 0,
+            });
+        }
+        // `check_range` discharged `offset + len <= self.len`; `len > 0`
+        // gives `self.len > 0`, so `ptr` is non-null (the null-ptr region is
+        // empty-only, by construction), and `offset <= self.len - len`
+        // bounds the add. Integer-to-pointer `as` casts are safe; the
+        // dereference happens only in `MappedRange::slice`, under the guard.
+        let addr = (self.ptr as usize).saturating_add(offset as usize);
+        let base = std::ptr::NonNull::new(addr as *mut u8)
+            .expect("non-null base for non-empty validated range");
+        Ok(MappedRange { base, len })
+    }
+
     pub fn read_guarded<T>(
         &self,
         offset: u64,
         len: usize,
-        f: impl FnOnce(&[u8]) -> T,
+        f: impl for<'brand> FnOnce(Scope<'brand>, &'brand [u8]) -> T,
     ) -> Result<T, PagerError> {
-        self.check_range(offset, len)?;
-        if len == 0 {
-            // No deref needed; run `f` on the empty slice for uniformity.
-            return Ok(f(&[]));
-        }
-        // `ptr` is non-null: `len > 0` and `end <= self.len` imply the file
-        // was non-empty at open, the only path that sets a null `ptr`.
-        debug_assert!(!self.ptr.is_null());
+        let range = self.range(offset, len)?;
         let base = self.ptr as usize;
-        // The slice is *constructed* here but not dereferenced — the first
-        // actual memory access happens inside `guard::guarded`, which
-        // converts any fault into `Err(())`. `offset + len <= self.len <=
-        // map_len`, so the slice is within the mapping.
-        let slice = mapped_slice_at(self.ptr, offset as usize, len);
-        let out = match guard::guarded(base, base + self.map_len, || f(slice)) {
-            Ok(out) => out,
+        // The slice is built INSIDE the armed window (`range.slice(scope)`),
+        // and the brand keeps it there: `f` cannot return it.
+        let out = guard::guarded(base, base + self.map_len, |scope| {
+            f(scope, range.slice(scope))
+        });
+        match out {
+            Ok(out) => {
+                self.post_read_check(offset, len)?;
+                Ok(out)
+            }
             Err(()) => {
                 // Fault on the mapping: the file shrank under the open
                 // length. Refresh the cache so the fast path above
@@ -797,14 +865,12 @@ impl MmapRegion {
                 if let Ok(meta) = self._file.metadata() {
                     self.cached_len.set(meta.len());
                 }
-                return Err(PagerError::Truncated {
+                Err(PagerError::Truncated {
                     offset,
                     wanted: len as u64,
-                });
+                })
             }
-        };
-        self.post_read_check(offset, len)?;
-        Ok(out)
+        }
     }
 
     /// Copy `[offset, offset+len)` into `out` under the SIGBUS guard.
@@ -816,7 +882,7 @@ impl MmapRegion {
     /// allocation owned by the window is stranded. On `Err`, `out` is left
     /// empty (the post-read check may also reject just-read bytes).
     ///
-    /// Prefer this over `read_guarded(offset, len, |s| s.to_vec())` for
+    /// Prefer this over `read_guarded(offset, len, |_, s| s.to_vec())` for
     /// copies: the `to_vec` closure allocates *inside* the guarded window,
     /// and a fault during the copy `siglongjmp`s out, skipping that
     /// allocation's destructor — a bounded leak per faulted read. No new
@@ -831,18 +897,13 @@ impl MmapRegion {
         // Cleared up front so the "empty on Err" contract is uniform across
         // every error path (validation, fault, post-read rejection).
         out.clear();
-        self.check_range(offset, len)?;
-        if len == 0 {
-            return Ok(());
-        }
-        debug_assert!(!self.ptr.is_null());
+        let range = self.range(offset, len)?;
         let base = self.ptr as usize;
-        let slice = mapped_slice_at(self.ptr, offset as usize, len);
         // Reserved before arming: no allocation can occur inside the window
         // whose owner would be skipped by a fault.
         out.reserve(len);
-        let copied: Result<(), ()> = guard::guarded(base, base + self.map_len, || {
-            out.extend_from_slice(slice);
+        let copied: Result<(), ()> = guard::guarded(base, base + self.map_len, |scope| {
+            out.extend_from_slice(range.slice(scope));
         });
         match copied {
             Ok(()) => {}
@@ -930,17 +991,17 @@ mod region_tests {
         let region = MmapRegion::new(file).expect("map failed");
         assert_eq!(region.len(), 65536);
         // Whole range, sub-ranges, single bytes, empty read.
-        let all = region.read_guarded(0, 65536, |s| s.to_vec()).expect("read all");
+        let all = region.read_guarded(0, 65536, |_, s| s.to_vec()).expect("read all");
         assert_eq!(all, content);
-        let sub = region.read_guarded(1000, 5000, |s| s.to_vec()).expect("read sub");
+        let sub = region.read_guarded(1000, 5000, |_, s| s.to_vec()).expect("read sub");
         assert_eq!(sub, &content[1000..6000]);
-        let one = region.read_guarded(65535, 1, |s| s[0]).expect("read one");
+        let one = region.read_guarded(65535, 1, |_, s| s[0]).expect("read one");
         assert_eq!(one, content[65535]);
-        let empty: Vec<u8> = region.read_guarded(0, 0, |s| s.to_vec()).expect("read empty");
+        let empty: Vec<u8> = region.read_guarded(0, 0, |_, s| s.to_vec()).expect("read empty");
         assert!(empty.is_empty());
         // Pure-scan closure (the count_newlines_in path shape).
         let nls = region
-            .read_guarded(0, 65536, |s| s.iter().filter(|&&b| b == b'\n').count())
+            .read_guarded(0, 65536, |_, s| s.iter().filter(|&&b| b == b'\n').count())
             .expect("scan");
         assert_eq!(nls, content.iter().filter(|&&b| b == b'\n').count());
     }
@@ -979,14 +1040,14 @@ mod region_tests {
     fn read_guarded_out_of_range() {
         let (_g, file) = tmp_file("oor", b"hello");
         let region = MmapRegion::new(file).expect("map failed");
-        match region.read_guarded(3, 10, |s| s.to_vec()) {
+        match region.read_guarded(3, 10, |_, s| s.to_vec()) {
             Err(PagerError::OutOfRange { offset, len, file_len }) => {
                 assert_eq!((offset, len, file_len), (3, 10, 5));
             }
             other => panic!("expected OutOfRange, got {other:?}"),
         }
         // Offset arithmetic overflow.
-        match region.read_guarded(u64::MAX, 8, |s| s.to_vec()) {
+        match region.read_guarded(u64::MAX, 8, |_, s| s.to_vec()) {
             Err(PagerError::OutOfRange { .. }) => {}
             other => panic!("expected OutOfRange on overflow, got {other:?}"),
         }
@@ -997,9 +1058,9 @@ mod region_tests {
         let (_g, file) = tmp_file("empty", b"");
         let region = MmapRegion::new(file).expect("map failed");
         assert!(region.is_empty());
-        let empty: Vec<u8> = region.read_guarded(0, 0, |s| s.to_vec()).expect("empty read");
+        let empty: Vec<u8> = region.read_guarded(0, 0, |_, s| s.to_vec()).expect("empty read");
         assert!(empty.is_empty());
-        match region.read_guarded(0, 1, |s| s.to_vec()) {
+        match region.read_guarded(0, 1, |_, s| s.to_vec()) {
             Err(PagerError::OutOfRange { .. }) => {}
             other => panic!("expected OutOfRange, got {other:?}"),
         }
@@ -1016,7 +1077,7 @@ mod region_tests {
         let (g, file) = tmp_file("trunc", &[0xABu8; 8192]);
         let region = MmapRegion::new(file).expect("map failed");
         // Sanity: reads fine before truncation.
-        region.read_guarded(0, 8192, |s| s.to_vec()).expect("baseline");
+        region.read_guarded(0, 8192, |_, s| s.to_vec()).expect("baseline");
         // Truncate through a writable handle (the read-only mapped handle
         // cannot truncate; reopen by path — same inode).
         std::fs::OpenOptions::new()
@@ -1025,7 +1086,7 @@ mod region_tests {
             .expect("open for truncate")
             .set_len(100)
             .expect("set_len failed");
-        match region.read_guarded(0, 8192, |s| s.to_vec()) {
+        match region.read_guarded(0, 8192, |_, s| s.to_vec()) {
             Err(PagerError::Truncated { offset, wanted }) => {
                 assert_eq!(offset, 0);
                 assert_eq!(wanted, 8192);
@@ -1033,7 +1094,7 @@ mod region_tests {
             other => panic!("expected Truncated, got {other:?}"),
         }
         // The surviving prefix still reads.
-        let prefix = region.read_guarded(0, 100, |s| s.to_vec()).expect("prefix read");
+        let prefix = region.read_guarded(0, 100, |_, s| s.to_vec()).expect("prefix read");
         assert_eq!(prefix, vec![0xABu8; 100]);
     }
 }

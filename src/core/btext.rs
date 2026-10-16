@@ -448,7 +448,7 @@ impl Backend {
                 if len == 0 {
                     return Ok(0);
                 }
-                m.read_guarded(offset, len as usize, count_newlines)
+                m.read_guarded(offset, len as usize, |_, s| count_newlines(s))
             }
         }
     }

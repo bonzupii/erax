@@ -108,7 +108,7 @@ fn sigbus_handler_converts_truncation_fault_to_typed_error() {
 
     // Baseline: faults in page 0 only.
     let first = region
-        .read_guarded(0, 4096, |s| s.to_vec())
+        .read_guarded(0, 4096, |_, s| s.to_vec())
         .expect("baseline read failed");
     assert_eq!(first.len(), 4096);
 
@@ -118,7 +118,7 @@ fn sigbus_handler_converts_truncation_fault_to_typed_error() {
     // Offset 8 MiB was never faulted in, so the deref faults — the handler
     // must convert it to `Truncated`. (Both the copy path and the pure-scan
     // path are exercised: the fault can strike in either.)
-    let r = region.read_guarded(8 * 1024 * 1024, 4096, |s| s.to_vec());
+    let r = region.read_guarded(8 * 1024 * 1024, 4096, |_, s| s.to_vec());
     match r {
         Err(PagerError::Truncated { offset, wanted }) => {
             assert_eq!(offset, 8 * 1024 * 1024);
@@ -131,7 +131,7 @@ fn sigbus_handler_converts_truncation_fault_to_typed_error() {
     // never-faulted page must also come back as `Truncated`, not death.
     // (The fault path refreshed the length cache, so this short-circuits
     // on the cached length — still `Truncated`, still no signal needed.)
-    let r2 = region.read_guarded(12 * 1024 * 1024, 65536, |s| {
+    let r2 = region.read_guarded(12 * 1024 * 1024, 65536, |_, s| {
         s.iter().filter(|&&b| b == b'\n').count()
     });
     match r2 {
@@ -141,7 +141,7 @@ fn sigbus_handler_converts_truncation_fault_to_typed_error() {
 
     // The process survived and the region is still usable: reads now
     // short-circuit on the refreshed length cache (no signal path needed).
-    match region.read_guarded(0, 16, |s| s.len()) {
+    match region.read_guarded(0, 16, |_, s| s.len()) {
         Err(PagerError::Truncated { offset, .. }) => assert_eq!(offset, 0),
         other => panic!("expected Truncated after cache refresh, got {other:?}"),
     }
@@ -184,7 +184,7 @@ fn read_guarded_into_fault_leaves_caller_buffer_empty() {
 
     // The region stays usable; the old `to_vec`-in-window shape is gone
     // from production, but the generic primitive still works.
-    let again = region.read_guarded(0, 16, |s| s.len());
+    let again = region.read_guarded(0, 16, |_, s| s.len());
     assert!(
         matches!(again, Err(PagerError::Truncated { .. })),
         "expected Truncated after cache refresh, got {again:?}"
@@ -213,7 +213,7 @@ fn same_length_replacement_becomes_file_changed() {
     let region = MmapRegion::new(fs::File::open(&path).expect("open")).expect("mmap");
     // Fault in every page with the old content.
     let baseline = region
-        .read_guarded(0, SIZE, |s| s.to_vec())
+        .read_guarded(0, SIZE, |_, s| s.to_vec())
         .expect("baseline read failed");
     assert_eq!(baseline, old_content);
 
@@ -223,7 +223,7 @@ fn same_length_replacement_becomes_file_changed() {
 
     // The already-faulted pages now show the NEW bytes (page cache); the
     // post-read mtime check must refuse rather than serve them.
-    match region.read_guarded(0, SIZE, |s| s.to_vec()) {
+    match region.read_guarded(0, SIZE, |_, s| s.to_vec()) {
         Err(PagerError::FileChanged { offset }) => assert_eq!(offset, 0),
         Ok(got) => panic!(
             "SILENT SUBSTITUTION: served {} new bytes with no error (old_match={})",
@@ -457,7 +457,7 @@ fn rename_over_under_mmap() {
 
     let region = MmapRegion::new(fs::File::open(&path).expect("open")).expect("mmap");
     let before = region
-        .read_guarded(0, 1024, |s| s.to_vec())
+        .read_guarded(0, 1024, |_, s| s.to_vec())
         .expect("baseline read");
     assert_eq!(before, vec![b'O'; 1024]);
 
@@ -468,7 +468,7 @@ fn rename_over_under_mmap() {
     // The mapping pins the OLD inode via the open fd: reads are unaffected,
     // no error, no crash. (The fd-based revalidation sees the old inode.)
     let after = region
-        .read_guarded(0, 1024, |s| s.to_vec())
+        .read_guarded(0, 1024, |_, s| s.to_vec())
         .expect("read after rename-over failed");
     assert_eq!(after, vec![b'O'; 1024], "mapping must keep serving the pinned inode");
     eprintln!("rename-over: mapping kept serving the old inode, no error, no crash");
