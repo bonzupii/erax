@@ -220,24 +220,52 @@ pub struct ScrollbarGeom {
     pub thumb_len: usize,
 }
 
+impl ScrollbarGeom {
+    /// First cell of the painted strip, arrows included when the
+    /// config shows them. The single derivation site for the
+    /// arrow-inclusive span; painters and hit-testing use this.
+    pub fn strip_start(&self) -> usize {
+        if crate::config::scrollbar::SHOW_ARROWS {
+            self.track_start.saturating_sub(1)
+        } else {
+            self.track_start
+        }
+    }
+
+    /// Painted strip length in cells, arrows included when configured.
+    pub fn strip_len(&self) -> usize {
+        if crate::config::scrollbar::SHOW_ARROWS {
+            self.track_len + 2
+        } else {
+            self.track_len
+        }
+    }
+}
+
 /// One pane's derived geometry, in absolute cell coordinates.
 ///
 /// `frame` is the whole pane (status row included). `text` is the
-/// editable area: gutter included, status and horizontal-scrollbar rows
-/// excluded. The vertical scrollbar column overlaps the text area's last
-/// column (the renderer paints it over text, as it always has).
+/// editable area: gutter included, status row and both scrollbar
+/// strips excluded. Each scrollbar owns a dedicated strip outside the
+/// text rect (the placement law): the vertical strip is one column on
+/// the configured side, the horizontal strip is the row above the
+/// status row. The strips are reserved unconditionally, so a bar
+/// appearing or disappearing never moves the text rect and can never
+/// cover the cursor.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PaneGeometry {
     pub window: WindowId,
     /// Whole pane, status row included.
     pub frame: Rect,
-    /// Text area: gutter included, status/hscroll rows excluded.
+    /// Text area: gutter included, status row and scrollbar strips
+    /// excluded.
     pub text: Rect,
     pub gutter_width: usize,
     /// Absolute y of the pane's status row.
     pub status_row: usize,
-    /// Absolute y of the horizontal scrollbar row, when shown.
-    pub hscroll_row: Option<usize>,
+    /// Absolute y of the horizontal scrollbar strip row. Always
+    /// reserved; the bar itself paints only when derived.
+    pub hscroll_row: usize,
     /// Vertical scrollbar geometry, when shown.
     pub v_scrollbar: Option<ScrollbarGeom>,
     /// Horizontal scrollbar geometry, when shown.
@@ -262,6 +290,11 @@ pub struct PaneGeometry {
 ///   computes to zero size. The tiling handles zero-size leaves with
 ///   no special case, so the minimize command only needs to mark
 ///   panes collapsed in the layout tree; the geometry follows.
+/// - Scrollbar placement law: each scrollbar owns a dedicated strip
+///   outside the text rect (one column on the configured side, one row
+///   above the status row), reserved unconditionally. A bar appearing
+///   or disappearing never moves the text rect and never covers the
+///   cursor.
 /// - The cursor is `Some` exactly when the model cursor sits inside
 ///   the pane's text rect. Out-of-viewport cursors are hidden, never
 ///   clamped to a viewport edge.
@@ -341,8 +374,8 @@ pub fn thumb_range(
         return (0, track_size.max(1));
     }
 
-    // Minimum thumb size (at least 2 units)
-    let min_thumb_size = 2;
+    // Minimum thumb size from the typed scrollbar config.
+    let min_thumb_size = crate::config::scrollbar::THUMB_MIN_CELLS.max(1);
 
     // Calculate thumb size proportional to visible/total ratio
     let thumb_size = if total <= visible {
@@ -370,58 +403,64 @@ pub fn thumb_range(
 
 /// Derive one pane's full geometry from its frame rect and model inputs.
 ///
-/// Two passes resolve the gutter/hscroll cycle exactly as the old
-/// renderers did: the gutter is estimated with the status-only text
-/// height, the horizontal scrollbar decision uses that estimate, and
-/// the final gutter uses the final text height.
+/// Both scrollbar strips are reserved unconditionally: one column for
+/// the vertical strip on the configured side, one row above the status
+/// row for the horizontal strip. The text rect excludes both by
+/// construction, so the gutter resolves in a single pass (no
+/// estimate/refine cycle) and a bar appearing or disappearing never
+/// shifts text or covers the cursor.
 fn pane_geometry(
     frame: Rect,
     input: &WindowGeomInput,
     show_line_numbers: bool,
 ) -> PaneGeometry {
-    let estimate_height = frame.height.saturating_sub(1);
-    let gutter_est = gutter_width(
-        show_line_numbers,
-        input.line_count,
-        input.scroll_offset + estimate_height,
-    );
-    // The horizontal-scroll decision reserves the scrollbar column.
-    let decision_width = frame.width.saturating_sub(gutter_est + 1);
-    let needs_hscroll = input.content_width > decision_width || input.scroll_x > 0;
+    use crate::config::scrollbar::{SHOW_ARROWS, SHOW_WHEN_FITS, VERTICAL_SIDE, VerticalSide};
 
-    let text_height = estimate_height.saturating_sub(if needs_hscroll { 1 } else { 0 });
+    let status_row = frame.y + frame.height.saturating_sub(1);
+    let hscroll_row = status_row.saturating_sub(1);
+    let text_height = frame.height.saturating_sub(2);
     let gutter = gutter_width(
         show_line_numbers,
         input.line_count,
         input.scroll_offset + text_height,
     );
+    let vbar_left = VERTICAL_SIDE == VerticalSide::Left;
     // Degenerate panes (gutter wider than the frame) keep the text
     // rect inside the frame: the origin clamps, the size saturates.
-    let text_x = (frame.x + gutter).min(frame.x + frame.width);
+    let text_x = (frame.x + gutter + usize::from(vbar_left)).min(frame.x + frame.width);
     let text = Rect::new(
         text_x,
         frame.y,
-        frame.width.saturating_sub(gutter),
+        frame.width.saturating_sub(gutter + 1),
         text_height,
     );
-    let status_row = frame.y + frame.height.saturating_sub(1);
 
-    // The vertical bar spans the pane minus the status row, exactly as
-    // the old renderer painted it: when a horizontal bar is shown, the
-    // vertical bar's down arrow occupies the shared corner cell, and the
-    // horizontal bar stops one cell short of it.
+    // The horizontal-scroll decision sees the final text width: the
+    // vertical strip is already excluded, so no estimation pass.
+    let needs_hscroll = input.content_width > text.width || input.scroll_x > 0;
+
+    // The vertical strip spans the pane minus the status row; the
+    // horizontal strip's row is the strip's last cell.
     let vbar_rows = frame.height.saturating_sub(1);
-    let v_scrollbar = if vbar_rows >= 4 {
-        let track_len = vbar_rows.saturating_sub(2);
+    let v_scrollbar = if vbar_rows >= 4 && (SHOW_WHEN_FITS || input.line_count > text_height) {
+        let (track_start, track_len) = if SHOW_ARROWS {
+            (frame.y + 1, vbar_rows.saturating_sub(2))
+        } else {
+            (frame.y, vbar_rows)
+        };
         let (thumb_start, thumb_len) = thumb_range(
-            vbar_rows,
+            text_height,
             input.line_count.max(1),
             input.scroll_offset,
             track_len,
         );
         Some(ScrollbarGeom {
-            cross: frame.x + frame.width.saturating_sub(1),
-            track_start: frame.y + 1,
+            cross: if vbar_left {
+                frame.x
+            } else {
+                frame.x + frame.width.saturating_sub(1)
+            },
+            track_start,
             track_len,
             thumb_start,
             thumb_len,
@@ -430,36 +469,30 @@ fn pane_geometry(
         None
     };
 
-    let (hscroll_row, h_scrollbar) = if needs_hscroll {
-        let row = status_row.saturating_sub(1);
-        // Drawn bar width: the text area minus the scrollbar column,
-        // minus one more cell for the vertical bar's corner. The thumb's
-        // visible count uses the final gutter, matching the old
-        // renderer's two-pass resolution exactly.
-        let visible_cols = text.width.saturating_sub(1);
-        let bar_width = visible_cols.saturating_sub(1);
-        if bar_width >= 5 {
-            let track_len = bar_width.saturating_sub(2);
-            let content = input.content_width.max(input.scroll_x + visible_cols);
-            let (thumb_start, thumb_len) =
-                thumb_range(visible_cols, content, input.scroll_x, track_len);
-            (
-                Some(row),
-                Some(ScrollbarGeom {
-                    cross: row,
-                    track_start: text.x + 1,
-                    track_len,
-                    thumb_start,
-                    thumb_len,
-                }),
-            )
+    let h_scrollbar = if needs_hscroll {
+        // The bar spans the text width; the corner cell under the
+        // vertical strip belongs to the vertical bar.
+        let (track_start, track_len, paint) = if SHOW_ARROWS {
+            (text.x + 1, text.width.saturating_sub(2), text.width >= 5)
         } else {
-            // The row is still reserved (as the renderers always did);
-            // too narrow to paint a bar with arrows.
-            (Some(row), None)
+            (text.x, text.width, text.width >= 3)
+        };
+        if paint {
+            let content = input.content_width.max(input.scroll_x + text.width);
+            let (thumb_start, thumb_len) =
+                thumb_range(text.width, content, input.scroll_x, track_len);
+            Some(ScrollbarGeom {
+                cross: hscroll_row,
+                track_start,
+                track_len,
+                thumb_start,
+                thumb_len,
+            })
+        } else {
+            None
         }
     } else {
-        (None, None)
+        None
     };
 
     PaneGeometry {
@@ -855,6 +888,82 @@ mod frame_tests {
         assert_eq!(frame.panes.len(), 1);
         assert_eq!(frame.panes[0].cursor, None);
         assert_tiling(&frame);
+    }
+
+    /// Placement-law reproduction: no scrollbar may paint inside the text
+    /// rect. Each bar owns a dedicated strip; the text rect excludes it
+    /// by construction. Fails while the vertical bar overlaps the text
+    /// area's last column.
+    #[test]
+    fn scrollbars_never_paint_inside_the_text_rect() {
+        let tree = leaf(0);
+        let mut input = input_for(0);
+        input.line_count = 200;
+        input.content_width = 200;
+        let frame = compute_frame(
+            FrameOptions {
+                cols: 80,
+                rows: 24,
+                menu_rows: 0,
+                show_line_numbers: true,
+            },
+            &tree,
+            &[input],
+        );
+        let pane = &frame.panes[0];
+        assert!(
+            pane.h_scrollbar.is_some(),
+            "fixture must need the horizontal bar"
+        );
+        if let Some(v) = pane.v_scrollbar {
+            assert!(
+                v.cross < pane.text.x || v.cross >= pane.text.x + pane.text.width,
+                "vertical bar column {} lies inside the text rect x={}..{}",
+                v.cross,
+                pane.text.x,
+                pane.text.x + pane.text.width
+            );
+        }
+        let row = pane.hscroll_row;
+        assert!(
+            row < pane.text.y || row >= pane.text.y + pane.text.height,
+            "horizontal bar row {row} lies inside the text rect y={}..{}",
+            pane.text.y,
+            pane.text.y + pane.text.height
+        );
+    }
+
+    /// Cursor-swallow reproduction: the cursor sits on the bottom text
+    /// row. Widening the content summons the horizontal bar; the cursor
+    /// must stay on its cell. Fails while the bar steals the cursor's
+    /// row from the text rect instead of owning a dedicated strip.
+    #[test]
+    fn cursor_survives_horizontal_bar_appearance() {
+        let tree = leaf(0);
+        let opts = FrameOptions {
+            cols: 80,
+            rows: 24,
+            menu_rows: 0,
+            show_line_numbers: false,
+        };
+        let narrow = WindowGeomInput {
+            window: WindowId(0),
+            scroll_offset: 0,
+            scroll_x: 0,
+            cursor_y: 21,
+            visual_cursor_x: 5,
+            line_count: 100,
+            content_width: 40,
+        };
+        let before = compute_frame(opts, &tree, &[narrow]).panes[0].cursor;
+        assert!(before.is_some(), "fixture must show the cursor first");
+        let mut wide = narrow;
+        wide.content_width = 500;
+        let after = compute_frame(opts, &tree, &[wide]).panes[0].cursor;
+        assert_eq!(
+            after, before,
+            "cursor on the bottom text row was swallowed by the horizontal bar"
+        );
     }
 
     #[test]

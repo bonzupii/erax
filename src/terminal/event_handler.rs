@@ -260,27 +260,25 @@ pub fn process_terminal_event(
                             let gutter_width = pane.gutter_width;
 
                             // Check if click is on the vertical scrollbar.
-                            // The bar spans the pane minus the status row;
-                            // its down arrow owns the corner cell when a
-                            // horizontal bar is shown. All bounds derive
-                            // from the model bar.
+                            // All bounds derive from the model bar's
+                            // painted strip; arrow cells exist only when
+                            // the config shows arrows.
                             if let Some(vbar) = &pane.v_scrollbar
                                 && mouse_x == vbar.cross
-                                && mouse_y >= pane.text.y
-                                && mouse_y < vbar.track_start + vbar.track_len + 1
+                                && mouse_y >= vbar.strip_start()
+                                && mouse_y < vbar.strip_start() + vbar.strip_len()
                             {
-                                // Vertical scrollbar click with arrows
-                                let bar_rows = vbar.track_len + 2;
-                                let rel_y = mouse_y.saturating_sub(pane.text.y);
+                                let show_arrows = crate::config::scrollbar::SHOW_ARROWS;
+                                let rel_y = mouse_y - vbar.strip_start();
                                 let line_count = buffer.line_count().max(1);
 
-                                if rel_y == 0 {
+                                if show_arrows && rel_y == 0 {
                                     // Up arrow - scroll up by the typed config step.
                                     let target = window.scroll_offset.saturating_sub(
                                         crate::config::display::SCROLLBAR_ARROW_STEP_LINES,
                                     );
                                     window.scroll_to(target, buffer);
-                                } else if rel_y >= bar_rows.saturating_sub(1) {
+                                } else if show_arrows && rel_y + 1 >= vbar.strip_len() {
                                     // Down arrow - scroll down by the typed config step.
                                     let target = window.scroll_offset.saturating_add(
                                         crate::config::display::SCROLLBAR_ARROW_STEP_LINES,
@@ -288,11 +286,11 @@ pub fn process_terminal_event(
                                     window.scroll_to(target, buffer);
                                 } else {
                                     // Track area - jump to proportional position
-                                    let track_pos = rel_y.saturating_sub(1); // Minus up arrow
+                                    let track_pos = rel_y.saturating_sub(usize::from(show_arrows));
                                     let target_line = (track_pos * line_count)
                                         .checked_div(vbar.track_len)
                                         .unwrap_or(0)
-                                        .min(line_count.saturating_sub(bar_rows));
+                                        .min(line_count.saturating_sub(vbar.strip_len()));
                                     window.scroll_to(target_line, buffer);
                                 }
                                 display.dirty = true;
@@ -300,30 +298,26 @@ pub fn process_terminal_event(
                             }
 
                             // Check if click is on the horizontal scrollbar.
-                            // Bounds derive from the model bar: the bar
-                            // stops one cell short of the vertical bar's
-                            // corner cell.
-                            if let (Some(hbar), Some(hrow)) =
-                                (&pane.h_scrollbar, pane.hscroll_row)
-                                && mouse_y == hrow
-                                && mouse_x >= hbar.track_start.saturating_sub(1)
-                                && mouse_x < hbar.track_start + hbar.track_len + 1
+                            // Bounds derive from the model bar's painted
+                            // strip on its dedicated row.
+                            if let Some(hbar) = &pane.h_scrollbar
+                                && mouse_y == pane.hscroll_row
+                                && mouse_x >= hbar.strip_start()
+                                && mouse_x < hbar.strip_start() + hbar.strip_len()
                             {
-                                // Horizontal scrollbar click with arrows
-                                let bar_start_x = hbar.track_start.saturating_sub(1);
-                                let bar_width = hbar.track_len + 2;
-                                let rel_x = mouse_x.saturating_sub(bar_start_x);
-                                let text_width = bar_width + 1;
+                                let show_arrows = crate::config::scrollbar::SHOW_ARROWS;
+                                let rel_x = mouse_x - hbar.strip_start();
+                                let text_width = pane.text.width;
                                 let content_width = window
                                     .cached_content_width
                                     .max(window.scroll_x + text_width);
 
-                                if rel_x == 0 {
+                                if show_arrows && rel_x == 0 {
                                     // Left arrow - scroll left by the typed config step.
                                     window.scroll_x = window.scroll_x.saturating_sub(
                                         crate::config::display::SCROLLBAR_ARROW_STEP_COLS,
                                     );
-                                } else if rel_x >= bar_width.saturating_sub(1) {
+                                } else if show_arrows && rel_x + 1 >= hbar.strip_len() {
                                     // Right arrow - scroll right by the typed config step.
                                     let max_scroll = content_width.saturating_sub(text_width);
                                     window.scroll_x = (window.scroll_x
@@ -331,7 +325,7 @@ pub fn process_terminal_event(
                                         .min(max_scroll);
                                 } else {
                                     // Track area - jump to proportional position
-                                    let track_pos = rel_x.saturating_sub(1); // Minus left arrow
+                                    let track_pos = rel_x.saturating_sub(usize::from(show_arrows));
                                     let max_scroll = content_width.saturating_sub(text_width);
                                     let target_x = (track_pos * content_width)
                                         .checked_div(hbar.track_len)

@@ -26,4 +26,5 @@ pub mod editor;
 pub mod font;
 pub mod frontend;
 pub mod keys;
+pub mod scrollbar;
 pub mod theme;

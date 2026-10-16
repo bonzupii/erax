@@ -467,13 +467,10 @@ impl WindowRenderer {
         let thumb_fg: Color = theme.scrollbar_thumb;
 
         if let Some(vbar) = &geom.v_scrollbar {
-            // Span and origin derive from the model bar: the bar covers
-            // the pane minus the status row, corner cell included.
+            // The bar paints its own strip from the model geometry.
             crate::terminal::scrollbar::render_vertical(
                 screen_buffer,
                 vbar,
-                vbar.track_start.saturating_sub(1),
-                vbar.track_len + 2,
                 track_fg,
                 thumb_fg,
                 track_bg,
@@ -496,17 +493,12 @@ impl WindowRenderer {
 
         // Note: can't mutate window here, caller should update cached_content_width after render
 
-        // The bar paints only when the model derived one; the row is
-        // reserved whenever the model decided horizontal scrolling.
-        // Span and origin derive from the model bar.
+        // The bar paints only when the model derived one; its strip
+        // row is reserved unconditionally.
         if let Some(hbar) = &geom.h_scrollbar {
-            let bar_start_x = hbar.track_start.saturating_sub(1);
-            let bar_width = hbar.track_len + 2;
             crate::terminal::scrollbar::render_horizontal(
                 screen_buffer,
                 hbar,
-                bar_start_x,
-                bar_width,
                 track_fg,
                 thumb_fg,
                 track_bg,

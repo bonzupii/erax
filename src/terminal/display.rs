@@ -1534,10 +1534,12 @@ mod golden_tests {
         assert_eq!(p.gutter_width, 3);
         assert_eq!(
             (p.text.x, p.text.y, p.text.width, p.text.height),
-            (3, 1, 77, 22)
+            (3, 1, 76, 21)
         );
         assert_eq!(p.status_row, 23);
-        assert_eq!(p.hscroll_row, None);
+        // The horizontal strip row is reserved unconditionally; the bar
+        // itself is absent (content fits).
+        assert_eq!(p.hscroll_row, 22);
         assert_eq!(p.h_scrollbar, None);
         let v = p.v_scrollbar.expect("vertical scrollbar");
         assert_eq!((v.cross, v.track_start, v.track_len), (79, 2, 20));
@@ -1632,21 +1634,22 @@ mod golden_tests {
             ),
             (0, 12, 80, 12)
         );
-        // Top pane: 11 rows = 9 text + 1 hscroll + 1 status.
+        // Top pane: 11 rows = 9 text + 1 hscroll strip + 1 status.
         assert_eq!(top.text.height, 9);
-        assert_eq!(top.hscroll_row, Some(10));
+        assert_eq!(top.hscroll_row, 10);
         assert_eq!(top.status_row, 11);
-        // Vertical bar spans the pane minus the status row; its down
-        // arrow owns the corner cell shared with the hscroll row.
+        // Vertical bar owns the last column; its strip reaches the
+        // hscroll row, whose corner cell is the bar's down arrow.
         let v = top.v_scrollbar.expect("vertical scrollbar");
         assert_eq!((v.cross, v.track_start, v.track_len), (79, 2, 8));
         assert_eq!((v.thumb_start, v.thumb_len), (0, 2));
-        // Horizontal bar stops one cell short of that corner cell.
+        // Horizontal bar spans the text width; the corner cell under
+        // the vertical strip belongs to the vertical bar.
         // (Gutter here is 2: 9 visible lines, one digit plus border.)
         let h = top.h_scrollbar.expect("horizontal scrollbar");
         assert_eq!(h.cross, 10);
         assert_eq!(h.track_start, 3);
-        assert_eq!(h.track_len, 74);
+        assert_eq!(h.track_len, 75);
         assert_eq!((h.thumb_start, h.thumb_len), (0, 28));
         assert!(h.thumb_start + h.thumb_len <= h.track_len);
         // Painted proof: the hscroll row carries scrollbar cells with
