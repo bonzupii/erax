@@ -50,6 +50,7 @@ disabled; see the session 26 PROGRESS entry for the audit table).
 | ort | =2.0.0-rc.14 | MIT (of MIT OR Apache-2.0) | ONNX Runtime inference for the embedded Kokoro-82M int8 model (pinned to floravox's version). Caveat: ort-sys downloads a prebuilt onnxruntime binary from cdn.pyke.io at build time, outside erax's sha256 regime (see profiles/README.md); ORT_LIB_PATH points it at a local onnxruntime 1.31.0 instead. |
 | anyhow | 1 | MIT (of MIT OR Apache-2.0) | Error type for the `VoiceBackend` trait impl |
 | sha2 | 0.10 | MIT (of MIT OR Apache-2.0) | build-dependency: sha256 verification of provisioned weights in build.rs |
+| wasm-bindgen-cli-support | =0.2.129 | MIT (of MIT OR Apache-2.0) | build-dependency: runs the web-shell wasm through wasm-bindgen's generation library in build.rs (the same transform the wasm-bindgen CLI performs); version pinned to the CLI/wasm-bindgen runtime pair (0.2.129, web-shell/Cargo.toml) |
 | misaki-rs | 0.3.0 | MIT | (transitive via floravox-g2p) Rust-native phonemizer; no runtime file reads |
 | language-tokenizer | 0.1.0 | WTFPL (per its GitHub repo LICENSE.md; the crates.io metadata has no license field) | (transitive via misaki-rs) tokenizer |
 | r-efi | 6.0.0 | MIT (of MIT OR Apache-2.0 OR LGPL-2.1-or-later) | (transitive) UEFI types, pulled via the crypto stack |

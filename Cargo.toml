@@ -104,6 +104,11 @@ features = ["derive"]
 [build-dependencies]
 # Pure-Rust SHA-256 for verifying provisioned speech weights in build.rs.
 sha2 = "0.10"
+# wasm-bindgen's generation library: build.rs runs the web-shell wasm
+# through the same transform the wasm-bindgen CLI performs, with the
+# version pinned to the CLI/wasm-bindgen runtime pair (0.2.129).
+# License: MIT OR Apache-2.0 (using the MIT leg per project policy).
+wasm-bindgen-cli-support = "=0.2.129"
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }

@@ -18,8 +18,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 include!("build/speech_artifacts.rs");
+include!("build/web_assets.rs");
 
 fn main() {
+    web_assets_generate();
     println!("cargo:rerun-if-changed=src/config/accessibility/blindness.rs");
     // The artifact pins are include!d: cargo does not watch them on
     // its own, so a pin change would silently keep stale weights.

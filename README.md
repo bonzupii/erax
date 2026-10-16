@@ -80,33 +80,36 @@ client, and the font are all served by the same command. The client files
 install layout; `ERAX_WEB_ASSETS_DIR` (when set) overrides them with files
 from disk for web dev iteration without recompiling the server.
 
-**Building the wasm client (release):** the checked-in `web-assets/` are
-built reproducibly from `web-shell/` (its own crate; the presentation core
-and protocol are the same sources as native, included via `#[path]` —
-`web-shell/src/config` includes `src/config/font.rs`,
-`src/config/cursor_style.rs`, `src/config/scrollbar.rs`,
-`src/config/theme.rs`, and `src/config/effects.rs` directly, so the web
-shell cannot drift from the native config). Exact commands:
+**Building the wasm client (release):** the client is generated at build
+time, not checked in. `build.rs` (see `build/web_assets.rs`) compiles
+`web-shell/` for `wasm32-unknown-unknown` with a nested cargo invocation
+(its own target dir under `OUT_DIR`, offline from the registry cache)
+and runs the result through `wasm-bindgen`'s generation library (pinned
+to the CLI/`wasm-bindgen` crate pair `0.2.129`, matching
+`web-shell/Cargo.toml`). The server embeds the generated files from
+`OUT_DIR` over the `ERAX_WEB_ASSETS_OUT` env build.rs emits. `web-assets/`
+keeps only the hand-written `index.html`; the generated JS/wasm are
+gitignored.
 
-```bash
-cd web-shell
-cargo build --release --target wasm32-unknown-unknown
-# → target/wasm32-unknown-unknown/release/erax_web_shell.wasm
-wasm-bindgen --target web --out-dir /tmp/wbg --out-name erax-web-shell \
-  target/wasm32-unknown-unknown/release/erax_web_shell.wasm
-cp /tmp/wbg/erax-web-shell.js /tmp/wbg/erax-web-shell_bg.wasm ../web-assets/
-```
+`web-shell` is its own crate; the presentation core and protocol are the
+same sources as native, included via `#[path]` (`web-shell/src/config`
+includes `src/config/font.rs`, `src/config/cursor_style.rs`,
+`src/config/scrollbar.rs`, `src/config/theme.rs`, and
+`src/config/effects.rs` directly, so the web shell cannot drift from the
+native config). Every input file is anchored with `cargo:rerun-if-changed`
+plus an internal fingerprint, so an unchanged tree never rebuilds the
+wasm: the first build pays for it, later builds reuse `OUT_DIR`. To force
+regeneration, touch a web-shell source (or `cargo clean`).
 
-`wasm-bindgen` must match the `wasm-bindgen` crate version
-(`web-shell/Cargo.toml`). `web-shell` pins its own `[profile.release]`
-(opt-level 2, LTO, single codegen unit, stripped): the default release
-profile's parallel codegen units reorder functions nondeterministically
-(two identical-source builds differed), while `codegen-units = 1` makes
-the shipped wasm bit-reproducible (verified: 3 consecutive forced rebuilds
-→ identical bytes). Sizes (release): wasm 4,828,725 B, JS glue 131,332 B,
-`index.html` 1,640 B; raw `erax_web_shell.wasm` 6,452,429 B (debug: 97 MB —
-never shipped). The wasm grew with the WebGL2 fallback backend (wgpu `webgl`
-feature); the shipped bytes stay bit-reproducible.
+The `web-shell` `[profile.release]` (opt-level 2, LTO, single codegen
+unit, stripped; see `OPTLEVEL.md`) keeps the shipped artifacts
+reproducible: two consecutive clean generations produce byte-identical
+`.wasm` and `.js`. (The `.d.ts` TypeScript declarations are not
+byte-stable across runs — wasm-bindgen numbers the externref table shims
+nondeterministically; they are build artifacts, not served by the
+server.) `wasm-bindgen`'s version must match the `wasm-bindgen` crate
+version (`web-shell/Cargo.toml`); the build dependency carries the same
+pin.
 
 **Security model (non-negotiable):**
 - Opt-in only (`--web-server`). Binds `127.0.0.1` by default.
