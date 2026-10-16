@@ -59,6 +59,7 @@ pub fn run_gui_mode(inv: &Invocation) -> Result<(), GuiError> {
         dirty: true,
         cursor_pos: None,
         pressed_button: None,
+        await_deadline: None,
     };
 
     event_loop
@@ -81,6 +82,11 @@ struct GuiApp {
     /// Currently pressed mouse button, for Drag vs Moved synthesis.
     /// Transient input state; click counting lives in the backend.
     pressed_button: Option<winit::event::MouseButton>,
+    /// Deadline for an `AwaitLonger` leaf: if no key arrives by then,
+    /// the leaf command executes. The TUI loop manages the same
+    /// deadline; the GUI was missing it, so e.g. `InsertSpace` on `^C`
+    /// never fired without a second event.
+    await_deadline: Option<std::time::Instant>,
 }
 
 impl ApplicationHandler for GuiApp {
@@ -214,11 +220,64 @@ impl ApplicationHandler for GuiApp {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(cmd) = self.fire_await_deadline() {
+            match terminal::event_handler::dispatch_command(
+                &mut self.editor,
+                &mut self.display,
+                cmd,
+            ) {
+                Ok(should_exit) => {
+                    if should_exit {
+                        event_loop.exit();
+                        return;
+                    }
+                }
+                Err(e) => {
+                    self.editor.message = Some(format!("Error: {e}"));
+                }
+            }
+            self.dirty = true;
+        }
+        // Wake at the deadline when armed; block otherwise.
+        match self.await_deadline {
+            Some(deadline) => event_loop.set_control_flow(ControlFlow::WaitUntil(deadline)),
+            None => event_loop.set_control_flow(ControlFlow::Wait),
+        }
         if self.dirty
             && let Some(window) = &self.window {
                 window.request_redraw();
             }
+    }
+}
+
+impl GuiApp {
+    /// Arm the await_longer deadline when the key trie is positioned on
+    /// a leaf that a longer sequence could extend.
+    fn arm_await_deadline(&mut self) {
+        if self.keybinds.is_awaiting() && self.await_deadline.is_none() {
+            self.await_deadline = Some(
+                std::time::Instant::now()
+                    + std::time::Duration::from_millis(
+                        crate::config::keys::KEY_SEQUENCE_TIMEOUT_MS,
+                    ),
+            );
+        }
+    }
+
+    /// If the await_longer deadline passed with no further key, take
+    /// the leaf command to run now. Same semantics as the TUI loop.
+    fn fire_await_deadline(&mut self) -> Option<crate::core::command::Command> {
+        if self
+            .await_deadline
+            .map(|d| std::time::Instant::now() >= d)
+            .unwrap_or(false)
+        {
+            self.await_deadline = None;
+            self.keybinds.take_awaited()
+        } else {
+            None
+        }
     }
 }
 
@@ -265,6 +324,8 @@ impl GuiApp {
                     self.editor.message = Some(format!("Error: {}", e));
                 }
             }
+
+            self.arm_await_deadline();
 
             self.dirty = true;
             if let Some(window) = &self.window {
@@ -449,5 +510,70 @@ impl GuiApp {
         };
 
         self.forward_mouse(mouse_event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::command::Command;
+    use crate::core::input::{Key, KeyPress};
+
+    fn test_app() -> GuiApp {
+        let mut keybinds = terminal::keybinds::KeyBindingManager::new();
+        keybinds.load(bindings_for_model(INPUT_MODEL));
+        GuiApp {
+            window: None,
+            renderer: None,
+            editor: core::app::EditorApp::new(),
+            display: terminal::display::Display::new(120, 40, None, None),
+            keybinds,
+            modifiers: winit::keyboard::ModifiersState::default(),
+            dirty: true,
+            cursor_pos: None,
+            pressed_button: None,
+            await_deadline: None,
+        }
+    }
+
+    #[test]
+    fn await_longer_deadline_arms_and_fires() {
+        // ^C is an AwaitLonger leaf (insert-space) and the prefix of
+        // ^C Tab: feeding it arms the deadline.
+        let mut app = test_app();
+        let _ = app
+            .keybinds
+            .process_key(KeyPress::ctrl(Key::Char('c')));
+        assert!(app.keybinds.is_awaiting());
+
+        app.arm_await_deadline();
+        let deadline = app.await_deadline.expect("deadline armed");
+        assert!(deadline > std::time::Instant::now());
+
+        // Re-arming while armed keeps the original deadline.
+        app.arm_await_deadline();
+        assert_eq!(app.await_deadline, Some(deadline));
+
+        // Not yet expired: nothing fires.
+        assert_eq!(app.fire_await_deadline(), None);
+        assert!(app.await_deadline.is_some());
+
+        // Expired: the leaf command is taken and the deadline clears.
+        app.await_deadline =
+            Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        assert_eq!(
+            app.fire_await_deadline(),
+            Some(Command::InsertSpace)
+        );
+        assert_eq!(app.await_deadline, None);
+    }
+
+    #[test]
+    fn await_longer_deadline_idle_does_not_fire() {
+        let mut app = test_app();
+        assert!(!app.keybinds.is_awaiting());
+        app.arm_await_deadline();
+        assert_eq!(app.await_deadline, None);
+        assert_eq!(app.fire_await_deadline(), None);
     }
 }
