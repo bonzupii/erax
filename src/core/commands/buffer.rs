@@ -46,6 +46,9 @@ pub fn next_buffer(app: &mut EditorApp, count: usize) -> DispatchResult {
                 window.buffer_id = next_buffer_id;
                 window.cursor_y = 0; // Reset to top
                 window.cursor_x = 0;
+                window.scroll_offset = 0;
+                window.scroll_x = 0;
+                window.selection_manager.clear_mark();
                 if let Some(buffer) = app.buffers.get(&next_buffer_id) {
                     window.update_visual_cursor(buffer);
                     window.ensure_cursor_visible(buffer);
@@ -82,6 +85,9 @@ pub fn previous_buffer(app: &mut EditorApp, count: usize) -> DispatchResult {
                 window.buffer_id = prev_buffer_id;
                 window.cursor_y = 0; // Reset to top
                 window.cursor_x = 0;
+                window.scroll_offset = 0;
+                window.scroll_x = 0;
+                window.selection_manager.clear_mark();
                 if let Some(buffer) = app.buffers.get(&prev_buffer_id) {
                     window.update_visual_cursor(buffer);
                     window.ensure_cursor_visible(buffer);
