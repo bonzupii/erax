@@ -5,7 +5,7 @@
 pub mod app;
 pub mod bindings;
 pub mod btext;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod mmap;
 pub mod buffer;
 pub mod calculator;

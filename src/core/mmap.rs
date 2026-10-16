@@ -99,9 +99,9 @@ type Handle = *mut std::ffi::c_void;
 #[cfg(windows)]
 type Dword = u32;
 
-/// Win32 API surface used by the mapping veneer and the VEH guard.
-/// `extern "system"` is the WinAPI calling convention; the CRT
-/// (`setjmp`/`longjmp`) uses `extern "C"`.
+// Win32 API surface used by the mapping veneer and the VEH guard.
+// `extern "system"` is the WinAPI calling convention; the CRT
+// (`setjmp`/`longjmp`) uses `extern "C"`.
 #[cfg(windows)]
 #[allow(unsafe_code)]
 unsafe extern "system" {
@@ -267,7 +267,7 @@ impl MappedRange {
 ///   `__sigsetjmp` call and the end of `guarded`.
 mod guard {
     use std::cell::Cell;
-    #[cfg(not(miri))]
+    #[cfg(all(unix, not(miri)))]
     use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
     #[cfg(not(miri))]
     use std::sync::Once;
@@ -327,7 +327,7 @@ mod guard {
     ///
     /// SAFETY: `info` must be a valid `siginfo_t` for the delivered signal
     /// (the kernel provides it to the `SA_SIGINFO` handler).
-    #[cfg(not(miri))]
+    #[cfg(all(unix, not(miri)))]
     #[allow(unsafe_code)]
     fn siginfo_fault_addr(info: *mut libc::siginfo_t) -> usize {
         unsafe { (*info).si_addr() as usize }
@@ -377,11 +377,26 @@ mod guard {
         unsafe { setjmp(env) }
     }
 
+    /// Register `veh_handler` as the first vectored exception handler.
+    ///
+    /// SAFETY: `veh_handler` is a valid vectored handler function; the
+    /// registration is process-lifetime and never removed.
+    #[cfg(all(windows, not(miri)))]
+    #[allow(unsafe_code)]
+    fn add_veh_handler() -> *mut std::ffi::c_void {
+        unsafe {
+            super::AddVectoredExceptionHandler(
+                1,
+                veh_handler as *const () as *const std::ffi::c_void,
+            )
+        }
+    }
+
     /// Reinterpret a captured handler address as a 3-arg `SA_SIGINFO` fn.
     ///
     /// SAFETY: `addr` must be the `sa_sigaction` captured from the previous
     /// `sigaction` disposition at install, which used `SA_SIGINFO`.
-    #[cfg(not(miri))]
+    #[cfg(all(unix, not(miri)))]
     #[allow(unsafe_code)]
     fn prev_siginfo_fn(
         addr: usize,
@@ -393,7 +408,7 @@ mod guard {
     ///
     /// SAFETY: `addr` must be the `sa_handler` captured from the previous
     /// `sigaction` disposition at install, which did NOT use `SA_SIGINFO`.
-    #[cfg(not(miri))]
+    #[cfg(all(unix, not(miri)))]
     #[allow(unsafe_code)]
     fn prev_handler_fn(addr: usize) -> extern "C" fn(libc::c_int) {
         unsafe { std::mem::transmute(addr) }
@@ -406,7 +421,7 @@ mod guard {
     /// SAFETY: both calls are async-signal-safe; only called for a fault
     /// outside our guarded windows, where dying with `SIGBUS` is the
     /// correct behavior (as if we were never installed).
-    #[cfg(not(miri))]
+    #[cfg(all(unix, not(miri)))]
     #[allow(unsafe_code)]
     fn restore_default_and_reraise() {
         unsafe {
@@ -419,7 +434,7 @@ mod guard {
     ///
     /// SAFETY: zeroed bytes are a valid initial `sigaction` image; the
     /// caller initializes every field before use.
-    #[cfg(not(miri))]
+    #[cfg(all(unix, not(miri)))]
     #[allow(unsafe_code)]
     fn sigaction_zeroed() -> libc::sigaction {
         unsafe { std::mem::zeroed() }
@@ -429,7 +444,7 @@ mod guard {
     ///
     /// SAFETY: `set` must point to a live `sigset_t`. `sigemptyset` is
     /// async-signal-safe.
-    #[cfg(not(miri))]
+    #[cfg(all(unix, not(miri)))]
     #[allow(unsafe_code)]
     fn sigemptyset(set: *mut libc::sigset_t) -> libc::c_int {
         unsafe { libc::sigemptyset(set) }
@@ -439,7 +454,7 @@ mod guard {
     ///
     /// SAFETY: `new` must be a fully initialized `sigaction`; `old` a live
     /// slot for the previous disposition. Called once at install.
-    #[cfg(not(miri))]
+    #[cfg(all(unix, not(miri)))]
     #[allow(unsafe_code)]
     fn sigaction_install(new: &libc::sigaction, old: &mut libc::sigaction) -> libc::c_int {
         unsafe { libc::sigaction(libc::SIGBUS, new, old) }
@@ -448,7 +463,7 @@ mod guard {
     /// Query the current `SIGBUS` disposition without changing it.
     ///
     /// SAFETY: `old` must be a live slot for the disposition. Test-only.
-    #[cfg(test)]
+    #[cfg(all(unix, test))]
     #[allow(unsafe_code)]
     fn sigaction_query(old: &mut libc::sigaction) -> libc::c_int {
         unsafe { libc::sigaction(libc::SIGBUS, std::ptr::null(), old) }
@@ -610,6 +625,7 @@ mod guard {
     /// search. Runs on the faulting thread; async-signal-safe body (a
     /// thread-local read, integer arithmetic, `longjmp`).
     #[cfg(all(windows, not(miri)))]
+    #[allow(unsafe_code)]
     unsafe extern "system" fn veh_handler(
         info: *mut ExceptionPointers,
     ) -> i32 {
@@ -681,15 +697,7 @@ mod guard {
             // First handler in the VEH chain; foreign exceptions get
             // `EXCEPTION_CONTINUE_SEARCH`, so the system's handlers run
             // exactly as without us (no previous-disposition capture needed).
-            //
-            // SAFETY: `veh_handler` is a valid vectored handler; the
-            // process-lifetime registration is never removed.
-            let h = unsafe {
-                super::AddVectoredExceptionHandler(
-                    1,
-                    veh_handler as *const () as *const std::ffi::c_void,
-                )
-            };
+            let h = add_veh_handler();
             if h.is_null() {
                 // A failed VEH install is a broken-OS situation; fail fast
                 // rather than run unprotected.

@@ -186,13 +186,12 @@ fn pread_partial(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> 
 }
 
 #[cfg(windows)]
-fn pread_partial(file: &mut File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
-    use std::io::{Read, Seek, SeekFrom};
-    file.seek(SeekFrom::Start(offset))?;
+fn pread_partial(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+    use std::os::windows::fs::FileExt;
     let mut total = 0;
     while total < buf.len() {
-        match file.read(&mut buf[total..]) {
-            Ok(0) => break,
+        match file.seek_read(&mut buf[total..], offset + total as u64) {
+            Ok(0) => break, // EOF
             Ok(n) => total += n,
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
             Err(e) => return Err(e),
