@@ -137,17 +137,11 @@ impl KeyPress {
 }
 
 impl fmt::Display for KeyPress {
+    /// Display is presentation: one chord in the canonical notation.
+    /// [`crate::core::keyfmt::format_chord`] is the single definition;
+    /// this impl delegates so no second formatter can drift from it.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.ctrl {
-            write!(f, "C-")?;
-        }
-        if self.alt {
-            write!(f, "M-")?;
-        }
-        if self.shift {
-            write!(f, "S-")?;
-        }
-        write!(f, "{}", self.key)
+        write!(f, "{}", crate::core::keyfmt::format_chord(self))
     }
 }
 
@@ -378,15 +372,22 @@ impl KeyTrie {
     }
 
     /// The in-progress sequence as display text (for the status line).
+    ///
+    /// Rendered in the canonical notation ([`crate::core::keyfmt`]); the
+    /// trailing `-` marks the step the trie is still waiting for.
     pub fn current_sequence(&self) -> String {
         if self.current.is_empty() && !self.pending_alt {
             return String::new();
         }
-        let mut parts: Vec<String> = self.current.iter().map(|k| k.to_string()).collect();
+        let mut seq = crate::core::keyfmt::format_sequence(&self.current);
         if self.pending_alt {
-            parts.push("ESC".to_string());
+            if !seq.is_empty() {
+                seq.push('-');
+            }
+            seq.push_str("Esc");
         }
-        parts.join(" ") + " -"
+        seq.push('-');
+        seq
     }
 }
 
@@ -572,8 +573,8 @@ mod tests {
 
     #[test]
     fn keypress_display_shows_modifiers() {
-        assert_eq!(ctrl('x').to_string(), "C-x");
-        assert_eq!(KeyPress::alt(Key::Char('x')).to_string(), "M-x");
+        assert_eq!(ctrl('x').to_string(), "Ctrl+x");
+        assert_eq!(KeyPress::alt(Key::Char('x')).to_string(), "Alt+x");
         assert_eq!(KeyPress::plain(Key::Char('a')).to_string(), "a");
     }
 }

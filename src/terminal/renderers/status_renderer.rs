@@ -433,10 +433,10 @@ mod tests {
         let (window, buffer) = window_and_buffer("hello\n");
         let rect = Rect::new(0, 0, 48, 10);
         let engine = crate::core::modal::ModalEngine::new();
-        // Classic behavior: pending chord in the echo area, no mode segment.
-        let bar = compose_bar_state(InputModel::KeyTrie, &engine, None, "", "C-x ", None, None);
+        // Pending chord in the echo area, no mode segment.
+        let bar = compose_bar_state(InputModel::KeyTrie, &engine, None, "", "Ctrl+x-", None, None);
         let (line, _) = render_bar(&mut display, &window, &buffer, &rect, &bar, None);
-        assert!(line.contains("C-x"), "unexpected bar: {line:?}");
+        assert!(line.contains("Ctrl+x"), "unexpected bar: {line:?}");
         assert!(!line.contains("--"), "unexpected bar: {line:?}");
         // Cursor style unchanged: steady block.
         assert_eq!(

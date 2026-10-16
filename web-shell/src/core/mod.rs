@@ -17,5 +17,8 @@ pub mod id;
 #[path = "../../../src/core/input.rs"]
 pub mod input;
 
+#[path = "../../../src/core/keyfmt.rs"]
+pub mod keyfmt;
+
 #[path = "../../../src/core/layout.rs"]
 pub mod layout;

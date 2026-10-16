@@ -22,6 +22,7 @@ pub mod geometry;
 pub mod hex;
 pub mod id;
 pub mod input;
+pub mod keyfmt;
 pub mod kill_ring;
 pub mod layout;
 pub mod lexer;
