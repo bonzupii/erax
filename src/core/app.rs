@@ -46,14 +46,8 @@ pub struct EditorApp {
     pub last_macro: Vec<(crate::core::dispatcher::MacroStep, usize)>,
     /// True while a macro is being replayed; nested execute-macro is rejected.
     pub executing_macro: bool,
-    // Search History for "Hunt" commands
-    pub last_search_query: Option<String>,
     /// Default tab width for new windows
     pub default_tab_width: usize,
-    /// Timer for debouncing completion requests
-    pub completion_request_timer: Option<std::time::Instant>,
-    /// ID of the active completion request
-    pub active_completion_request_id: Option<u64>,
     /// Programming calculator
     pub calculator: crate::core::calculator::Calculator,
     /// Buffer-local word completer
@@ -118,10 +112,7 @@ impl EditorApp {
             current_macro: Vec::new(),
             last_macro: Vec::new(),
             executing_macro: false,
-            last_search_query: None,
             default_tab_width: initial_tab_width,
-            completion_request_timer: None,
-            active_completion_request_id: None,
             calculator: crate::core::calculator::Calculator::new(),
             word_completer: crate::core::completion::WordCompleter::new(),
             snippet_manager: crate::core::snippets::SnippetManager::new(),

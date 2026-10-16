@@ -28,6 +28,3 @@ pub use core::renderer::{RenderError, Renderer};
 
 // Legacy compatibility alias
 pub type GridRenderer = Renderer;
-
-/// Default font size in pixels
-pub const DEFAULT_FONT_SIZE: f32 = 16.0;
