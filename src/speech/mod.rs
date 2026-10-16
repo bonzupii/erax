@@ -39,8 +39,11 @@ use crate::config::accessibility::blindness::SPEECH_VOICE;
 
 /// Build the configured speech recognizer.
 ///
-/// Returns `RecognizeError::Disabled` when the backend is `Off` or
-/// the `speech` cargo feature is not enabled.
+/// `Off` yields `RecognizeError::Disabled`. `BuiltIn` requires the
+/// `speech` cargo feature: building without it fails at compile time
+/// (`lib.rs`'s `compile_error!`); the runtime `ModelLoad` fallback
+/// exists only for configurations the build script cannot see.
+/// `Custom` is a user wiring point, reported as `ModelLoad`.
 pub fn recognizer() -> Result<Box<dyn SpeechRecognizer>, RecognizeError> {
     match SPEECH_BACKEND {
         SpeechBackend::Off => Err(RecognizeError::Disabled),
@@ -67,8 +70,11 @@ pub fn recognizer() -> Result<Box<dyn SpeechRecognizer>, RecognizeError> {
 
 /// Build the configured speech synthesizer.
 ///
-/// Returns `SynthesizeError::Disabled` when the backend is `Off` or
-/// the `speech` cargo feature is not enabled.
+/// `Off` yields `SynthesizeError::Disabled`. `BuiltIn` requires the
+/// `speech` cargo feature: building without it fails at compile time
+/// (`lib.rs`'s `compile_error!`); the runtime `ModelLoad` fallback
+/// exists only for configurations the build script cannot see.
+/// `Custom` is a user wiring point, reported as `ModelLoad`.
 pub fn synthesizer() -> Result<Box<dyn SpeechSynthesizer>, SynthesizeError> {
     match SPEECH_BACKEND {
         SpeechBackend::Off => Err(SynthesizeError::Disabled),
@@ -113,19 +119,5 @@ mod tests {
                 let _ = synthesizer().is_ok();
             }
         }
-    }
-
-    #[test]
-    fn backend_selection_is_exhaustive() {
-        // Every SpeechBackend variant has a defined constructor path.
-        fn check(b: SpeechBackend) -> bool {
-            matches!(
-                b,
-                SpeechBackend::Off | SpeechBackend::BuiltIn | SpeechBackend::Custom
-            )
-        }
-        assert!(check(SpeechBackend::Off));
-        assert!(check(SpeechBackend::BuiltIn));
-        assert!(check(SpeechBackend::Custom));
     }
 }

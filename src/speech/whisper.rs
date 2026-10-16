@@ -86,10 +86,14 @@ impl WhisperRecognizer {
         let mut text = String::new();
         for i in 0..n {
             if let Some(seg) = state.get_segment(i) {
-                if let Ok(s) = seg.to_str() {
-                    text.push_str(s.trim());
-                    text.push(' ');
-                }
+                // A segment that is not valid UTF-8 is an inference
+                // failure, not a skippable event: the module contract
+                // forbids swallowing it.
+                let s = seg
+                    .to_str()
+                    .map_err(|e| RecognizeError::Inference(format!("whisper segment text: {e:?}")))?;
+                text.push_str(s.trim());
+                text.push(' ');
             }
         }
         Ok(text.trim().to_string())
@@ -115,8 +119,14 @@ impl SpeechRecognizer for WhisperRecognizer {
     }
 
     fn transcribe_utterance(&mut self, audio: Pcm16k) -> Result<Transcript, RecognizeError> {
+        // Empty input is a degenerate call, not silence: it yields an
+        // empty transcript, matching transcribe_stream's empty-chunk
+        // contract and synthesize()'s empty-text contract.
         if audio.is_empty() {
-            return Err(RecognizeError::AudioFormat("empty audio".into()));
+            return Ok(Transcript {
+                text: String::new(),
+                words: Vec::new(),
+            });
         }
         let mut text = String::new();
         for window in audio.chunks(WINDOW_SAMPLES) {

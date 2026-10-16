@@ -21,9 +21,9 @@ pub const PCM16K_SAMPLE_RATE: u32 = 16_000;
 /// Word-level timing inside a finalized transcript.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WordTiming {
-    /// Byte range of the word in the final text.
+    /// Start of the byte range of the word in the final text.
     pub start_byte: usize,
-    /// Byte range of the word in the final text.
+    /// End of the byte range of the word in the final text.
     pub end_byte: usize,
     /// Word start in seconds from the utterance start.
     pub start_secs: f32,
@@ -85,7 +85,10 @@ pub trait SpeechRecognizer: Send {
     /// is a consumer bug.
     fn transcribe_stream(&mut self, audio: &[f32]) -> Result<Vec<TranscriptEvent>, RecognizeError>;
 
-    /// Transcribe one complete utterance.
+    /// Transcribe one complete utterance. An empty utterance yields
+    /// an empty transcript, not an error: empty input is a degenerate
+    /// call everywhere in this trait (see `transcribe_stream` and
+    /// `SpeechSynthesizer::synthesize`).
     fn transcribe_utterance(&mut self, audio: Pcm16k) -> Result<Transcript, RecognizeError>;
 
     /// Language selection. `None` is the engine default (auto-detect
@@ -175,15 +178,5 @@ mod tests {
         };
         assert_eq!(s.concat(), vec![1.0, 2.0, 3.0]);
         assert_eq!(s.len_samples(), 3);
-    }
-
-    #[test]
-    fn pcm_sample_rate_is_16k() {
-        assert_eq!(PCM16K_SAMPLE_RATE, 16_000);
-    }
-
-    #[test]
-    fn language_code_en_is_en() {
-        assert_eq!(LanguageCode::EN.0, "en");
     }
 }
