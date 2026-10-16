@@ -11,3 +11,7 @@ pub mod font;
 /// and the presentation core name it without the whole display config.
 #[path = "../../../src/config/cursor_style.rs"]
 pub mod cursor_style;
+
+/// Scrollbar constants (same source as native).
+#[path = "../../../src/config/scrollbar.rs"]
+pub mod scrollbar;
