@@ -137,7 +137,7 @@ pub fn goto_byte(_app: &mut EditorApp, _count: usize) -> DispatchResult {
         // Return NeedsInput to prompt user for byte offset
         DispatchResult::NeedsInput {
             prompt: "Go to byte: ".to_string(),
-            action: crate::core::dispatcher::InputAction::GotoLine, // Reuse GotoLine action handler
+            action: crate::core::dispatcher::InputAction::GotoByte,
         }
     }
 

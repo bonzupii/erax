@@ -18,6 +18,7 @@ pub fn focus_target_for_action(action: crate::core::dispatcher::InputAction) -> 
     match action {
         InputAction::Calculator => FocusTarget::Calculator,
         InputAction::GotoLine => FocusTarget::GoToLine,
+        InputAction::GotoByte => FocusTarget::GoToByte,
         InputAction::SearchForward => FocusTarget::ISearch,
         InputAction::QueryReplace => FocusTarget::FindReplace,
         _ => FocusTarget::Minibuffer,
@@ -59,6 +60,8 @@ pub enum FocusTarget {
     ISearch,
     /// Go to line prompt
     GoToLine,
+    /// Go to byte offset prompt
+    GoToByte,
     /// Find/Replace prompt
     FindReplace,
     /// Help/documentation overlay
@@ -84,6 +87,7 @@ impl FocusTarget {
             self,
             FocusTarget::Minibuffer
                 | FocusTarget::GoToLine
+                | FocusTarget::GoToByte
                 | FocusTarget::FindReplace
                 | FocusTarget::ISearch
                 | FocusTarget::Calculator
@@ -120,6 +124,7 @@ impl fmt::Display for FocusTarget {
             FocusTarget::Calculator => write!(f, "Calculator"),
             FocusTarget::ISearch => write!(f, "I-Search"),
             FocusTarget::GoToLine => write!(f, "Go To Line"),
+            FocusTarget::GoToByte => write!(f, "Go To Byte"),
             FocusTarget::FindReplace => write!(f, "Find/Replace"),
             FocusTarget::Help => write!(f, "Help"),
             FocusTarget::DescribeKey => write!(f, "Describe Key"),

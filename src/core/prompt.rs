@@ -102,9 +102,9 @@ pub fn handle_prompt_action(
                 }
         }
         InputAction::GotoLine => {
-            if let Ok(line) = input.parse::<usize>()
-                && line > 0
-                    && let Some(window) = app.windows.get_mut(&app.active_window) {
+            match input.parse::<usize>() {
+                Ok(line) if line > 0 => {
+                    if let Some(window) = app.windows.get_mut(&app.active_window) {
                         let bid = window.buffer_id;
                         if let Some(buffer) = app.buffers.get(&bid) {
                             let target_line = (line - 1).min(buffer.line_count().saturating_sub(1));
@@ -114,7 +114,23 @@ pub fn handle_prompt_action(
                             window.ensure_cursor_visible(buffer);
                         }
                     }
+                }
+                _ => {
+                    // A rejected number is user input, not a programmer
+                    // error: say so in the message line rather than
+                    // silently ignoring the prompt.
+                    app.message = Some(format!("Invalid line number: {}", input));
+                }
+            }
         }
+        InputAction::GotoByte => match input.parse::<usize>() {
+            Ok(byte_offset) => {
+                app.goto_byte(byte_offset);
+            }
+            _ => {
+                app.message = Some(format!("Invalid byte offset: {}", input));
+            }
+        },
         InputAction::QueryReplace => {
             if let Some((old, new)) = input.split_once('|') {
                 if !old.is_empty() {

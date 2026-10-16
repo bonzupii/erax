@@ -562,6 +562,7 @@ fn handle_focus_input(
                     crate::core::focus::FocusTarget::Calculator => InputAction::Calculator,
                     crate::core::focus::FocusTarget::Minibuffer => InputAction::ExecuteNamedCommand,
                     crate::core::focus::FocusTarget::GoToLine => InputAction::GotoLine,
+                    crate::core::focus::FocusTarget::GoToByte => InputAction::GotoByte,
                     crate::core::focus::FocusTarget::ISearch => InputAction::SearchForward,
                     crate::core::focus::FocusTarget::FindReplace => InputAction::QueryReplace,
                     _ => InputAction::ExecuteNamedCommand,

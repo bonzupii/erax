@@ -33,6 +33,8 @@ pub enum InputAction {
     ShellCommand,
     FilterBuffer,
     GotoLine,
+    /// Go to a byte offset in the buffer
+    GotoByte,
     Calculator,
     SedPreview,
     ExecuteNamedCommand,
