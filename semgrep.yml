@@ -1,0 +1,519 @@
+# semgrep rules: AI-code-sins detection (S1-S16)
+#
+# First-class detection artifact for "Reviewing AI-Generated Rust: a launch
+# document" (the generic taxonomy this ruleset implements; the document
+# lives in the project ledger and applies to any Rust codebase). This
+# in-tree copy is the project's operative gate.
+# Version: 1.0.0 (2026-10-15). Version this file with the document; rule
+# changes are review-relevant changes.
+#
+# Purpose: catch mechanically-detectable patterns that CLIPPY CANNOT catch,
+# plus a small set of rules that mirror clippy denies so the ruleset is a
+# complete audit instrument on its own. Each rule carries:
+#   - sin: the S-ID from the taxonomy (REPORT.md section 2)
+#   - clippy: the clippy lint covering the same pattern, or "none"
+#     (meaning: this rule exists because clippy cannot see it)
+#   - twin: the legitimate twin, where one exists; exclusions encode it
+#     via pattern-not / pattern-not-inside where the grammar allows.
+#
+# Regression posture (REPORT.md section 3): baseline current violations
+# once; gate CI on NEW violations (a ratchet), not on the inherited
+# backlog. Census runs require --timeout 300: the default timeout
+# lets five rules die silently on modal.rs/btext.rs (the #[cfg(test)]
+# exclusion list is expensive on thousand-line files), undercounting
+# S1/S3. A rule that has never been observed firing on a known
+# specimen is an unverified claim; rule validation specimens live in
+# the research notes, not in this file.
+#
+# Patterns this grammar CANNOT express (documented, not faked):
+#   - S7 duplication: no clone detection in semgrep; use normalized
+#     line-window hashing (REPORT.md S7).
+#   - S8 defensive layers: judgmental; use nesting-depth scripts.
+#   - S9 wrong-spec tests: spec judgment is human (tautology rules below
+#     catch only the mechanical husk).
+#   - S10 hallucinated APIs: verify against pinned docs (cargo deny/audit).
+#   - S11 hot-path allocation: needs profiling first; eager-format rules
+#     below are the expressible residue.
+#   - S12 comment pollution: comments are not reliably matchable; use
+#     ratio scripts and reading.
+#   - S13 multi-op unsafe blocks: covered by clippy
+#     (multiple_unsafe_ops_per_block); the transmute/zeroed residue is
+#     below.
+#   - S14 god modules/functions: line counts are not expressible; use
+#     clippy too_many_lines + wc/file-size scripts (REPORT.md S14).
+#   - S15 which-statics-are-legitimate: the census rules below find the
+#     sites; legitimacy is human (guard stacks, compiled-once regexes,
+#     atomics) vs sin (static mut, convenience interior mutability).
+#   - S16 string-vs-type judgment at boundaries: the census rules below
+#     find the sites; the boundary/internal distinction is human.
+#
+# Grammar-level limitations (semgrep 1.181.0 Rust grammar): bare type
+# patterns (Box<dyn ...>, Arc<Mutex<...>>, RefCell<...>), bare macro
+# names (thread_local!), match-arm ellipsis, closure arguments in
+# method chains, and bare attribute patterns do not parse; those rules
+# use pattern-regex equivalents, each marked with a "grammar note".
+# A metavariable in module-name position (mod $M) does not match inside
+# pattern-not-inside; the test-module exclusion therefore enumerates
+# #[cfg(test)] module names literally (see the shared anchor).
+# Two blind spots are NOT worked around, by decision, and are recorded
+# in the affected rules' metadata.blind_spots instead of being papered
+# over: (1) expression patterns do not match inside macro-invocation
+# arguments (e.g. assert_eq!); (2) let...else statements are not modeled.
+#
+# Severity scale: ERROR = must-fix on sight. WARNING = adjudicate per
+# site (the sin or its legitimate twin). INFO = census signal; never a
+# gate by itself.
+
+# Test-module exclusion (shared anchor). The panic-safety and
+# error-silencing rules (S1, S3) are production-gated: unwraps, expects,
+# and silent fallbacks inside #[cfg(test)] modules are legitimate test
+# idiom, not the sin. Grammar limitation: a metavariable in module-name
+# position (mod $M) does not match inside pattern-not-inside, so test
+# modules are enumerated by literal name. The generic default is
+# `mod tests`; the additional names were enumerated from the erax tree
+# census (2026-10-15) - other trees extend this list with their own
+# #[cfg(test)] module names.
+x-test-mod-exclusion: &test_mod_excl
+  pattern-either:
+    - pattern: |
+        #[cfg(test)]
+        mod tests {
+          ...
+        }
+    - pattern: |
+        #[cfg(test)]
+        mod golden_tests {
+          ...
+        }
+    - pattern: |
+        #[cfg(test)]
+        mod propagation_tests {
+          ...
+        }
+    - pattern: |
+        #[cfg(test)]
+        mod cursor_clamp_tests {
+          ...
+        }
+    - pattern: |
+        #[cfg(test)]
+        mod invalid_utf8_tests {
+          ...
+        }
+    - pattern: |
+        #[cfg(test)]
+        mod cluster_tests {
+          ...
+        }
+    - pattern: |
+        #[cfg(test)]
+        mod layout_tests {
+          ...
+        }
+    - pattern: |
+        #[cfg(test)]
+        mod parity_end_to_end {
+          ...
+        }
+    - pattern: |
+        #[cfg(test)]
+        mod frame_tests {
+          ...
+        }
+    - pattern: |
+        #[cfg(test)]
+        mod region_tests {
+          ...
+        }
+
+rules:
+
+# ---------------------------------------------------------------- S1
+- id: ai-sins-s1-unwrap-or-default
+  languages: [rust]
+  severity: WARNING
+  metadata:
+    sin: S1
+    clippy: none
+    twin: "statistics counters and optional display hints where the default is the correct value; must be named in a comment and pinned by a test"
+  message: >
+    unwrap_or_default() on a value that must be present buries the
+    failure: the wrong value propagates silently. Goedecke's test: from
+    outside the function, can you tell whether the real path or the
+    fallback ran? If not, this is the sin.
+  patterns:
+    - pattern: $X.unwrap_or_default()
+    - pattern-not-inside: *test_mod_excl
+
+- id: ai-sins-s1-unwrap-or-degenerate-literal
+  languages: [rust]
+  severity: WARNING
+  metadata:
+    sin: S1
+    clippy: none
+    twin: "a literal that is genuinely the correct value in the failure case, stated and tested"
+  message: >
+    unwrap_or(0)/unwrap_or("")/unwrap_or(false) is the degenerate twin
+    of unwrap_or_default: a failed lookup becomes a zero index or an
+    empty string and execution continues. Adjudicate per site.
+  patterns:
+    - pattern-either:
+        - pattern: $X.unwrap_or(0)
+        - pattern: $X.unwrap_or("")
+        - pattern: $X.unwrap_or(false)
+    - pattern-not-inside: *test_mod_excl
+
+- id: ai-sins-s1-let-underscore-discard
+  languages: [rust]
+  severity: INFO
+  metadata:
+    sin: S1
+    clippy: none
+    twin: "intentional immediate drop (lock guards, channel sends whose failure is genuinely irrelevant)"
+  message: >
+    let _ = discards a Result/Option. Census signal: each site must
+    name what is being discarded and why silence is correct.
+  patterns:
+    - pattern: let _ = $E;
+    - pattern-not-inside: *test_mod_excl
+
+- id: ai-sins-s1-empty-catchall-arm
+  languages: [rust]
+  severity: WARNING
+  metadata:
+    sin: S1
+    clippy: none
+    twin: "parser/decoder ignore arms for genuinely ignorable input classes (escape sequences, unknown extensions), with the ignored class named"
+  message: >
+    A catch-all arm that does nothing or returns Default swallows every
+    unhandled case silently. In dispatch code this is invariant burial.
+  patterns:
+    - pattern-either:
+        - pattern-regex: '_\s*=>\s*\{\s*\}'
+        - pattern-regex: '_\s*=>\s*Default::default\(\)'
+    - pattern-not-inside: *test_mod_excl
+
+# ---------------------------------------------------------------- S2
+- id: ai-sins-s2-box-dyn-error
+  languages: [rust]
+  severity: WARNING
+  metadata:
+    sin: S2
+    clippy: none
+    twin: "the outermost binary edge (main returning errors to the OS)"
+  message: >
+    Box<dyn Error> erases the error type: callers cannot match on,
+    recover from, or enumerate failure modes. Legitimate only where no
+    caller can branch on the kind. Introduce the typed variant.
+  patterns:
+    # grammar note: bare type patterns (Box<dyn ...>) do not parse in
+    # semgrep's Rust grammar; regex is the maintained equivalent.
+    - pattern-regex: 'Box<dyn\s+(?:std::error::)?Error\b'
+    - pattern-not-inside: |
+        fn main() {
+          ...
+        }
+    - pattern-not-inside: |
+        fn main() -> $R {
+          ...
+        }
+
+- id: ai-sins-s2-map-err-to-string
+  languages: [rust]
+  severity: WARNING
+  metadata:
+    sin: S2
+    clippy: none
+    twin: "the outermost user-facing boundary where the error becomes a message (and even there, prefer the typed variant until the last step)"
+  message: >
+    map_err(|e| e.to_string()) converts a typed error into an opaque
+    string one step too early, destroying matchability for all
+    downstream callers.
+  # grammar note: closure arguments in method chains do not parse;
+  # regex is the maintained equivalent.
+  pattern-regex: '\.map_err\(\s*\|[^{}()]*\|\s*[^{}()]*\.to_string\(\)\s*\)'
+
+# ---------------------------------------------------------------- S3
+# (clippy kit denies unwrap_used, expect_used, panic, panic_in_result_fn,
+#  unwrap_in_result, indexing_slicing, get_unwrap, todo, unimplemented,
+#  unreachable. These rules mirror the kit so the ruleset is a complete
+#  audit instrument; the kit is the gate.)
+- id: ai-sins-s3-unwrap
+  languages: [rust]
+  severity: ERROR
+  metadata:
+    sin: S3
+    clippy: unwrap_used
+    twin: "test modules (allowed to fail loudly); unreachable-by-construction sites must use expect with the invariant named instead"
+  message: >
+    unwrap() on a path reachable by input, configuration, or normal
+    operation is a panic the author never proved unreachable.
+  patterns:
+    - pattern: $X.unwrap()
+    - pattern-not-inside: *test_mod_excl
+
+- id: ai-sins-s3-expect
+  languages: [rust]
+  severity: ERROR
+  metadata:
+    sin: S3
+    clippy: expect_used
+    twin: 'expect("static regex; compiles at author time") — the message states the invariant, not the hope'
+  message: >
+    expect() with a reassuring message is panic with marketing. The
+    message must name the invariant that makes the site unreachable.
+  patterns:
+    - pattern: $X.expect($MSG)
+    - pattern-not-inside: *test_mod_excl
+
+- id: ai-sins-s3-panic-macros
+  languages: [rust]
+  severity: ERROR
+  metadata:
+    sin: S3
+    clippy: panic/todo/unimplemented/unreachable
+    twin: "unreachable!() at a site that is genuinely unreachable by construction, with the invariant stated"
+  message: >
+    panic!/todo!/unimplemented! in shipped paths. todo!() is a stub
+    counted as a feature (S6); unreachable!() needs its invariant.
+  patterns:
+    - pattern-either:
+        - pattern: panic!($ARGS)
+        - pattern: todo!($ARGS)
+        - pattern: unimplemented!($ARGS)
+        - pattern: unreachable!($ARGS)
+    - pattern-not-inside: *test_mod_excl
+
+# ---------------------------------------------------------------- S4
+- id: ai-sins-s4-arc-mutex
+  languages: [rust]
+  severity: WARNING
+  metadata:
+    sin: S4
+    clippy: none
+    twin: "genuinely shared mutable state across threads, with the sharing documented"
+  message: >
+    Arc<Mutex<T>> as default architecture is borrow-checker appeasement:
+    the compiler is satisfied, the design is not. Restructure ownership
+    first; reach for shared mutability last.
+  # grammar note: bare type patterns do not parse; regex equivalent.
+  pattern-regex: 'Arc\s*<\s*Mutex\s*<'
+
+- id: ai-sins-s4-clone-census
+  languages: [rust]
+  severity: INFO
+  metadata:
+    sin: S4
+    clippy: redundant_clone/clone_on_copy (partial)
+    twin: "a clone whose necessity is load-bearing and documented at the site (the value escapes, the borrow cannot live that long)"
+  message: >
+    Census only: every .clone() needs a reason. "To satisfy the borrow
+    checker" is the diagnosis, not the reason. Never a gate by itself.
+  pattern: $X.clone()
+
+# ---------------------------------------------------------------- S5
+- id: ai-sins-s5-box-dyn-trait
+  languages: [rust]
+  severity: WARNING
+  metadata:
+    sin: S5
+    clippy: none
+    twin: "genuinely open dispatch (plugin boundaries, reader/writer pairs over heterogeneous sources)"
+  message: >
+    Box<dyn Trait> over a closed set is abstraction theater: an enum
+    with a match does the job. Delete the abstraction; if exactly one
+    call site changes shape, it was theater.
+  patterns:
+    # grammar note: bare type patterns do not parse; regex equivalent.
+    # The negative lookahead keeps S2's Box<dyn Error> out of S5's set.
+    - pattern-regex: 'Box<dyn(?![^>\n]*\bError\b)[^>\n]*>'
+
+# ---------------------------------------------------------------- S6
+- id: ai-sins-s6-allow-dead-code
+  languages: [rust]
+  severity: WARNING
+  metadata:
+    sin: S6
+    clippy: allow_attributes_without_reason (partial)
+    twin: "none in shipped code; a deliberate extension point is documented as unimplemented in user-facing docs and unreachable from the UI"
+  message: >
+    #[allow(dead_code)] preserves a corpse "for reference". A stub is
+    implemented, deleted, or documented as unimplemented — never kept
+    by attribute.
+  # grammar note: a bare attribute pattern parses as a comment and
+  # matches everything; regex is the maintained equivalent.
+  pattern-regex: '#\[allow\(dead_code\)\]'
+
+# ---------------------------------------------------------------- S9
+- id: ai-sins-s9-tautological-assert
+  languages: [rust]
+  severity: WARNING
+  metadata:
+    sin: S9
+    clippy: assertions_on_constants (partial)
+    twin: "none; a test that cannot fail is not a test"
+  message: >
+    A test that cannot fail is the cheapest green. assert_eq!(x, x) and
+    constant asserts pass without testing anything.
+  patterns:
+    - pattern-either:
+        - pattern: assert!(true)
+        - pattern: assert!(false)
+        - pattern: assert_eq!($X, $X)
+
+# ---------------------------------------------------------------- S11
+- id: ai-sins-s11-eager-format-in-fallback
+  languages: [rust]
+  severity: WARNING
+  metadata:
+    sin: S11
+    clippy: or_fun_call/expect_fun_call (partial)
+    twin: "none; the lazy form is always at least as good"
+  message: >
+    unwrap_or(format!(...)) / expect(format!(...)) allocates eagerly on
+    every call, including the happy path. Use the _else / _with
+    combinators.
+  # grammar note: macro calls nested as method-call arguments do not
+  # match reliably; regex is the maintained equivalent.
+  pattern-regex: '\.(unwrap_or|expect)\(\s*format!'
+
+# ---------------------------------------------------------------- S13
+- id: ai-sins-s13-transmute
+  languages: [rust]
+  severity: ERROR
+  metadata:
+    sin: S13
+    clippy: none (transmute_* lints cover specific misuse shapes)
+    twin: "a transmute whose safety argument is stated at the site and whose sizes/reprs are pinned (still prefer casts or from_utf8_unchecked with its meaningful name)"
+  message: >
+    transmute is the highest-risk single call in Rust. Every site needs
+    a stated safety argument or it does not ship.
+  pattern: $P::transmute($ARGS)
+
+- id: ai-sins-s13-mem-zeroed
+  languages: [rust]
+  severity: ERROR
+  metadata:
+    sin: S13
+    clippy: none
+    twin: "types where zero is a valid bit pattern, with that validity stated"
+  message: >
+    mem::zeroed on types where zero is not a valid value is instant
+    undefined behavior. The validity of the zero pattern must be stated.
+  pattern: $P::zeroed()
+
+# ---------------------------------------------------------------- S15
+- id: ai-sins-s15-static-mut
+  languages: [rust]
+  severity: ERROR
+  metadata:
+    sin: S15
+    clippy: none
+    twin: "none in safe code; atomics and OnceLock replace every legitimate use"
+  message: >
+    static mut is shared mutable global state with no synchronization
+    story. There is no legitimate twin in safe code.
+  pattern: "static mut $N: $T = $V;"
+
+- id: ai-sins-s15-thread-local
+  languages: [rust]
+  severity: INFO
+  metadata:
+    sin: S15
+    clippy: none
+    twin: "guard stacks and reentrancy state that is genuinely thread-scoped (signal-handler chaining)"
+  message: >
+    Census: thread_local! is global state with thread scope. Each site
+    must name why the state cannot live in the value it guards.
+  # grammar note: a bare macro name does not parse as a pattern;
+  # regex is the maintained equivalent.
+  pattern-regex: 'thread_local!\s*\{'
+
+- id: ai-sins-s15-interior-mutability
+  languages: [rust]
+  severity: INFO
+  metadata:
+    sin: S15
+    clippy: none
+    twin: "lazy caches with a stated invalidation story (computed once, never stale); structural sharing in data structures"
+  message: >
+    Census: RefCell/Cell smear mutation through shared references,
+    defeating the borrow checker's accounting. Convenience interior
+    mutability (queues, counters behind &self) is the sin; name the
+    twin or restructure.
+  # grammar note: bare type patterns do not parse; regex equivalent.
+  pattern-regex: '\b(RefCell|Cell)\s*<'
+
+- id: ai-sins-s15-global-static
+  languages: [rust]
+  severity: INFO
+  metadata:
+    sin: S15
+    clippy: none
+    twin: "compiled-once patterns (LazyLock<Regex>), atomic counters/mints, const-like data — each named at the site"
+    blind_spots:
+      - "Statics declared inside macro invocations are invisible to this
+         rule: e.g. a `static` item inside `thread_local! { ... }` does not
+         match item patterns. The ai-sins-s15-thread-local rule covers
+         thread_local! sites textually; other macro-nested statics need
+         the textual fallback `grep -rn 'static' --include='*.rs'`."
+  message: >
+    Census: every static is global state. The legitimate ones are
+    compiled-once values and atomics; the rest are configuration that
+    should be a parameter and mutation that should be a field.
+  pattern: "static $N: $T = $V;"
+
+# ---------------------------------------------------------------- S16
+- id: ai-sins-s16-string-param
+  languages: [rust]
+  severity: INFO
+  metadata:
+    sin: S16
+    clippy: none
+    twin: "constructors that take String to own the value they store; the outermost user-facing boundary"
+  message: >
+    Census: a String parameter where &str would do (or where a typed
+    value exists: paths, keys, commands, colors, modes) is stringly
+    typing. Text at system boundaries is strings; strings crossing
+    internal boundaries where a type exists is the sin.
+  pattern: |
+    fn $F(..., $P: String, ...) {
+      ...
+    }
+
+- id: ai-sins-s16-string-field
+  languages: [rust]
+  severity: INFO
+  metadata:
+    sin: S16
+    clippy: none
+    twin: "message text, names, and content that genuinely is text; stringly data tables (bindings-as-data) where the table IS the representation"
+  message: >
+    Census: String struct fields. Each one is a candidate for a
+    newtype or enum. Fields that are genuinely text stay.
+  pattern: |
+    struct $S {
+      ...,
+      $F: String,
+      ...
+    }
+
+- id: ai-sins-s16-to-string
+  languages: [rust]
+  severity: INFO
+  metadata:
+    sin: S16
+    clippy: str_to_string (partial, restriction)
+    twin: "the outermost boundary where a value becomes display text"
+    blind_spots:
+      - "Expression patterns do not match inside macro-invocation arguments
+         (e.g. .to_string() inside assert_eq!); those occurrences are
+         invisible to this rule."
+      - "The grammar does not model let...else statements; occurrences in
+         let-else bodies (e.g. a production return ... .to_string() inside
+         let Some(x) = ... else) are invisible to this rule."
+  message: >
+    Census: .to_string() density. Each call converts a typed value to
+    text; conversions at internal boundaries are the stringly-typing
+    residue. Overlaps S4/S11; adjudicate with them.
+  pattern: $X.to_string()

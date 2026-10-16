@@ -104,9 +104,8 @@
                 pkgs.pkg-config
                 # Test and audit tooling: python3 runs the test corpus
                 # generators (tests/gen_vim_corpus.py); semgrep runs the
-                # maintained sin-pattern ruleset that gates regressions
-                # clippy cannot see (research/ai-code-sins/semgrep.yml in
-                # the project ledger, copied into the tree by the audit).
+                # maintained sin-pattern ruleset at the tree root
+                # (semgrep.yml) that gates regressions clippy cannot see.
                 pkgs.python3
                 pkgs.semgrep
                 # Coverage: the project targets 100% test coverage;
