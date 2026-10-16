@@ -245,7 +245,12 @@ fn parse_number(chars: &mut std::iter::Peekable<std::str::Chars>) -> Result<i64,
                         num_str.push(ch);
                     }
                 }
-                return i64::from_str_radix(&num_str[1..], 16)
+                // Parse through u64 so the full 64-bit range is valid
+                // input: 0xFFFFFFFFFFFFFFFF is -1 in two's complement,
+                // and format_result prints exactly that, so eval must
+                // accept its own output.
+                return u64::from_str_radix(&num_str[1..], 16)
+                    .map(|v| v as i64)
                     .map_err(|e| CalcError::Tokenize(format!("Invalid hex number: {}", e)));
             }
             Some('b') | Some('B') => {
@@ -257,7 +262,8 @@ fn parse_number(chars: &mut std::iter::Peekable<std::str::Chars>) -> Result<i64,
                         num_str.push(ch);
                     }
                 }
-                return i64::from_str_radix(&num_str, 2)
+                return u64::from_str_radix(&num_str, 2)
+                    .map(|v| v as i64)
                     .map_err(|e| CalcError::Tokenize(format!("Invalid binary number: {}", e)));
             }
             Some('o') | Some('O') => {
@@ -269,7 +275,8 @@ fn parse_number(chars: &mut std::iter::Peekable<std::str::Chars>) -> Result<i64,
                         num_str.push(ch);
                     }
                 }
-                return i64::from_str_radix(&num_str, 8)
+                return u64::from_str_radix(&num_str, 8)
+                    .map(|v| v as i64)
                     .map_err(|e| CalcError::Tokenize(format!("Invalid octal number: {}", e)));
             }
             _ => {}
@@ -808,6 +815,26 @@ mod tests {
             calc.eval("y + 1"),
             Err(CalcError::UndefinedVariable(_))
         ));
+    }
+
+    #[test]
+    fn test_high_bit_hex_binary_octal_literals() {
+        // A programmer's calculator must accept the full 64-bit range
+        // in every radix: 0xFFFFFFFFFFFFFFFF is -1 in two's complement,
+        // and format_result prints it back, so eval must round-trip it.
+        let mut calc = Calculator::new();
+        assert_eq!(calc.eval("0xFFFFFFFFFFFFFFFF").unwrap(), -1i64);
+        assert_eq!(calc.eval("0x8000000000000000").unwrap(), i64::MIN);
+        assert_eq!(calc.eval("0x7FFFFFFFFFFFFFFF").unwrap(), i64::MAX);
+        assert_eq!(
+            calc.eval("0b1111111111111111111111111111111111111111111111111111111111111111")
+                .unwrap(),
+            -1i64
+        );
+        assert_eq!(
+            calc.eval("0o1777777777777777777777").unwrap(),
+            -1i64
+        );
     }
 
     #[test]
