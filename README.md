@@ -97,9 +97,11 @@ includes `src/config/font.rs`, `src/config/cursor_style.rs`,
 `src/config/scrollbar.rs`, `src/config/theme.rs`, and
 `src/config/effects.rs` directly, so the web shell cannot drift from the
 native config). Every input file is anchored with `cargo:rerun-if-changed`
-plus an internal fingerprint, so an unchanged tree never rebuilds the
+plus an internal fingerprint (which also covers the toolchain and the
+wasm-bindgen generator versions), so an unchanged tree never rebuilds the
 wasm: the first build pays for it, later builds reuse `OUT_DIR`. To force
-regeneration, touch a web-shell source (or `cargo clean`).
+regeneration, touch any input the client compiles in (a web-shell source,
+a shared config file, a shader) or run `cargo clean`.
 
 The `web-shell` `[profile.release]` (opt-level 2, LTO, single codegen
 unit, stripped; see `OPTLEVEL.md`) keeps the shipped artifacts
