@@ -7,9 +7,7 @@ use crate::core::id::BufferId;
 
 pub fn new_buffer(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let buffer = Buffer::new();
-        // Manually allocate buffer ID since alloc_buffer_id is private
-        let buffer_id = BufferId(app.next_buffer_id);
-        app.next_buffer_id += 1;
+        let buffer_id = app.alloc_buffer_id();
 
         app.buffers.insert(buffer_id, buffer);
 
