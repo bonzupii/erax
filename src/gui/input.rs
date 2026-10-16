@@ -121,17 +121,13 @@ fn physical_key_to_chord_base(code: KeyCode) -> Option<Key> {
 /// Convert mouse pixel position to grid cell coordinates.
 ///
 /// Delegates to the presentation core's shared geometry (no second
-/// implementation); the `_view_*` params are retained for call-site
-/// compatibility and ignored.
+/// implementation): the canonical grid metrics, grid offset included.
 pub fn mouse_pos_to_grid(
     x: f32,
     y: f32,
-    cell_width: f32,
-    cell_height: f32,
-    _view_width: f32,
-    _view_height: f32,
+    metrics: &crate::core::geometry::GridMetrics,
 ) -> Option<(usize, usize)> {
-    crate::gui::core::renderer::mouse_pos_to_grid(x, y, cell_width, cell_height)
+    crate::gui::core::renderer::mouse_pos_to_grid(x, y, metrics)
         .map(|(c, r)| (c as usize, r as usize))
 }
 
@@ -156,7 +152,12 @@ mod tests {
 
     #[test]
     fn mouse_pos_to_grid_converts() {
-        let pos = mouse_pos_to_grid(100.0, 50.0, 10.0, 20.0, 800.0, 600.0).unwrap();
-        assert_eq!(pos, (10, 2));
+        use crate::core::geometry::GridMetrics;
+        let metrics = GridMetrics::new(10.0, 20.0, 800.0, 600.0);
+        // The centered grid offset is accounted for: with a 5 px
+        // horizontal and 10 px vertical offset, (100, 50) maps to
+        // ((100-5)/10, (50-10)/20) = (9, 2).
+        let pos = mouse_pos_to_grid(100.0, 50.0, &metrics).unwrap();
+        assert_eq!(pos, (9, 2));
     }
 }

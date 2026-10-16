@@ -278,14 +278,10 @@ impl GuiApp {
         self.cursor_pos = Some((position.x, position.y));
 
         let grid_pos = if let Some(renderer) = self.renderer.as_ref() {
-            let (vw, vh) = renderer.size();
             crate::gui::input::mouse_pos_to_grid(
                 position.x as f32,
                 position.y as f32,
-                renderer.cell_width(),
-                renderer.cell_height(),
-                vw as f32,
-                vh as f32,
+                &renderer.metrics,
             )
         } else {
             None
@@ -378,15 +374,8 @@ impl GuiApp {
         // Get current cursor grid position (default to 0,0 if not available)
         let (col, row) =
             if let (Some((x, y)), Some(renderer)) = (self.cursor_pos, self.renderer.as_ref()) {
-                let (vw, vh) = renderer.size();
-                crate::gui::input::mouse_pos_to_grid(
-                    x as f32,
-                    y as f32,
-                    renderer.cell_width(),
-                    renderer.cell_height(),
-                    vw as f32,
-                    vh as f32,
-                ).unwrap_or_default()
+                crate::gui::input::mouse_pos_to_grid(x as f32, y as f32, &renderer.metrics)
+                    .unwrap_or_default()
             } else {
                 (0, 0)
             };
@@ -424,15 +413,7 @@ impl GuiApp {
         // Convert pixel position to grid
         let grid_pos =
             if let (Some((x, y)), Some(renderer)) = (self.cursor_pos, self.renderer.as_ref()) {
-                let (vw, vh) = renderer.size();
-                crate::gui::input::mouse_pos_to_grid(
-                    x as f32,
-                    y as f32,
-                    renderer.cell_width(),
-                    renderer.cell_height(),
-                    vw as f32,
-                    vh as f32,
-                )
+                crate::gui::input::mouse_pos_to_grid(x as f32, y as f32, &renderer.metrics)
             } else {
                 None
             };

@@ -913,12 +913,7 @@ fn wire_mouse(
             let px = (event.client_x() as f64 - rect.left()) as f32;
             let py = (event.client_y() as f64 - rect.top()) as f32;
             // Shared geometry from the presentation core (no second impl).
-            crate::gui::core::renderer::mouse_pos_to_grid(
-                px,
-                py,
-                s.renderer.cell_width(),
-                s.renderer.cell_height(),
-            )
+            s.renderer.grid_cell_at(px, py)
         })
     };
 

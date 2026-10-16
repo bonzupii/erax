@@ -86,18 +86,9 @@ pub struct ShapedLineInput {
 /// Pure geometry for the dumb passthrough: shells convert pixels to cells
 /// and forward the cell position; all click semantics live in the backend.
 /// Shared by the native and web shells (no second implementation).
-pub fn mouse_pos_to_grid(
-    x: f32,
-    y: f32,
-    cell_width: f32,
-    cell_height: f32,
-) -> Option<(u16, u16)> {
-    if cell_width <= 0.0 || cell_height <= 0.0 {
-        return None;
-    }
-    let col = (x / cell_width) as u16;
-    let row = (y / cell_height) as u16;
-    Some((col, row))
+pub fn mouse_pos_to_grid(x: f32, y: f32, metrics: &GridMetrics) -> Option<(u16, u16)> {
+    let (col, row) = metrics.px_to_grid(x, y)?;
+    Some((col as u16, row as u16))
 }
 
 /// Build the shaping input for one screen row.
@@ -230,6 +221,19 @@ pub fn clusters_from_runs(runs: &[LayoutRun<'_>]) -> Vec<ShapedCluster> {
         }
     }
     clusters
+}
+
+/// First grid column whose character falls inside a cluster's byte range.
+///
+/// `col_to_byte` runs in visual (left-to-right) order, so the minimum
+/// matching column is the cluster's visual left edge in either text
+/// direction. The integer-grid snap site uses this to place the
+/// cluster's origin.
+fn cluster_first_col(col_to_byte: &[usize], start: usize, end: usize) -> usize {
+    col_to_byte
+        .iter()
+        .position(|&b| b >= start && b < end)
+        .unwrap_or(0)
 }
 
 /// Caret x-offset for a logical byte offset into a shaped line, in pixels
@@ -397,7 +401,6 @@ pub struct Renderer {
     pub metrics: GridMetrics,
 
     // Performance caches
-    x_positions: Vec<f32>,
     bg_cache: Vec<u32>,
 }
 
@@ -522,12 +525,12 @@ impl Renderer {
 
         let mut font_manager =
             FontManager::from_font_stack(scaled_font_size, line_height, &p.fonts);
-        // The grid cell is the shaped advance, exactly: backgrounds are
-        // located per fragment by floor(pixel / cell), which is exact for
-        // fractional sizes, and shaped glyph x positions are multiples of
-        // the fractional advance. Rounding the width to an integer made the
-        // background grid drift away from the glyphs (broken box-drawing
-        // alignment); see `FontManager::grid_cell_size`.
+        // The grid cell is the shaped advance snapped to whole pixels by
+        // `GridMetrics::new` (the canonical snap point). Backgrounds are
+        // located per fragment by floor(pixel / cell) and every shaped
+        // cluster origin is placed at a whole multiple of the cell, so
+        // backgrounds and glyphs derive from the same integers and
+        // cannot drift apart; see `FontManager::grid_cell_size`.
         let (cell_width, cell_height) = font_manager.grid_cell_size();
         let metrics = GridMetrics::new(
             cell_width,
@@ -705,10 +708,6 @@ impl Renderer {
             })
         };
 
-        let x_positions: Vec<f32> = (0..=p.width.max(1))
-            .map(|i| 0.0 + (i as f32) * cell_width)
-            .collect();
-
         let mut renderer = Self {
             device,
             queue,
@@ -735,7 +734,6 @@ impl Renderer {
             cursor_vb: None,
             cursor_vb_cap: 0,
             metrics,
-            x_positions,
             bg_cache: Vec::new(),
         };
 
@@ -858,10 +856,6 @@ impl Renderer {
                 new_size.0 as f32,
                 new_size.1 as f32,
             );
-            // Recalculate cached positions
-            self.x_positions = (0..=new_size.0)
-                .map(|i| self.metrics.offset_x + (i as f32) * self.metrics.cell_width)
-                .collect();
 
             self.glyph_bind_group = None;
             // Caret maps are rebuilt by the next render().
@@ -880,6 +874,15 @@ impl Renderer {
     }
     pub fn cell_height(&self) -> f32 {
         self.metrics.cell_height
+    }
+
+    /// Cell under a pixel position, via the canonical grid metrics.
+    ///
+    /// The single pixel-to-cell derivation for both shells; the grid
+    /// offset is accounted for, so clicks at the window edge map to
+    /// the correct cell.
+    pub fn grid_cell_at(&self, x: f32, y: f32) -> Option<(u16, u16)> {
+        mouse_pos_to_grid(x, y, &self.metrics)
     }
 
     /// Set the backend's cursor shape for subsequent frames.
@@ -902,7 +905,7 @@ impl Renderer {
     /// [`caret_x_for_byte_offset`]. Returns `None` for rows that have not been
     /// rendered yet (before the first frame, or after a resize).
     pub fn caret_x_for_cell(&self, row: usize, col: usize) -> Option<f32> {
-        let origin_x = self.x_positions.first().copied().unwrap_or(0.0);
+        let origin_x = self.metrics.offset_x;
         self.caret_maps
             .get(row)?
             .get(col)
@@ -938,8 +941,12 @@ impl Renderer {
     }
 
     /// The x origin (pixels) that shaped line text is laid out from.
+    ///
+    /// The canonical grid origin from the metrics: the same origin the
+    /// background cells derive from, so glyphs and backgrounds agree by
+    /// construction.
     fn text_origin_x(&self) -> f32 {
-        self.x_positions.first().copied().unwrap_or(0.0)
+        self.metrics.offset_x
     }
 
     pub fn render(&mut self, screen_buffer: &ScreenBuffer) -> Result<(), RenderError> {
@@ -1005,28 +1012,74 @@ impl Renderer {
                 let caret_row = &mut self.caret_maps[row];
                 pending.clear();
                 let runs: Vec<LayoutRun<'_>> = shape_buffer.layout_runs().collect();
+                let clusters = clusters_from_runs(&runs);
+                // Snap every cluster's origin to the integer grid: the
+                // visual-left column the cluster starts in times the
+                // (whole-pixel) cell width. Glyphs keep their shaped
+                // offset inside the cluster, so kerning and mark
+                // placement are unchanged; only the cluster origin is
+                // integral, and each row derives it independently, so
+                // drift cannot accumulate down the frame.
+                let snapped: Vec<f32> = clusters
+                    .iter()
+                    .map(|c| {
+                        cluster_first_col(&input.col_to_byte, c.start, c.end) as f32 * cw
+                    })
+                    .collect();
+                // Clusters and glyphs walk in the same order, so a cursor
+                // finds each glyph's cluster.
+                let mut cluster_idx = 0usize;
                 for run in &runs {
                     for glyph in run.glyphs {
-                        let physical = glyph.physical((origin_x, baseline), 1.0);
+                        while cluster_idx + 1 < clusters.len()
+                            && (clusters[cluster_idx].start != glyph.start
+                                || clusters[cluster_idx].end != glyph.end)
+                            && clusters[cluster_idx].end <= glyph.start
+                        {
+                            cluster_idx += 1;
+                        }
+                        let placed_x = match clusters.get(cluster_idx).filter(|c| {
+                            c.start == glyph.start && c.end == glyph.end
+                        }) {
+                            Some(c) => origin_x + snapped[cluster_idx] + (glyph.x - c.x),
+                            // Degenerate: a glyph outside every cluster
+                            // keeps the shaper's position; drift is
+                            // bounded to this glyph.
+                            None => origin_x + glyph.x,
+                        };
+                        let physical = glyph.physical((0.0, baseline), 1.0);
+                        // Integer pixel grid: the cluster origin is
+                        // whole by construction; the shaped intra-cluster
+                        // offset rounds once against that stable origin,
+                        // so the rounding cannot drift across rows.
+                        let x = placed_x.round() as i32;
                         pending.push(ShapedGlyph {
                             key: GlyphKey {
                                 font_id: physical.cache_key.font_id,
                                 glyph_index: physical.cache_key.glyph_id as u32,
                             },
                             cache_key: physical.cache_key,
-                            x: physical.x,
+                            x,
                             y: physical.y,
                             color: glyph_color_f32(glyph.color_opt),
                         });
                     }
                 }
-                let clusters = clusters_from_runs(&runs);
+                // Caret maps resolve through the snapped clusters, so
+                // caret stops sit on integer grid positions; ligature
+                // interiors keep their shaped fractional offset within
+                // the cluster.
+                let snapped_clusters: Vec<ShapedCluster> = clusters
+                    .iter()
+                    .zip(snapped.iter())
+                    .map(|(c, &x)| ShapedCluster { x, ..*c })
+                    .collect();
                 caret_row.clear();
                 caret_row.extend(
                     input
                         .col_to_byte
                         .iter()
-                        .map(|&byte| caret_x_for_byte_offset(&clusters, &input.text, byte)),
+                        .map(|&byte| caret_x_for_byte_offset(&snapped_clusters, &input.text, byte)),
                 );
             }
 
@@ -1257,6 +1310,38 @@ mod tests {
 
     fn cell(ch: char, fg: TermColor) -> Cell {
         Cell::with_role(ch, fg, TermColor::Reset, CellRole::EditorText)
+    }
+
+    #[test]
+    fn cluster_first_col_finds_visual_left_edge() {
+        // col_to_byte runs in visual order; the minimum matching column
+        // is the cluster's visual left edge in either direction.
+        // Wide char at cols 1-2 (bytes 3..4), RTL cluster at cols 4-5
+        // (bytes 5..9, logical order reversed visually).
+        let col_to_byte = vec![0, 3, 3, 4, 5, 5, 9];
+        assert_eq!(cluster_first_col(&col_to_byte, 0, 1), 0);
+        assert_eq!(cluster_first_col(&col_to_byte, 3, 4), 1);
+        assert_eq!(cluster_first_col(&col_to_byte, 5, 9), 4);
+        assert_eq!(cluster_first_col(&col_to_byte, 99, 100), 0);
+    }
+
+    #[test]
+    fn snapped_cluster_origins_are_whole_multiples_of_cell() {
+        // The integer-grid invariant, in pure form: each cluster's
+        // snapped origin is its visual-left column times the whole
+        // cell width, so placement derives from integers and cannot
+        // accumulate fractional drift across rows.
+        let cell_w = 11.0f32;
+        let col_to_byte = vec![0, 1, 2, 3, 5, 5, 6];
+        let clusters = vec![
+            ShapedCluster { start: 0, end: 1, x: 0.4, w: 10.6, rtl: false },
+            ShapedCluster { start: 5, end: 6, x: 43.7, w: 21.3, rtl: false },
+        ];
+        for c in &clusters {
+            let snapped = cluster_first_col(&col_to_byte, c.start, c.end) as f32 * cell_w;
+            assert_eq!(snapped.fract(), 0.0);
+            assert_eq!(snapped % cell_w, 0.0);
+        }
     }
 
 

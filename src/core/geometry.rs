@@ -3,13 +3,18 @@
 //! This module provides a single source of truth for grid↔pixel coordinate math,
 //! used by both the GUI renderer and TUI input handling.
 
-/// Metrics for grid-based rendering (cell dimensions in pixels)
+/// Metrics for grid-based rendering (cell dimensions in pixels).
+///
+/// `cell_width` and `cell_height` are whole pixels: [`GridMetrics::new`]
+/// snaps them once, at derivation, and every consumer (glyph origins,
+/// background cells, pixel-to-cell tests) derives from these integers,
+/// so fractional drift cannot accumulate across rows or frames.
 #[derive(Debug, Clone, Copy)]
 // Used by gui/grid_renderer for unified grid↔pixel coordinate math
 pub struct GridMetrics {
-    /// Width of a single cell in pixels
+    /// Width of a single cell in pixels (whole)
     pub cell_width: f32,
-    /// Height of a single cell in pixels  
+    /// Height of a single cell in pixels (whole)
     pub cell_height: f32,
     /// Total width of the viewport in pixels
     pub width_px: f32,
@@ -25,8 +30,14 @@ pub struct GridMetrics {
 pub const MIN_PADDING: f32 = 4.0;
 
 impl GridMetrics {
-    /// Create new metrics from cell and viewport dimensions
+    /// Create new metrics from cell and viewport dimensions.
+    ///
+    /// The cell dimensions snap to whole pixels exactly once, here; the
+    /// sub-pixel remainder is absorbed at the window edge by the
+    /// centered offset.
     pub fn new(cell_width: f32, cell_height: f32, width_px: f32, height_px: f32) -> Self {
+        let cell_width = cell_width.round().max(1.0);
+        let cell_height = cell_height.round().max(1.0);
         let (cols, rows) =
             Self::compute_grid_dimensions_static(width_px, height_px, cell_width, cell_height);
         let (offset_x, offset_y) = Self::compute_centered_offset_static(
@@ -87,9 +98,10 @@ impl GridMetrics {
     ///
     /// Derived from the metrics, never from a pixel-sized cache table:
     /// a grid row count that outgrows the viewport (oversized resize,
-    /// sub-pixel cell heights) cannot index past anything.
+    /// sub-pixel cell heights) cannot index past anything. The cell
+    /// height is whole by construction, so no rounding is needed.
     pub fn row_y(&self, row: usize) -> f32 {
-        (self.offset_y + row as f32 * self.cell_height).round()
+        self.offset_y + row as f32 * self.cell_height
     }
 
     /// Compute grid dimensions (static version for use before construction)
@@ -133,6 +145,20 @@ mod tests {
         // Test that valid pixel coordinates map to grid
         let result = metrics.px_to_grid(50.0, 60.0);
         assert!(result.is_some());
+    }
+
+    #[test]
+    fn cell_metrics_snap_to_whole_pixels_once() {
+        // Fractional shaping advances become whole pixels at the
+        // canonical derivation point; the remainder is absorbed by
+        // the centered offset, not by the cells.
+        let metrics = GridMetrics::new(10.6, 20.4, 808.0, 488.0);
+        assert_eq!(metrics.cell_width, 11.0);
+        assert_eq!(metrics.cell_height, 20.0);
+        assert_eq!(metrics.cell_width.fract(), 0.0);
+        assert_eq!(metrics.cell_height.fract(), 0.0);
+        // Whole cells make row edges exact: no rounding needed.
+        assert_eq!(metrics.row_y(3), metrics.offset_y + 3.0 * 20.0);
     }
 
     #[test]
