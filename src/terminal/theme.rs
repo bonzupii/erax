@@ -14,6 +14,10 @@
 
 use crate::terminal::color::Color;
 
+// Pinned relative to this file (not the including crate): the web shell
+// includes theme.rs via `#[path]`, and an unpinned child module would
+// resolve against the includer's directory.
+#[path = "theme/themes.rs"]
 pub mod themes;
 
 /// A color theme: plain data, one named field per UI/syntax role.

@@ -83,9 +83,10 @@ from disk for web dev iteration without recompiling the server.
 **Building the wasm client (release):** the checked-in `web-assets/` are
 built reproducibly from `web-shell/` (its own crate; the presentation core
 and protocol are the same sources as native, included via `#[path]` —
-`web-shell/src/config` includes `src/config/font.rs` and
-`src/config/cursor_style.rs` directly, so the font constants and the
-cursor-shape enum cannot drift). Exact commands:
+`web-shell/src/config` includes `src/config/font.rs`,
+`src/config/cursor_style.rs`, `src/config/scrollbar.rs`,
+`src/config/theme.rs`, and `src/config/effects.rs` directly, so the web
+shell cannot drift from the native config). Exact commands:
 
 ```bash
 cd web-shell

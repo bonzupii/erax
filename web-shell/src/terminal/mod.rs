@@ -6,6 +6,10 @@ pub mod color;
 #[path = "../../../src/terminal/model.rs"]
 pub mod model;
 
+/// Theme data (same source as native).
+#[path = "../../../src/terminal/theme.rs"]
+pub mod theme;
+
 /// Shim: the protocol refers to `terminal::display::{Cell, CellRole}`;
 /// on wasm those live in `terminal::model`.
 pub mod display {
