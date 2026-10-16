@@ -38,6 +38,37 @@ Profiles are **reversible**: `./accessibility.sh --unapply
 <profile>...` reverse-applies in reverse order. To change the profile
 set, reverse everything first, then apply the new set.
 
+## Building the `speech` profile: network requirements
+
+The `speech` profile needs two network fetches at build time, both
+fail-loud:
+
+1. **Model weights** (build.rs): the pinned Whisper, Kokoro, and
+   voice-bank artifacts (~690 MiB), each size- and sha256-verified
+   against the pins in `build/speech_artifacts.rs`, then embedded in
+   the binary. A mismatch fails the build and removes the bad file.
+2. **ONNX Runtime library** (`ort-sys` build script): a prebuilt
+   `onnxruntime` binary downloaded from `cdn.pyke.io`. This fetch is
+   outside erax's sha256 regime — it is the dependency's build
+   script doing it, and erax's build.rs cannot pin it (dependency
+   build scripts run before erax's own). If the CDN is unreachable,
+   the speech build fails; the escape hatch is to point `ort-sys`
+   at a local copy of the official onnxruntime 1.31.0 release:
+
+   ```sh
+   export ORT_LIB_PATH=/path/to/onnxruntime-1.31.0/lib
+   export ORT_PREFER_DYNAMIC_LINK=1
+   ./accessibility.sh speech
+   ```
+
+   (The second variable matters: without it `ort-sys` attempts a
+   static link against the directory and fails; the official release
+   ships only shared libraries.)
+
+   Note the release build embeds ~750 MiB of weights, so it needs
+   roughly 8 GB of RAM with LTO; `CARGO_PROFILE_RELEASE_LTO=off`
+   lowers that if the linker gets killed.
+
 ## Profile honesty rule
 
 A profile may only flip config constants that exist and are wired.

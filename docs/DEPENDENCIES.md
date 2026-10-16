@@ -47,7 +47,7 @@ disabled; see the session 26 PROGRESS entry for the audit table).
 | whisper-rs | =0.16.0 | Unlicense | Safe bindings to whisper.cpp for the built-in STT (Whisper large-v3-turbo q5_0) |
 | floravox-core | =0.8.8 | MIT (of Apache-2.0 OR MIT) | Pure-Rust TTS: G2P orchestration, SSML, word timings; drives our embedded-weights `VoiceBackend` impl |
 | floravox-g2p | =0.8.8 | MIT (of Apache-2.0 OR MIT) | misaki-rs wrapper: Rust-native English/Japanese G2P (dictionaries compiled in) |
-| ort | =2.0.0-rc.14 | MIT (of MIT OR Apache-2.0) | ONNX Runtime inference for the embedded Kokoro-82M int8 model (pinned to floravox's version) |
+| ort | =2.0.0-rc.14 | MIT (of MIT OR Apache-2.0) | ONNX Runtime inference for the embedded Kokoro-82M int8 model (pinned to floravox's version). Caveat: ort-sys downloads a prebuilt onnxruntime binary from cdn.pyke.io at build time, outside erax's sha256 regime (see profiles/README.md); ORT_LIB_PATH points it at a local onnxruntime 1.31.0 instead. |
 | anyhow | 1 | MIT (of MIT OR Apache-2.0) | Error type for the `VoiceBackend` trait impl |
 | sha2 | 0.10 | MIT (of MIT OR Apache-2.0) | build-dependency: sha256 verification of provisioned weights in build.rs |
 | misaki-rs | 0.3.0 | MIT | (transitive via floravox-g2p) Rust-native phonemizer; no runtime file reads |
