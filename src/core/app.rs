@@ -268,6 +268,34 @@ impl EditorApp {
         self.windows.get_mut(&self.active_window)
     }
 
+    /// Reconcile the active window against its buffer after any
+    /// user-driven mutation.
+    ///
+    /// Cursor and mark positions are plain coordinates; a buffer edit
+    /// can invalidate them (a shrink edit leaves the cursor past the
+    /// line end; a deleted line orphans the mark). Every command and
+    /// prompt action flows through a seam that calls this, so a window
+    /// is always valid between user actions by construction — no
+    /// command needs its own guard, and no reader needs a fallback.
+    pub fn reconcile_active_window(&mut self) {
+        let active = self.active_window;
+        let buffer_id = match self.windows.get(&active) {
+            Some(w) => w.buffer_id,
+            None => return,
+        };
+        // Disjoint field borrows: the buffer is read, the window is
+        // written; no command needs to do this itself.
+        let Some(buffer) = self.buffers.get(&buffer_id) else {
+            return;
+        };
+        let Some(window) = self.windows.get_mut(&active) else {
+            return;
+        };
+        window.ensure_cursor_valid(buffer);
+        window.ensure_mark_valid(buffer);
+        window.update_visual_cursor(buffer);
+    }
+
     /// Per-window model inputs for the unified geometry computation.
     /// Every consumer (render, resize, mouse hit-testing) builds its
     /// [`crate::core::geometry::FrameLayout`] from these, so the frame

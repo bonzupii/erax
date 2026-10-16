@@ -335,6 +335,30 @@ impl Window {
         }
     }
 
+    /// Ensure the mark is within valid bounds
+    ///
+    /// The mark names a buffer position; a mutation can delete the line
+    /// it sat on. A mark that no longer resolves is dropped rather than
+    /// left pointing at stale coordinates: readers (region commands,
+    /// the semantic snapshot) must never see a mark that does not name
+    /// a real position.
+    pub fn ensure_mark_valid(&mut self, buffer: &Buffer) {
+        let Some((mx, my)) = self.mark else {
+            return;
+        };
+        let line_count = buffer.line_count();
+        if line_count == 0 {
+            self.mark = None;
+            return;
+        }
+        let my = my.min(line_count.saturating_sub(1));
+        let mx = match buffer.line(my) {
+            Some(line_text) => mx.min(crate::core::utf8::grapheme_count(&line_text)),
+            None => 0,
+        };
+        self.mark = Some((mx, my));
+    }
+
     /// Ensure cursor is visible in viewport (scroll only at edges)
     pub fn ensure_cursor_visible(&mut self, buffer: &Buffer) {
         let _ = buffer; // Used for context if needed

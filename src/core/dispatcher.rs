@@ -108,6 +108,11 @@ pub fn dispatch(app: &mut EditorApp, command: Command, count: usize) -> Dispatch
         app.last_command_was_yank = false;
     }
 
+    // Every dispatched command leaves the active window valid for its
+    // buffer by construction: cursor and mark are coordinates, and the
+    // command just ran may have mutated the buffer under them.
+    app.reconcile_active_window();
+
     result
 }
 
@@ -153,7 +158,7 @@ pub fn dispatch_insert_in_model(
         Some(w) => w.buffer_id,
         None => return DispatchResult::NotHandled,
     };
-    match app.buffers.get_mut(&buffer_id) {
+    let result = match app.buffers.get_mut(&buffer_id) {
         Some(buffer) => {
             if let Some(window) = app.windows.get_mut(&active_window) {
                 for _ in 0..count {
@@ -165,7 +170,11 @@ pub fn dispatch_insert_in_model(
             }
         }
         None => DispatchResult::NotHandled,
-    }
+    };
+    // Same seam as dispatch(): insertion mutates the buffer under the
+    // cursor, so the window is reconciled before any reader runs.
+    app.reconcile_active_window();
+    result
 }
 
 /// The single exhaustive dispatch match (N-155): every [`Command`] maps to the
@@ -262,7 +271,7 @@ fn execute(app: &mut EditorApp, command: Command, count: usize) -> DispatchResul
         Command::SaveBuffer => file::save_buffer(app, count),
         Command::WriteFile => file::write_file(app, count),
         Command::ReadFile => file::read_file(app, count),
-        Command::ExitErax => control::exit_eras(app, count),
+        Command::ExitErax => control::exit_erax(app, count),
         Command::ExitWithoutSave => control::exit_without_save(app, count),
         Command::ExitAndSave => control::exit_and_save(app, count),
         Command::Print => print::print(app, count),

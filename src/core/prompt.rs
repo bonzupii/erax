@@ -392,5 +392,10 @@ pub fn handle_prompt_action(
             // Not used via prompt; the event loop consumes the keypress
         }
     }
+    // Prompt actions mutate buffers outside dispatch() (query-replace,
+    // filter-buffer, switch-buffer): the reconciliation seam lives here
+    // so every caller — TUI, modal ex commands, web — upholds the same
+    // postcondition: the active window is valid for its buffer.
+    app.reconcile_active_window();
     Ok(false)
 }
