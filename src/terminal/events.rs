@@ -121,7 +121,6 @@ impl EventHandler {
             alt,
             ctrl,
             click_count: self.current_click_count,
-            scroll_amount: 0,
         }
     }
 

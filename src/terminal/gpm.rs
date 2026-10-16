@@ -202,7 +202,6 @@ impl GpmClient {
             ctrl: modifiers & 4 != 0,
             alt: modifiers & 8 != 0,
             click_count,
-            scroll_amount: 0,
         }
     }
 

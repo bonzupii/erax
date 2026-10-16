@@ -259,7 +259,6 @@ mod tests {
                     alt: false,
                     ctrl: false,
                     click_count: 1,
-                    scroll_amount: 0,
                 }),
             },
             ClientFrame::Input {

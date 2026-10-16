@@ -176,8 +176,6 @@ pub struct MouseEvent {
     pub alt: bool,
     pub ctrl: bool,
     pub click_count: u8, // 1 = single, 2 = double, 3 = triple
-    /// Scroll amount in lines (N-027: a real field, not repurposed click_count).
-    pub scroll_amount: u8,
 }
 
 /// Result of a key lookup in the trie.

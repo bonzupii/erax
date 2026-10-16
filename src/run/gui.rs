@@ -374,7 +374,6 @@ impl GuiApp {
             alt: self.modifiers.alt_key(),
             ctrl: self.modifiers.control_key(),
             click_count: 1,
-            scroll_amount: 0,
         };
 
         self.forward_mouse(mouse_event);
@@ -401,32 +400,21 @@ impl GuiApp {
     fn handle_mouse_wheel(&mut self, delta: winit::event::MouseScrollDelta) {
         use winit::event::MouseScrollDelta;
 
-        // Convert scroll delta to scroll direction
-        let (kind, lines) = match delta {
+        // Convert scroll delta to scroll direction. The line count is
+        // dropped: the handler scrolls a fixed step per wheel event.
+        let kind = match delta {
             MouseScrollDelta::LineDelta(_, y) => {
                 if y > 0.0 {
-                    (
-                        core::input::MouseEventKind::ScrollUp,
-                        (y.abs() * 3.0).round() as u8,
-                    )
+                    core::input::MouseEventKind::ScrollUp
                 } else {
-                    (
-                        core::input::MouseEventKind::ScrollDown,
-                        (y.abs() * 3.0).round() as u8,
-                    )
+                    core::input::MouseEventKind::ScrollDown
                 }
             }
             MouseScrollDelta::PixelDelta(pos) => {
                 if pos.y > 0.0 {
-                    (
-                        core::input::MouseEventKind::ScrollUp,
-                        (pos.y.abs() / 20.0).round().max(1.0) as u8,
-                    )
+                    core::input::MouseEventKind::ScrollUp
                 } else {
-                    (
-                        core::input::MouseEventKind::ScrollDown,
-                        (pos.y.abs() / 20.0).round().max(1.0) as u8,
-                    )
+                    core::input::MouseEventKind::ScrollDown
                 }
             }
         };
@@ -450,7 +438,6 @@ impl GuiApp {
             alt: self.modifiers.alt_key(),
             ctrl: self.modifiers.control_key(),
             click_count: 1,
-            scroll_amount: lines,
         };
 
         self.forward_mouse(mouse_event);
@@ -506,7 +493,6 @@ impl GuiApp {
             alt: self.modifiers.alt_key(),
             ctrl: self.modifiers.control_key(),
             click_count: 1,
-            scroll_amount: 0,
         };
 
         self.forward_mouse(mouse_event);

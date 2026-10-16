@@ -1065,7 +1065,6 @@ fn wire_mouse(
                 // DOM click count (1/2/3 for single/double/triple click):
                 // the backend maps 2/3 to word/line selection.
                 click_count: event.detail().clamp(1, 3) as u8,
-                scroll_amount: 0,
             })
         })
     };
