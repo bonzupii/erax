@@ -278,4 +278,47 @@ mod tests {
             "a live terminal must be reused, not re-spawned"
         );
     }
+
+    #[test]
+    fn terminal_read_reports_non_utf8_output_as_activity() {
+        // Binary child output used to make read() return None — no
+        // chunk decoded as UTF-8 — even though the VTE parser advanced,
+        // so the TUI/web loops never marked the frame dirty and the
+        // output never drew.
+        let mut app = app_with_text("echo ready\n");
+        dispatch(&mut app, Command::TerminalSendInput, 1);
+        wait_for_output(&mut app, "ready", Duration::from_secs(10));
+        // Drain the channel so only the binary write below remains.
+        if let Some(host) = app.terminal_host.as_mut() {
+            while host.read().is_some() {}
+            // Silence the line echo: the shell would otherwise echo
+            // the printf command itself as valid UTF-8.
+            host.write(b"stty -echo\n");
+        }
+        wait_for_output(&mut app, "stty -echo", Duration::from_secs(10));
+        if let Some(host) = app.terminal_host.as_mut() {
+            while host.read().is_some() {}
+            // Two bytes that are not valid UTF-8, no newline echo.
+            host.write(b"printf '\\377\\376'\n");
+        }
+        let start = Instant::now();
+        let mut saw_activity = false;
+        while start.elapsed() < Duration::from_secs(10) {
+            if let Some(host) = app.terminal_host.as_mut()
+                && host.read().is_some()
+            {
+                saw_activity = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(
+            saw_activity,
+            "binary child output must count as terminal activity"
+        );
+        // The shell is left with echo off; restore it for hygiene.
+        if let Some(host) = app.terminal_host.as_mut() {
+            host.write(b"stty echo\n");
+        }
+    }
 }

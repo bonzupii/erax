@@ -369,21 +369,20 @@ impl TerminalHost {
     /// Also updates the internal terminal emulator state via VTE parser.
     pub fn read(&mut self) -> Option<String> {
         let mut accumulated = String::new();
-        let mut found = false;
+        let mut received = false;
 
         while let Ok(data) = self.rx.try_recv() {
-            if let Ok(s) = String::from_utf8(data.clone()) {
-                accumulated.push_str(&s);
-                found = true;
-            }
-
-            {
-                // Feed bytes to VTE parser
-                self.parser.advance(&mut self.handler, &data);
-            }
+            received = true;
+            // The grid is fed the raw bytes; the text view gets the
+            // lossy decode. A split multibyte sequence or binary output
+            // used to make read() report None — no valid UTF-8 chunk —
+            // even though the parser advanced, so the TUI and web loops
+            // never marked the frame dirty and the output never drew.
+            accumulated.push_str(&String::from_utf8_lossy(&data));
+            self.parser.advance(&mut self.handler, &data);
         }
 
-        if found { Some(accumulated) } else { None }
+        if received { Some(accumulated) } else { None }
     }
 
     /// Checks if the child process is still alive.
