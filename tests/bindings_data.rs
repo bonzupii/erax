@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 const ALLOWLIST: &[(&str, usize, &str)] = &[
     (
         "src/core/modal.rs",
-        22,
+        21,
         "motion/operator application dispatching primitives \
          (SetMark, NextLine, SmartHome, ForwardCharacter, EndOfLine, \
          BeginningOfLine, BackwardCharacter, BeginningOfFile); table-action \
