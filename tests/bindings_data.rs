@@ -473,3 +473,85 @@ fn references_command(src: &str, needle: &str) -> bool {
                     .is_none_or(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))
         })
 }
+
+/// Per-model binding coverage: every `Command` is bound to a key in each
+/// input model's table, or explicitly recorded in `FACILITY_BINDINGS` as
+/// reachable only by name through that model's named facility. A command
+/// that is neither bound nor recorded fails here, so a new command cannot
+/// silently lack a key binding in a model.
+#[test]
+fn every_command_bound_or_facility_recorded_per_model() {
+    use erax::config::keys::{
+        ExAction, ExArgAction, ModalAction, EX_ARG_COMMANDS, EX_COMMANDS, FACILITY_BINDINGS,
+        KEYBINDINGS, MODAL_BINDINGS, STANDARD_BINDINGS,
+    };
+    use erax::core::command::Command;
+    use std::collections::HashSet;
+
+    let keytrie: HashSet<Command> = KEYBINDINGS.iter().map(|kb| kb.command).collect();
+    let standard: HashSet<Command> = STANDARD_BINDINGS.iter().map(|kb| kb.command).collect();
+    let mut modal: HashSet<Command> = MODAL_BINDINGS
+        .iter()
+        .filter_map(|mb| match mb.action {
+            ModalAction::Command(c) => Some(c),
+            _ => None,
+        })
+        .collect();
+    for (_, action) in EX_COMMANDS {
+        match action {
+            ExAction::Run(c) => {
+                modal.insert(*c);
+            }
+            ExAction::RunSequence(cs) => {
+                modal.extend(cs.iter().copied());
+            }
+            _ => {}
+        }
+    }
+    // Ex arg commands: `:w <file>` is WriteFile (save as), `:e <file>` is
+    // FindFile (open).
+    for (_, action) in EX_ARG_COMMANDS {
+        match action {
+            ExArgAction::SaveAs => {
+                modal.insert(Command::WriteFile);
+            }
+            ExArgAction::Open => {
+                modal.insert(Command::FindFile);
+            }
+        }
+    }
+
+    let bound = |model: erax::config::keys::InputModel, cmd: Command| -> bool {
+        match model {
+            erax::config::keys::InputModel::KeyTrie => keytrie.contains(&cmd),
+            erax::config::keys::InputModel::Modal => modal.contains(&cmd),
+            erax::config::keys::InputModel::Standard => standard.contains(&cmd),
+        }
+    };
+    let facility_recorded =
+        |model: erax::config::keys::InputModel, cmd: Command| -> bool {
+            FACILITY_BINDINGS
+                .iter()
+                .any(|(m, _, cmds)| *m == model && cmds.contains(&cmd))
+        };
+
+    let mut failures = Vec::new();
+    for cmd in Command::ALL {
+        for model in [
+            erax::config::keys::InputModel::KeyTrie,
+            erax::config::keys::InputModel::Modal,
+            erax::config::keys::InputModel::Standard,
+        ] {
+            if !bound(model, *cmd) && !facility_recorded(model, *cmd) {
+                failures.push(format!("{cmd:?} in {model:?}"));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "commands neither bound nor facility-recorded: {}\n\
+         Bind them in the model table, or record them in FACILITY_BINDINGS \
+         with the named facility.",
+        failures.join(", ")
+    );
+}
