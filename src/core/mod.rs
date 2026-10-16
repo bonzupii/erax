@@ -26,6 +26,7 @@ pub mod lexer;
 pub mod menu;
 pub mod modal;
 pub mod mouse;
+pub mod path;
 pub mod print;
 pub mod prompt;
 pub mod selection;

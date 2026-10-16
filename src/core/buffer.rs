@@ -49,7 +49,7 @@ pub enum LoadError {
         utf8_error: std::str::Utf8Error,
     },
     /// Path validation failed.
-    InvalidPath(String),
+    InvalidPath(super::path::PathError),
 }
 
 impl std::fmt::Display for LoadError {
@@ -59,7 +59,7 @@ impl std::fmt::Display for LoadError {
             LoadError::InvalidUtf8 { path, utf8_error, .. } => {
                 write!(f, "File '{}' is not valid UTF-8: {}", path.display(), utf8_error)
             }
-            LoadError::InvalidPath(msg) => write!(f, "Invalid path: {}", msg),
+            LoadError::InvalidPath(e) => write!(f, "Invalid path: {e}"),
         }
     }
 }
@@ -200,7 +200,7 @@ impl Buffer {
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, LoadError> {
         let path = path.as_ref();
         let validated_path =
-            Self::validate_file_path(path).map_err(|e| LoadError::InvalidPath(e.to_string()))?;
+            crate::core::path::validate_existing_file(path).map_err(LoadError::InvalidPath)?;
 
         let metadata = fs::metadata(&validated_path).map_err(LoadError::Io)?;
         let file_size = metadata.len();
@@ -268,7 +268,7 @@ impl Buffer {
     pub fn open_mapped(path: impl AsRef<Path>) -> Result<Self, LoadError> {
         let path = path.as_ref();
         let validated_path =
-            Self::validate_file_path(path).map_err(|e| LoadError::InvalidPath(e.to_string()))?;
+            crate::core::path::validate_existing_file(path).map_err(LoadError::InvalidPath)?;
         let modified_time = fs::metadata(&validated_path)
             .ok()
             .and_then(|m| m.modified().ok());
@@ -301,7 +301,7 @@ impl Buffer {
     pub fn open_mapped_pager(path: impl AsRef<Path>) -> Result<Self, LoadError> {
         let path = path.as_ref();
         let validated_path =
-            Self::validate_file_path(path).map_err(|e| LoadError::InvalidPath(e.to_string()))?;
+            crate::core::path::validate_existing_file(path).map_err(LoadError::InvalidPath)?;
         let modified_time = fs::metadata(&validated_path)
             .ok()
             .and_then(|m| m.modified().ok());
@@ -337,7 +337,7 @@ impl Buffer {
     pub fn open_mapped_mmap(path: impl AsRef<Path>) -> Result<Self, LoadError> {
         let path = path.as_ref();
         let validated_path =
-            Self::validate_file_path(path).map_err(|e| LoadError::InvalidPath(e.to_string()))?;
+            crate::core::path::validate_existing_file(path).map_err(LoadError::InvalidPath)?;
         let modified_time = fs::metadata(&validated_path)
             .ok()
             .and_then(|m| m.modified().ok());
@@ -410,51 +410,6 @@ impl Buffer {
     /// surfaces the recorded error (e.g. in the status bar).
     fn record_pager_error(&self, err: PagerError) {
         *self.pager_error.borrow_mut() = Some(err);
-    }
-
-    /// Validate file path and return canonical path
-    fn validate_file_path(path: &Path) -> Result<PathBuf, String> {
-        // Convert to absolute path if needed
-        let path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            std::env::current_dir()
-                .map_err(|e| format!("Failed to get current directory: {}", e))?
-                .join(path)
-        };
-
-        // Check if file exists
-        if !path.exists() {
-            return Err(format!("File does not exist: {}", path.display()));
-        }
-
-        // Check if it's a file (not directory)
-        if path.is_dir() {
-            return Err(format!(
-                "Path is a directory, not a file: {}",
-                path.display()
-            ));
-        }
-
-        // Block device files (Unix only) - opening these can hang the editor
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::FileTypeExt;
-            let metadata = std::fs::metadata(&path).map_err(|e| e.to_string())?;
-            let file_type = metadata.file_type();
-            if file_type.is_block_device()
-                || file_type.is_char_device()
-                || file_type.is_fifo()
-                || file_type.is_socket()
-            {
-                return Err(format!(
-                    "Cannot open device/special file: {}",
-                    path.display()
-                ));
-            }
-        }
-
-        Ok(path)
     }
 
     // ==================== Content Access ====================

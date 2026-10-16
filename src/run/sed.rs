@@ -14,7 +14,7 @@ use crate::cli::Invocation;
 use crate::sed::diff::{DiffKind, DiffView, Hunk};
 use crate::sed::{SedConfig, SedError};
 
-use super::{validate_file_path, PathError};
+use crate::core::path::{PathError, validate_file_path};
 
 /// Typed errors for sed-mode invocation and review.
 #[derive(Debug)]
@@ -293,9 +293,9 @@ impl Review {
 fn write_in_place(path: &Path, lines: &[String]) -> Result<(), SedRunError> {
     use tempfile::NamedTempFile;
 
-    let parent = path.parent().ok_or(SedRunError::BadInputPath(
-        super::PathError::MissingFileName,
-    ))?;
+    let parent = path
+        .parent()
+        .ok_or(SedRunError::BadInputPath(PathError::MissingFileName))?;
     let temp = NamedTempFile::new_in(parent).map_err(SedRunError::OutputIo)?;
     {
         let mut writer = BufWriter::new(&temp);
