@@ -833,11 +833,10 @@ impl BText {
     pub fn open_mapped_mmap(path: &Path) -> Result<Self, PagerError> {
         let file = std::fs::File::open(path)
             .map_err(|source| PagerError::Io { offset: 0, source })?;
-        let mmap = crate::core::mmap::MmapRegion::new(file)
-            .map_err(|_| PagerError::Io {
-                offset: 0,
-                source: std::io::Error::other("mmap failed"),
-            })?;
+        // Propagate the real `MmapRegion::new` error (which carries the
+        // OS error); substituting a generic "mmap failed" would hide the
+        // cause (e.g. a Windows `MapViewOfFile` size mismatch).
+        let mmap = crate::core::mmap::MmapRegion::new(file)?;
         let len = mmap.len();
         if len == 0 {
             return Ok(Self::new());

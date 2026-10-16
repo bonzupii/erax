@@ -133,15 +133,20 @@ const PAGE_READONLY: Dword = 0x02;
 #[cfg(windows)]
 const FILE_MAP_READ: Dword = 0x0004;
 
-/// Create a read-only file mapping of `map_len` bytes of `handle` and map
-/// a view of it. Returns the view base and the mapping handle (closed in
+/// Create a read-only file mapping of `len` bytes of `handle` and map a
+/// view of it. Returns the view base and the mapping handle (closed in
 /// `raw_munmap`).
 ///
-/// SAFETY: `handle` must be a valid open file handle, `map_len > 0`. The
-/// view is valid until `raw_munmap`; the caller keeps `handle` open.
+/// SAFETY: `handle` must be a valid open file handle, `len > 0`. The view
+/// is valid until `raw_munmap`; the caller keeps `handle` open.
+///
+/// Note: the view size is `len`, not a page-rounded `map_len` — Win32
+/// requires `dwNumberOfBytesToMap` to be within the mapping object (which
+/// `CreateFileMappingW` sizes to the file); unlike unix `mmap`, a view
+/// past the mapping size fails instead of faulting on access.
 #[cfg(all(windows, not(miri)))]
 #[allow(unsafe_code)]
-fn raw_mmap(handle: Handle, map_len: usize) -> Result<(*mut std::ffi::c_void, Handle), std::io::Error> {
+fn raw_mmap(handle: Handle, len: usize) -> Result<(*mut std::ffi::c_void, Handle), std::io::Error> {
     unsafe {
         let mapping = CreateFileMappingW(
             handle,
@@ -154,7 +159,7 @@ fn raw_mmap(handle: Handle, map_len: usize) -> Result<(*mut std::ffi::c_void, Ha
         if mapping.is_null() {
             return Err(std::io::Error::last_os_error());
         }
-        let ptr = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, map_len);
+        let ptr = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, len);
         if ptr.is_null() {
             let e = std::io::Error::last_os_error();
             CloseHandle(mapping);
@@ -717,6 +722,14 @@ mod guard {
         end: usize,
         f: impl for<'brand> FnOnce(super::Scope<'brand>) -> T,
     ) -> Result<T, ()> {
+        // `f` is wrapped in `ManuallyDrop`: on the fault path (recovery via
+        // longjmp), the compiler cannot know `f` was already consumed by the
+        // `FnOnce` call, so it would emit drop glue for `f`'s captures —
+        // double-dropping them. We move it out via `into_inner` and call in
+        // the armed branch, and never drop on the fault path (the storage
+        // leaks, bounded and exceptional — leaking is safe, double-drop is
+        // not).
+        let f = std::mem::ManuallyDrop::new(f);
         // Miri cannot install or deliver real signals, nor execute the raw
         // `__sigsetjmp`/`siglongjmp` FFI — so under Miri the recovery point
         // is never taken (`jmp_val` stays 0). The arming/disarming logic
@@ -764,7 +777,10 @@ mod guard {
             let _disarm = Disarm { prev };
             // The Scope is minted here, inside the armed window: the
             // closure's brand is this window's lifetime, unnameable
-            // outside.
+            // outside. `into_inner` moves `f` out of the `ManuallyDrop`
+            // (safe: the wrapper is consumed); the `FnOnce` call consumes
+            // it, dropping captures exactly once.
+            let f = std::mem::ManuallyDrop::into_inner(f);
             let out = f(super::Scope {
                 _brand: std::marker::PhantomData,
             });
@@ -785,6 +801,11 @@ mod guard {
             // targets the innermost armed guard: the handler reads the
             // current top of this thread's stack, so popping exactly one is
             // correct, including under nesting.
+            //
+            // `f` is NOT dropped here: it was consumed by the `FnOnce` call
+            // on the first pass (or never reached, if the fault preceded the
+            // call — impossible in practice, but the `ManuallyDrop` makes it
+            // safe either way). Dropping would double-drop captures.
             ACTIVE.with(|slot| {
                 let dead = slot.get();
                 let prev = if dead.is_null() {
@@ -954,10 +975,10 @@ impl MmapRegion {
         #[cfg(all(windows, not(miri)))]
         {
             use std::os::windows::io::AsRawHandle;
-            // Windows page size is 4 KiB on all supported targets; the view
-            // only needs covering `len`, like the unix page-rounding above.
-            let page = 4096usize;
-            let map_len = (len as usize).div_ceil(page) * page;
+            // The view covers exactly `len` (no page-rounding: Win32 views
+            // cannot extend past the mapping object). `map_len` is the view
+            // size, so the VEH guard range matches the actual mapping.
+            let map_len = len as usize;
             // `len > 0`; the handle is valid and open. The view is valid
             // until `raw_munmap` in Drop; `File` (and the mapping object)
             // are kept open.
@@ -1025,14 +1046,23 @@ impl MmapRegion {
         // offset — return `Truncated` without faulting (avoids a signal
         // storm of repeated SIGBUS deliveries). `cached_len` may be
         // stale-large (shrink after our last read): then the guarded deref
-        // faults and the `Err(())` arm below refreshes it. It is never
-        // stale-small in a way that spuriously errors: it only shrinks via
-        // observed fstats, and `offset < self.len` here, so a stale-small
-        // `cached_len` can only come from a genuine observed shrink — in
-        // which case `Truncated` is correct anyway (the file really did
-        // shrink; if it regrew, the post-read fstat below refreshes the
-        // cache and the next read proceeds).
+        // faults and the `Err(())` arm below refreshes it.
+        //
+        // Stale-small is possible: the file may have regrown since the
+        // shrink was observed. The fast path does one fresh fstat to
+        // confirm; if the file regrew past `offset`, fall through to the
+        // guarded read so `post_read_check` applies the `FileChanged` arm.
+        // (Without this, a shrink→regrow leaves `Truncated` sticky
+        // forever — a wrong error and a pager/mmap divergence, since the
+        // pager revalidates with a fresh fstat.)
         if len > 0 && offset >= self.cached_len.get() {
+            if let Ok(meta) = self._file.metadata() {
+                let cur_len = meta.len();
+                self.cached_len.set(cur_len);
+                if offset < cur_len {
+                    return Ok(());
+                }
+            }
             return Err(PagerError::Truncated {
                 offset,
                 wanted: len as u64,

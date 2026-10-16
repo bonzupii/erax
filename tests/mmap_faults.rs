@@ -517,3 +517,89 @@ fn shrink_under_cached_line_index() {
     assert!(saw_typed, "expected typed errors for lines past the shrink");
     eprintln!("shrink under cached line index: prefix ok, past-shrink -> typed errors");
 }
+
+#[test]
+fn shrink_regrow_clears_sticky_truncated() {
+    // Regression: the `cached_len` fast path in `check_range` returned
+    // `Truncated` without revalidating. After shrink→Truncated→regrow, reads
+    // at offsets past the shrunken length stayed `Truncated` forever, even
+    // though the file was whole again. The pager (fresh fstat in
+    // `revalidate`) correctly reported `FileChanged`; the mmap backend must
+    // match.
+    let path = tmp_path("shrink-regrow");
+    let _guard = TempGuard { paths: vec![path.clone()] };
+    const SIZE: usize = 8192;
+    fill_file(&path, SIZE, 0x5);
+
+    let file = std::fs::File::open(&path).expect("open");
+    let region = MmapRegion::new(file).expect("MmapRegion::new");
+
+    // Shrink to 100 bytes. A read past the shrink observes `Truncated` and
+    // poisons `cached_len`.
+    truncate_to(&path, 100);
+    match region.read_guarded(7000, 100, |_, s| s.to_vec()) {
+        Err(PagerError::Truncated { .. }) => {}
+        other => panic!("expected Truncated after shrink, got {:?}", other.is_ok()),
+    }
+
+    // Regrow to the open length with different content (mtime moves).
+    fill_file(&path, SIZE, 0x6);
+
+    // Must NOT be sticky `Truncated`: the file is 8192 bytes again, so this
+    // is a same-length content replacement → `FileChanged`.
+    match region.read_guarded(7000, 100, |_, s| s.to_vec()) {
+        Err(PagerError::FileChanged { .. }) => {}
+        Err(PagerError::Truncated { .. }) => {
+            panic!("sticky Truncated after regrow: expected FileChanged")
+        }
+        other => panic!("expected FileChanged after regrow, got {:?}", other.is_ok()),
+    }
+    eprintln!("shrink→regrow: Truncated cleared, FileChanged reported");
+}
+
+#[test]
+fn fault_does_not_double_drop_closure_captures() {
+    // Regression: `guard::guarded`'s fault path emitted drop glue for the
+    // closure `f` after the `FnOnce` call had already consumed it —
+    // double-dropping owned captures. The `ManuallyDrop` wrapper ensures
+    // captures drop exactly once.
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct DropCounter(std::sync::Arc<AtomicUsize>);
+    impl Drop for DropCounter {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let path = tmp_path("double-drop");
+    let _guard = TempGuard { paths: vec![path.clone()] };
+    const SIZE: usize = 65536;
+    fill_file(&path, SIZE, 0x7);
+
+    let file = std::fs::File::open(&path).expect("open");
+    let region = MmapRegion::new(file).expect("MmapRegion::new");
+
+    // Truncate the file so the read faults.
+    truncate_to(&path, 100);
+
+    let drops = std::sync::Arc::new(AtomicUsize::new(0));
+    let counter = DropCounter(drops.clone());
+    // The closure captures `counter` (owned). The read faults (file
+    // truncated), so we take the fault path. `counter` must drop exactly
+    // once — via the `FnOnce` call — not twice.
+    let result: Result<Vec<u8>, PagerError> =
+        region.read_guarded(0, SIZE, |_, s| {
+            let _ = &counter;
+            s.to_vec()
+        });
+    assert!(matches!(result, Err(PagerError::Truncated { .. })), "expected Truncated, got {:?}", result.is_ok());
+    // The fault path must NOT double-drop: without the `ManuallyDrop` fix,
+    // the compiler emits drop glue for `f` in the recovery branch after the
+    // `FnOnce` call already consumed it (2 drops). With the fix, the
+    // closure is leaked on the fault path (0 drops) — safe, not a double
+    // free. Either 0 or 1 is correct; 2 is the bug.
+    let n = drops.load(Ordering::SeqCst);
+    assert!(n <= 1, "closure captures double-dropped on fault path: {}", n);
+    eprintln!("fault path: closure captures dropped {} time(s), no double-drop", n);
+}

@@ -117,18 +117,18 @@ fn line_payload(target_len: usize) -> Vec<u8> {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Backend {
     Pager,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     Mmap,
 }
 
 impl Backend {
     fn open(&self, path: &PathBuf) -> Result<Buffer, LoadError> {
         match self {
-            // Note: `Buffer::open_mapped` is the mmap backend on Unix since
-            // the session-7 adoption decision, so the pager variant must be
-            // explicit.
+            // Note: `Buffer::open_mapped` is the mmap backend on Unix/Windows
+            // since the session-7 adoption decision, so the pager variant
+            // must be explicit.
             Backend::Pager => Buffer::open_mapped_pager(path),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Backend::Mmap => Buffer::open_mapped_mmap(path),
         }
     }
@@ -136,7 +136,7 @@ impl Backend {
     fn tag(&self) -> &'static str {
         match self {
             Backend::Pager => "pager",
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Backend::Mmap => "mmap",
         }
     }
@@ -775,7 +775,7 @@ macro_rules! backend_tests {
             $impl_fn(Backend::Pager);
         }
 
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         #[test]
         fn $mmap_name() {
             $impl_fn(Backend::Mmap);
