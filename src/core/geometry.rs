@@ -590,6 +590,11 @@ fn cursor_cell(text: &Rect, input: &WindowGeomInput) -> Option<(usize, usize)> {
     if text.width == 0 || text.height == 0 {
         return None;
     }
+    // Unknown windows (no live model cursor) carry cursor_y=MAX; they
+    // have no cursor to clamp.
+    if input.cursor_y == usize::MAX {
+        return None;
+    }
     // Clamp to the text region: the cursor never leaves the visible
     // viewport, even when the model position is scrolled out of view.
     // The saturating_sub handles cursor above/left of the viewport;
@@ -859,7 +864,7 @@ mod frame_tests {
     }
 
     #[test]
-    fn cursor_hidden_outside_viewport_never_clamped() {
+    fn cursor_clamped_outside_viewport_to_text_rect() {
         let tree = leaf(0);
         let opts = FrameOptions {
             cols: 80,
@@ -869,25 +874,33 @@ mod frame_tests {
         };
         let mut base = input_for(0);
         base.line_count = 100;
-        // Above the viewport.
+        // Above the viewport: clamps to top edge.
         let mut above = base;
         above.cursor_y = 0;
         above.scroll_offset = 50;
         let f = compute_frame(opts, &tree, &[above]);
-        assert_eq!(f.panes[0].cursor, None, "cursor above viewport must hide");
-        // Below the viewport.
+        let (cx, cy) = f.panes[0].cursor.expect("cursor must clamp, not hide");
+        let text = f.panes[0].text;
+        assert_eq!(cy, text.y, "cursor above viewport clamps to top");
+        assert!(cx >= text.x && cx < text.x + text.width);
+        // Below the viewport: clamps to bottom edge.
         let mut below = base;
         below.cursor_y = 99;
         below.scroll_offset = 0;
         let f = compute_frame(opts, &tree, &[below]);
-        assert_eq!(f.panes[0].cursor, None, "cursor below viewport must hide");
-        // Past the right edge.
+        let (cx, cy) = f.panes[0].cursor.expect("cursor must clamp, not hide");
+        let text = f.panes[0].text;
+        assert_eq!(cy, text.y + text.height - 1, "cursor below viewport clamps to bottom");
+        assert!(cx >= text.x && cx < text.x + text.width);
+        // Past the right edge: clamps to right edge.
         let mut wide = base;
         wide.cursor_y = 0;
         wide.visual_cursor_x = 500;
         wide.scroll_x = 0;
         let f = compute_frame(opts, &tree, &[wide]);
-        assert_eq!(f.panes[0].cursor, None, "cursor past text width must hide");
+        let (cx, _) = f.panes[0].cursor.expect("cursor must clamp, not hide");
+        let text = f.panes[0].text;
+        assert_eq!(cx, text.x + text.width - 1, "cursor past width clamps to right");
         // Visible: exact cell, no clamping.
         let mut shown = base;
         shown.cursor_y = 3;

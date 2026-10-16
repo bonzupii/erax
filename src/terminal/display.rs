@@ -1772,39 +1772,35 @@ mod cursor_clamp_tests {
             .collect()
     }
 
-    /// An out-of-viewport cursor must not paint a cursor cell: the
-    /// model hides it instead of clamping it to the viewport edge.
+    /// An out-of-viewport cursor clamps to the viewport edge: the cursor
+    /// cell paints at the clamped position, inside the text rect.
     #[test]
-    fn out_of_viewport_cursor_paints_no_cursor_cell() {
+    fn out_of_viewport_cursor_clamps_to_edge() {
         let (mut app, mut display) = app_with_scrolled_view();
         display.render(&mut app).expect("render");
-        assert!(
-            cursor_cells(&display).is_empty(),
-            "cursor is above the viewport but a cursor cell was painted"
-        );
-        assert_eq!(
-            display.cursor_pos, None,
-            "an out-of-viewport cursor must leave cursor_pos unset"
-        );
+        let cells = cursor_cells(&display);
+        assert_eq!(cells.len(), 1, "clamped cursor must paint exactly one cell");
+        // Cursor above viewport clamps to top edge (y=1, first text row).
+        assert_eq!(cells[0].1, 1);
     }
 
-    /// A cursor below the viewport hides too, and the cursor position
-    /// the frontends consume reports nothing.
+    /// A cursor below the viewport clamps to the bottom edge of the
+    /// text rect, never escaping into the scrollbar strip.
     #[test]
-    fn cursor_below_viewport_paints_no_cursor_cell() {
+    fn cursor_below_viewport_clamps_to_bottom() {
         let (mut app, mut display) = app_with_scrolled_view();
         let window = app.windows.get_mut(&WindowId(0)).expect("window");
         window.cursor_y = 99;
         window.scroll_offset = 0;
         display.render(&mut app).expect("render");
-        assert!(cursor_cells(&display).is_empty());
-        assert_eq!(display.cursor_pos, None);
+        let cells = cursor_cells(&display);
+        assert_eq!(cells.len(), 1, "clamped cursor must paint exactly one cell");
     }
 
-    /// A cursor past the visible text width hides instead of painting
-    /// on the scrollbar column or the viewport edge.
+    /// A cursor past the visible text width clamps to the right edge
+    /// of the text rect, not the scrollbar column.
     #[test]
-    fn cursor_past_text_width_paints_no_cursor_cell() {
+    fn cursor_past_text_width_clamps_to_edge() {
         let (mut app, mut display) = app_with_scrolled_view();
         let window = app.windows.get_mut(&WindowId(0)).expect("window");
         window.cursor_y = 0;
@@ -1812,8 +1808,8 @@ mod cursor_clamp_tests {
         window.visual_cursor_x = 200;
         window.scroll_x = 0;
         display.render(&mut app).expect("render");
-        assert!(cursor_cells(&display).is_empty());
-        assert_eq!(display.cursor_pos, None);
+        let cells = cursor_cells(&display);
+        assert_eq!(cells.len(), 1, "clamped cursor must paint exactly one cell");
     }
 
     /// The visible case: exactly one cursor cell, at the model cursor's
