@@ -1,6 +1,6 @@
 //! Diagnostics-pane commands.
 //!
-//! This module implements the diagnostics pane (^X d), which shows all
+//! This module implements the diagnostics pane (Ctrl+x d), which shows all
 //! errors and warnings across all open buffers.
 
 use crate::core::app::EditorApp;

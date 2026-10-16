@@ -1,7 +1,7 @@
 //! Programming calculator commands and evaluation.
 //!
 //! A programmer's calculator supporting arithmetic, bitwise operations,
-//! and hex/binary/octal number formats. Accessible via ^X # keybinding.
+//! and hex/binary/octal number formats. Accessible via the Ctrl+x p binding.
 //!
 //! Uses a shunting-yard algorithm for expression parsing and supports
 //! variables for storing intermediate results.

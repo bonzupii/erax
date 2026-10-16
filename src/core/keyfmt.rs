@@ -6,11 +6,18 @@
 //! two formatters would drift, and the drift class is what this module
 //! exists to kill.
 //!
-//! Grammar (owner-specified, display-only; parsing and the keytrie are
-//! untouched): `+` joins keys within a chord (`Ctrl+x`, `Ctrl+Shift+z`),
-//! `-` joins sequence steps (`Ctrl+x-Ctrl+c` is press Ctrl+x, release,
-//! press Ctrl+c; `Ctrl+x-u` is a chord, release, a plain u), and the
-//! modifier is always `Alt` (never `M`).
+//! The grammar is display-only; parsing and the keytrie are untouched:
+//! `+` joins keys within a chord (`Ctrl+x`, `Ctrl+Shift+z`), `-` joins
+//! sequence steps (`Ctrl+x-Ctrl+c` is press Ctrl+x, release, press Ctrl+c;
+//! `Ctrl+x-u` is a chord, release, a plain u), and the modifier is always
+//! `Alt` (never `M`).
+//!
+//! Key vocabulary (the chord's key half, single source here): printable
+//! characters render as themselves; `F(n)` for function keys; `Esc`,
+//! `Enter`, `Backspace`, `Tab`, `Delete`, `Home`, `End`, `PageUp`,
+//! `PageDown`, `Up`, `Down`, `Left`, `Right`, `Insert`, `Nul` for the
+//! special keys. Contemporary names, not terminal abbreviations: this
+//! module is the one place that mapping exists.
 
 use crate::core::input::{KeyPress, Key};
 

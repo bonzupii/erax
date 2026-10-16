@@ -11,7 +11,7 @@ use crate::core::input::{KeyPress, PrefixPolicy};
 /// leaf/prefix policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KeyBinding {
-    /// The key sequence; usually one key, sometimes several (`^X ^F`).
+    /// The key sequence; usually one key, sometimes several (Ctrl+x Ctrl+f).
     pub keys: &'static [KeyPress],
     /// The typed command to run.
     pub command: Command,

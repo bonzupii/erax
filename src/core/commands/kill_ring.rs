@@ -285,13 +285,19 @@ pub fn transpose_words(app: &mut EditorApp, _count: usize) -> DispatchResult {
     }
 
 pub fn yank_pop(app: &mut EditorApp, _count: usize) -> DispatchResult {
-        // yank-pop only works immediately after yank or yank-pop
+        // cycle-paste only works immediately after paste or cycle-paste
         if !app.last_command_was_yank {
-            return DispatchResult::Info("yank-pop: No preceding yank".to_string());
+            return DispatchResult::Info(format!(
+                "{}: No preceding paste",
+                crate::core::command::Command::YankPop.name()
+            ));
         }
 
         let Some(yank_pos) = app.last_yank_pos else {
-            return DispatchResult::Info("yank-pop: No yank position recorded".to_string());
+            return DispatchResult::Info(format!(
+                "{}: No paste position recorded",
+                crate::core::command::Command::YankPop.name()
+            ));
         };
 
         let old_len = app.last_yank_len;
@@ -299,7 +305,12 @@ pub fn yank_pop(app: &mut EditorApp, _count: usize) -> DispatchResult {
         // Rotate the kill ring to get next item
         let new_text = match app.kill_ring.rotate() {
             Some(text) => text.clone(),
-            None => return DispatchResult::Info("yank-pop: Kill ring empty".to_string()),
+            None => {
+                return DispatchResult::Info(format!(
+                    "{}: Kill ring empty",
+                    crate::core::command::Command::YankPop.name()
+                ))
+            }
         };
 
         let active_window_id = app.active_window;
