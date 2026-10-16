@@ -1,6 +1,5 @@
 //! Kill ring: bounded clipboard history for killed text.
-/// Maximum size of a single kill ring entry (10 MB)
-const MAX_KILL_SIZE: usize = 10 * 1024 * 1024;
+use crate::config::editor::KILL_RING_MAX_BYTES;
 
 /// Kill ring for storing cut/copied text
 #[derive(Debug, Clone)]
@@ -31,24 +30,28 @@ impl KillRing {
         }
     }
 
-    /// Push text to the kill ring
-    /// If append is true, append to the current head instead of pushing new
-    /// Silently rejects text larger than MAX_KILL_SIZE to prevent OOM
-    pub fn push(&mut self, text: &str, append: bool) {
+    /// Push text to the kill ring.
+    /// If append is true, append to the current head instead of pushing new.
+    /// Returns false when the text was rejected as oversized: the cap is
+    /// the config constant, and the rejection is reported by the caller —
+    /// an oversized kill is never silently dropped.
+    pub fn push(&mut self, text: &str, append: bool) -> bool {
         if text.is_empty() {
-            return;
+            return true;
         }
 
         // Reject oversized entries to prevent OOM
-        if text.len() > MAX_KILL_SIZE {
-            return;
+        if text.len() > KILL_RING_MAX_BYTES {
+            return false;
         }
 
         if append && self.last_action_was_kill && !self.ring.is_empty() {
             // Append to the most recent entry (but check combined size)
             if let Some(last) = self.ring.last_mut()
-                && last.len() + text.len() <= MAX_KILL_SIZE {
+                && last.len() + text.len() <= KILL_RING_MAX_BYTES {
                     last.push_str(text);
+                } else {
+                    return false;
                 }
         } else {
             // Push new entry
@@ -59,6 +62,23 @@ impl KillRing {
             self.current_index = self.ring.len().saturating_sub(1);
         }
         self.last_action_was_kill = true;
+        true
+    }
+
+    /// User-facing report for a kill the ring refused as oversized.
+    /// `deleted` says whether the text was still removed from the buffer
+    /// (kills) or left in place (copies).
+    pub fn oversize_report(byte_len: usize, deleted: bool) -> String {
+        format!(
+            "Killed text is {} bytes, over the kill-ring entry limit of {} bytes: {}",
+            byte_len,
+            KILL_RING_MAX_BYTES,
+            if deleted {
+                "deleted but not saved for yank"
+            } else {
+                "not saved for yank"
+            }
+        )
     }
 
     /// Get the current text to yank
@@ -125,6 +145,20 @@ mod tests {
 
         kr.push("world", false);
         assert_eq!(kr.peek(), Some(&"world".to_string()));
+    }
+
+    #[test]
+    fn oversized_push_is_rejected_not_silently_dropped() {
+        // The cap is the config constant; a rejection reports false
+        // so the caller can tell the user instead of claiming "killed".
+        let mut kr = KillRing::new();
+        assert!(kr.push("hello", false));
+        let big = "x".repeat(KILL_RING_MAX_BYTES + 1);
+        assert!(!kr.push(&big, false));
+        // The rejected text never entered the ring.
+        assert_eq!(kr.peek(), Some(&"hello".to_string()));
+        let report = KillRing::oversize_report(big.len(), true);
+        assert!(report.contains("not saved for yank"), "got: {report}");
     }
 
     #[test]

@@ -91,11 +91,15 @@ pub fn kill_region_in_model(
         };
 
         if let (Some(text), Some(buf_id)) = (text_to_kill, buffer_id) {
+            let byte_len = text.len();
             // Standard mode uses the clipboard register; Emacs/Vim use the kill-ring.
-            if model == InputModel::Standard {
+            let stored = if model == InputModel::Standard {
                 app.clipboard = Some(text);
+                true
             } else {
-                app.kill_ring.push(&text, false);
+                app.kill_ring.push(&text, false)
+            };
+            if model != InputModel::Standard {
                 app.reset_kill_flag();
             }
 
@@ -126,7 +130,13 @@ pub fn kill_region_in_model(
                         window.ensure_cursor_visible(buffer);
                     }
             }
-            DispatchResult::Info("Region killed".to_string())
+            if stored {
+                DispatchResult::Info("Region killed".to_string())
+            } else {
+                DispatchResult::Info(crate::core::kill_ring::KillRing::oversize_report(
+                    byte_len, true,
+                ))
+            }
         } else {
             DispatchResult::Success
         }
@@ -179,14 +189,24 @@ pub fn copy_region_in_model(
         };
 
         if let Some(text) = text_to_copy {
+            let byte_len = text.len();
             // Standard mode uses the clipboard register; Emacs/Vim use the kill-ring.
-            if model == InputModel::Standard {
+            let stored = if model == InputModel::Standard {
                 app.clipboard = Some(text);
+                true
             } else {
-                app.kill_ring.push(&text, false);
+                app.kill_ring.push(&text, false)
+            };
+            if model != InputModel::Standard {
                 app.reset_kill_flag();
             }
-            DispatchResult::Info("Region copied".to_string())
+            if stored {
+                DispatchResult::Info("Region copied".to_string())
+            } else {
+                DispatchResult::Info(crate::core::kill_ring::KillRing::oversize_report(
+                    byte_len, false,
+                ))
+            }
         } else {
             DispatchResult::Success
         }
