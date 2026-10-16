@@ -62,8 +62,10 @@ pub fn validate_file_path(path: &Path) -> Result<PathBuf, PathError> {
             c
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // File doesn't exist yet - validate the parent directory
-            if let Some(parent) = path.parent() {
+            // File doesn't exist yet - validate the parent directory.
+            // A bare filename's parent() is Some(""), which is no
+            // parent at all: resolve against the current directory.
+            if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
                 let canonical_parent = parent
                     .canonicalize()
                     .map_err(|_| PathError::InvalidParent(parent.display().to_string()))?;
@@ -168,6 +170,21 @@ mod tests {
         let path = dir.join("erax-validate-test-new-file.txt");
         let result = validate_file_path(&path);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_bare_relative_filename() {
+        // A bare filename has an empty parent (""); the validator must
+        // resolve it against the current directory, not reject it with
+        // InvalidParent("").
+        let file = format!("erax-validate-bare-{}.txt", std::process::id());
+        let _ = std::fs::remove_file(&file);
+        let result = validate_file_path(Path::new(&file));
+        let canonical = result.expect("bare filename must validate");
+        let expected = std::env::current_dir()
+            .expect("current dir")
+            .join(&file);
+        assert_eq!(canonical, expected);
     }
 
     #[test]
