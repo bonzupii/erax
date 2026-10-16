@@ -137,23 +137,27 @@ fn jump_to_hunk(app: &mut EditorApp, index: usize) {
         return;
     }
 
-    let (old_start, _, _, _, _) = state.hunks[index];
-    let line = old_start.saturating_sub(1); // 1-based to 0-based
+    let (old_start, _, new_start, _, _) = state.hunks[index];
 
-    // Update both windows
+    // Update both windows: each pane jumps to its own document's
+    // hunk start (1-based to 0-based). The old code used old_start
+    // for both, mispositioning the modified pane whenever the hunk
+    // shifted line numbers.
     let window_ids: Vec<crate::core::id::WindowId> = app.windows.keys().cloned().collect();
     for wid in window_ids {
         if let Some(window) = app.windows.get_mut(&wid)
             && let Some(buffer) = app.buffers.get(&window.buffer_id) {
                 use crate::core::buffer::BufferKind;
-                let kind = buffer.buffer_kind();
-                if kind == BufferKind::DiffOriginal || kind == BufferKind::DiffModified {
-                    window.cursor_y = line;
-                    window.cursor_x = 0;
-                    window.scroll_offset = line.saturating_sub(5);
-                    window.update_visual_cursor(buffer);
-                    window.ensure_cursor_visible(buffer);
-                }
+                let line = match buffer.buffer_kind() {
+                    BufferKind::DiffOriginal => old_start.saturating_sub(1),
+                    BufferKind::DiffModified => new_start.saturating_sub(1),
+                    _ => continue,
+                };
+                window.cursor_y = line;
+                window.cursor_x = 0;
+                window.scroll_offset = line.saturating_sub(5);
+                window.update_visual_cursor(buffer);
+                window.ensure_cursor_visible(buffer);
             }
     }
 }
