@@ -2,8 +2,6 @@
 use crossterm;
 use std::sync::atomic::{AtomicBool, Ordering}; // explicit dependency check
 
-// static ORIGINAL_TERMIOS: std::sync::OnceLock<termios> = std::sync::OnceLock::new();
-
 static TERMINAL_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 /// Panic hook type for the raw-mode guard.
@@ -14,7 +12,6 @@ type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'sta
 /// Restores terminal state on drop.
 pub struct RawMode {
     original_hook: Option<PanicHook>,
-    _initialized: bool,
 }
 
 impl RawMode {
@@ -45,7 +42,6 @@ impl RawMode {
 
         Ok(Self {
             original_hook: Some(original_hook),
-            _initialized: true,
         })
     }
 }
@@ -106,7 +102,6 @@ mod tests {
         // Actual behavior verified manually.
         let _ = RawMode {
             original_hook: None,
-            _initialized: false,
         };
     }
 }

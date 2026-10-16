@@ -582,69 +582,6 @@ impl Calculator {
         self.last_result = None;
     }
 
-    /// Evaluate a built-in function call
-    pub fn call_function(name: &str, args: &[i64]) -> Result<i64, CalcError> {
-        match name {
-            "min" => {
-                if args.len() < 2 {
-                    return Err(CalcError::Tokenize("min requires 2 arguments".to_string()));
-                }
-                args.iter()
-                    .min()
-                    .copied()
-                    .ok_or(CalcError::Tokenize("min: empty arguments".to_string()))
-            }
-            "max" => {
-                if args.len() < 2 {
-                    return Err(CalcError::Tokenize("max requires 2 arguments".to_string()));
-                }
-                args.iter()
-                    .max()
-                    .copied()
-                    .ok_or(CalcError::Tokenize("max: empty arguments".to_string()))
-            }
-            "abs" => {
-                if args.len() != 1 {
-                    return Err(CalcError::Tokenize("abs requires 1 argument".to_string()));
-                }
-                Ok(args[0].abs())
-            }
-            "popcount" => {
-                if args.len() != 1 {
-                    return Err(CalcError::Tokenize("popcount requires 1 argument".to_string()));
-                }
-                Ok(args[0].count_ones() as i64)
-            }
-            "clz" => {
-                if args.len() != 1 {
-                    return Err(CalcError::Tokenize("clz requires 1 argument".to_string()));
-                }
-                Ok(args[0].leading_zeros() as i64)
-            }
-            "ctz" => {
-                if args.len() != 1 {
-                    return Err(CalcError::Tokenize("ctz requires 1 argument".to_string()));
-                }
-                Ok(args[0].trailing_zeros() as i64)
-            }
-            "sizeof" => {
-                // Return size of common types
-                if args.len() != 1 {
-                    return Err(CalcError::Tokenize("sizeof requires 1 argument (type code)".to_string()));
-                }
-                // Type codes: 1=u8, 2=u16, 4=u32, 8=u64, 16=u128
-                match args[0] {
-                    1 => Ok(1),
-                    2 => Ok(2),
-                    4 => Ok(4),
-                    8 => Ok(8),
-                    16 => Ok(16),
-                    _ => Err(CalcError::Tokenize("Unknown type code for sizeof".to_string())),
-                }
-            }
-            _ => Err(CalcError::Tokenize(format!("Unknown function: {}", name))),
-        }
-    }
 
     /// Format result in multiple bases
     pub fn format_result(value: i64) -> String {

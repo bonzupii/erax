@@ -316,17 +316,6 @@ pub fn capture(app: &EditorApp) -> Option<DocumentSnapshot<'_>> {
             detail: None,
         });
     }
-    // Search matches: reserved. No search-match tracking exists in
-    // the tree, so the loop is empty; when tracking lands it
-    // populates this loop and the kind is already in the API.
-    let search_matches: Vec<ByteRange> = Vec::new();
-    for range in search_matches {
-        annotations.push(Annotation {
-            range,
-            kind: AnnotationKind::SearchMatch,
-            detail: None,
-        });
-    }
     annotations.sort_by_key(|a| (a.range.start, a.range.end));
 
     let windows = app

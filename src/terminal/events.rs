@@ -1,6 +1,5 @@
 //! Terminal event types from the platform event source.
 use crate::core::input::{Key, KeyPress, MouseButton, MouseEvent, MouseEventKind};
-// use crate::terminal::parser::AnsiParser; // Removed
 
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use std::time::{Duration, Instant};

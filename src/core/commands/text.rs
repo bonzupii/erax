@@ -527,18 +527,6 @@ pub fn lowercase_region(app: &mut EditorApp, _count: usize) -> DispatchResult {
 pub fn wrap_word(app: &mut EditorApp, _count: usize) -> DispatchResult {
         let active_window_id = app.active_window;
 
-        let should_loop = {
-            if let Some(window) = app.windows.get(&active_window_id) {
-                app.buffers.contains_key(&window.buffer_id)
-            } else {
-                false
-            }
-        };
-
-        if !should_loop {
-            return DispatchResult::Success;
-        }
-
         let (break_pos, word_len) = {
             if let Some(window) = app.windows.get_mut(&active_window_id) {
                 if let Some(buffer) = app.buffers.get_mut(&window.buffer_id) {
@@ -590,28 +578,25 @@ pub fn wrap_word(app: &mut EditorApp, _count: usize) -> DispatchResult {
             }
         };
 
-        // found_break is always true here: the search loop sets `found`
-        // on a space/tab and `hit_start` on reaching the line start, and
-        // move_backward only fails at (0,0), where the cursor_x == 0 arm
-        // sets hit_start. No defensive branch for the impossible case.
         if let Some(window) = app.windows.get_mut(&active_window_id)
             && let Some(buffer) = app.buffers.get_mut(&window.buffer_id) {
-                if break_pos.is_none() {
+                match break_pos {
                     // Hit start of line
-                    window.end_of_line(buffer);
-                    let insert_pos = window.get_byte_offset(buffer).unwrap_or_default();
-                    buffer.insert(insert_pos, "\n");
-                    window.move_down(buffer);
-                    window.beginning_of_line(buffer);
-                } else {
-                    // Found space at break_pos - use if let to safely unwrap
-                    if let Some(pos) = break_pos {
-                        buffer.delete(pos, 1); // Delete 1 char (space/tab)
+                    None => {
+                        window.end_of_line(buffer);
+                        let insert_pos = window.get_byte_offset(buffer).unwrap_or_default();
+                        buffer.insert(insert_pos, "\n");
+                        window.move_down(buffer);
+                        window.beginning_of_line(buffer);
+                    }
+                    // Found space at pos: delete 1 char (space/tab), wrap there
+                    Some(pos) => {
+                        buffer.delete(pos, 1);
                         buffer.insert(pos, "\n");
 
                         // Move cursor to end of wrap
                         let new_cursor_byte = pos + 1 + word_len;
-                        let (line, col) = buffer.byte_to_position( new_cursor_byte);
+                        let (line, col) = buffer.byte_to_position(new_cursor_byte);
                         window.cursor_y = line;
                         window.cursor_x = col;
                     }

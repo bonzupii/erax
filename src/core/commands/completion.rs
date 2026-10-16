@@ -4,7 +4,7 @@ use crate::core::app::EditorApp;
 use crate::core::dispatcher::DispatchResult;
 
 pub fn word_completion(app: &mut EditorApp, _count: usize) -> DispatchResult {
-        let (cursor_byte, prefix_len) = {
+        let (cursor_byte, prefix_len, buffer_id) = {
             let window = match app.active_window_ref() {
                 Some(w) => w,
                 None => {
@@ -12,6 +12,7 @@ pub fn word_completion(app: &mut EditorApp, _count: usize) -> DispatchResult {
                     return DispatchResult::Success;
                 }
             };
+            let buffer_id = window.buffer_id;
             let buffer = match app.active_buffer() {
                 Some(b) => b,
                 None => {
@@ -40,7 +41,7 @@ pub fn word_completion(app: &mut EditorApp, _count: usize) -> DispatchResult {
                 None => byte_offset,
             };
 
-            (byte_offset, byte_offset - prefix_start)
+            (byte_offset, byte_offset - prefix_start, buffer_id)
         };
 
         if prefix_len == 0 {
@@ -49,10 +50,6 @@ pub fn word_completion(app: &mut EditorApp, _count: usize) -> DispatchResult {
         }
 
         let completions = {
-            let Some(window) = app.windows.get(&app.active_window) else {
-                return DispatchResult::Success;
-            };
-            let buffer_id = window.buffer_id;
             let Some(buffer) = app.buffers.get(&buffer_id) else {
                 return DispatchResult::Success;
             };

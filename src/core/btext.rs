@@ -1539,13 +1539,12 @@ fn insert_at(node: &Rc<Node>, pos: usize, bytes: &[u8]) -> Vec<Rc<Node>> {
             }
         },
         Node::Internal { children, .. } => {
-            // `pos` was clamped to `len()` at the public boundary, so this
-            // lookup cannot fail; the fallback keeps an internal logic slip
-            // from ever becoming a panic.
-            let Some((idx, inner)) = find_child(children, pos) else {
-                debug_assert!(false, "insert_at: pos in range");
-                return vec![Rc::clone(node)];
-            };
+            // `pos` is clamped to `len()` at the public boundary, so this
+            // lookup cannot fail. A failure would be an internal logic
+            // error; it panics loudly rather than silently dropping the
+            // user's insert.
+            let (idx, inner) =
+                find_child(children, pos).expect("insert_at: pos clamped at public boundary");
             // Fragmentation avoidance: inserting at the very start of a
             // mapped leaf when the previous sibling is a small owned leaf
             // appends to the sibling instead. Without this, typing at a
