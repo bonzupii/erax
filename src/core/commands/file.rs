@@ -90,22 +90,19 @@ pub fn answer_reload_question(app: &mut EditorApp, buffer_id: BufferId, reload: 
     } else {
         None
     };
-    let save_error = match app.buffers.get_mut(&buffer_id) {
-        Some(buffer) => {
-            buffer.adopt_loaded(loaded.buffer);
-            // Complete the save that raised the question: the buffer now
-            // matches disk, so this resyncs the mtime bookkeeping.
-            buffer.save().err().map(|e| e.to_string())
-        }
+    // Adopt the fresh buffer: adopt_loaded copies the disk mtime, so
+    // the bookkeeping is resynced without writing. A reload is a read;
+    // it must not fail on read-only files with a spurious save error.
+    match app.buffers.get_mut(&buffer_id) {
+        Some(buffer) => buffer.adopt_loaded(loaded.buffer),
         None => {
             app.message = Some("Buffer is no longer open; nothing reloaded.".to_string());
             return;
         }
     };
-    app.message = match (encoding_note, save_error) {
-        (_, Some(e)) => Some(format!("Reloaded {}, but save failed: {e}", path.display())),
-        (Some(note), None) => Some(note),
-        (None, None) => Some(format!("Reloaded {}", path.display())),
+    app.message = match encoding_note {
+        Some(note) => Some(note),
+        None => Some(format!("Reloaded {}", path.display())),
     };
 }
 
