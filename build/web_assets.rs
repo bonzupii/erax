@@ -262,9 +262,25 @@ fn bindgen_support_version(manifest: &Path) -> String {
 /// without its client is a broken artifact, never a silent fallback.
 fn build_wasm(shell: &Path, out: &Path) {
     let target_dir = out.join("wasm-target");
+    // The nested cargo keys its build-script outputs on package,
+    // features, target, and toolchain, not on the environment this
+    // invocation supplies, so a cache written under a different
+    // supplied environment is replayed verbatim. The stamp records
+    // the environment contract of the invocation; a cache stamped
+    // with any other contract is discarded and rebuilt.
+    const ENV_CONTRACT: &str = "scrub-cargo-cfg-feature-1";
+    let stamp = target_dir.join(".env-contract");
+    let stamped = fs::read_to_string(&stamp).unwrap_or_default();
+    if stamped != ENV_CONTRACT {
+        if target_dir.exists() {
+            fs::remove_dir_all(&target_dir).expect("build.rs: failed to discard stale wasm target dir");
+        }
+        fs::create_dir_all(&target_dir).expect("build.rs: failed to create wasm target dir");
+        fs::write(&stamp, ENV_CONTRACT).expect("build.rs: failed to stamp wasm target dir");
+    }
     let cargo = env::var("CARGO").expect("build.rs: CARGO not set");
-    let status = Command::new(&cargo)
-        .args(["build", "--release", "--target", "wasm32-unknown-unknown", "--offline"])
+    let mut cmd = Command::new(&cargo);
+    cmd.args(["build", "--release", "--target", "wasm32-unknown-unknown", "--offline"])
         .current_dir(shell)
         .env("CARGO_TARGET_DIR", &target_dir)
         // The nested build must see the profile web-shell documents
@@ -279,7 +295,22 @@ fn build_wasm(shell: &Path, out: &Path) {
         // clippy-driver), which then fails the wasm32 target on lints
         // the plain build never sees.
         .env_remove("RUSTC_WORKSPACE_WRAPPER")
-        .env_remove("RUSTC_WRAPPER")
+        .env_remove("RUSTC_WRAPPER");
+    // Target and feature variables set by the outer cargo for this
+    // build script (CARGO_CFG_*, CARGO_FEATURE_*) describe the outer
+    // target and this crate's features. Dependency build scripts in
+    // the nested build read them to evaluate cfg expressions, so any
+    // left in the environment are applied to wasm32 units as if they
+    // described the wasm32 target. The nested cargo sets the correct
+    // values for its own build scripts; the inherited ones are
+    // removed so none crosses over.
+    for (key, _) in env::vars_os() {
+        let name = key.to_string_lossy();
+        if name.starts_with("CARGO_CFG_") || name.starts_with("CARGO_FEATURE_") {
+            cmd.env_remove(&key);
+        }
+    }
+    let status = cmd
         .status()
         .expect("build.rs: failed to run nested cargo for the web shell");
     if !status.success() {
