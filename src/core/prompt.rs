@@ -40,17 +40,26 @@ pub fn handle_prompt_action(
         }
         InputAction::SaveAs => {
             if !input.is_empty() {
-                let path = std::path::PathBuf::from(&input);
-                let bid = app.windows.get(&app.active_window).map(|w| w.buffer_id);
-                if let Some(bid) = bid
-                    && let Some(buffer) = app.buffers.get_mut(&bid) {
-                        buffer.filename = Some(path);
-                        if let Err(e) = buffer.save() {
-                            app.message = Some(format!("Error: {}", e));
-                        } else {
-                            app.message = Some(format!("Wrote {}", input));
-                        }
+                // Validate the path policy: devices, FIFOs, and other
+                // special files are rejected before the buffer takes the
+                // name or anything is written.
+                match crate::core::path::validate_file_path(std::path::Path::new(&input)) {
+                    Ok(path) => {
+                        let bid = app.windows.get(&app.active_window).map(|w| w.buffer_id);
+                        if let Some(bid) = bid
+                            && let Some(buffer) = app.buffers.get_mut(&bid) {
+                                buffer.filename = Some(path);
+                                if let Err(e) = buffer.save() {
+                                    app.message = Some(format!("Error: {}", e));
+                                } else {
+                                    app.message = Some(format!("Wrote {}", input));
+                                }
+                            }
                     }
+                    Err(e) => {
+                        app.message = Some(format!("Invalid path: {}", e));
+                    }
+                }
             }
         }
         InputAction::SearchForward => {
