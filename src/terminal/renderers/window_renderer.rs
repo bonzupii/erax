@@ -576,8 +576,6 @@ impl WindowRenderer {
                 visible_max_width = visible_max_width.max(width);
             }
         }
-        // Keep the maximum width ever seen (only grows, not shrinks, for stable scrollbar)
-
         // Note: can't mutate window here, caller should update cached_content_width after render
 
         // The bar paints only when the model derived one; its strip

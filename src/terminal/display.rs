@@ -496,8 +496,10 @@ impl Display {
                         },
                     );
 
-                    // Track width update for after render loop
-                    if visible_max_width > window.cached_content_width {
+                    // Track width update for after render loop. The update
+                    // fires whenever the visible width changed, in either
+                    // direction, so the cache tracks the content.
+                    if visible_max_width != window.cached_content_width {
                         width_updates.push((window_id, visible_max_width));
                     }
 
@@ -538,10 +540,15 @@ impl Display {
                 }
         }
 
-        // Apply cached content width updates (only grows, never shrinks to keep scrollbar stable)
+        // Apply content width updates. The cache tracks the currently
+        // visible content; it must shrink when long lines are deleted,
+        // or the horizontal scrollbar would persist after its cause is
+        // gone. The geometry pass reads the previous frame's value, so
+        // the bar follows content changes by one frame in both
+        // directions.
         for (window_id, new_width) in width_updates {
             if let Some(window) = app.windows.get_mut(&window_id) {
-                window.cached_content_width = window.cached_content_width.max(new_width);
+                window.cached_content_width = new_width;
             }
         }
 
@@ -1544,6 +1551,40 @@ mod golden_tests {
             .join("\n");
         app.buffers.insert(BufferId(0), Buffer::from_string(&text));
         app
+    }
+
+    #[test]
+    fn content_width_cache_shrinks_when_long_lines_are_deleted() {
+        // X-17: the cache tracked only growth, so the horizontal
+        // scrollbar persisted after the long lines were deleted.
+        let mut app = EditorApp::new();
+        let long = "x".repeat(120);
+        app.buffers
+            .insert(BufferId(0), Buffer::from_string(&format!("{long}\nshort\n")));
+        let mut display = Display::new(80, 24, None, None);
+        display.render(&mut app).expect("render");
+        let grown = app
+            .active_window_ref()
+            .unwrap()
+            .cached_content_width;
+        assert!(grown >= 120, "cache did not track the long line: {grown}");
+
+        // Delete the long line; the cache must follow the content down.
+        // (Mark the display dirty, as the event handler does after a
+        // buffer mutation, or render() correctly skips the clean frame.)
+        let buf = app.active_buffer_mut().unwrap();
+        buf.delete(0, 121);
+        display.dirty = true;
+        display.render(&mut app).expect("render");
+        let shrunk = app
+            .active_window_ref()
+            .unwrap()
+            .cached_content_width;
+        assert!(
+            shrunk < grown,
+            "cache did not shrink: {shrunk} vs {grown}"
+        );
+        assert!(shrunk < 80, "short content still claims width {shrunk}");
     }
 
     fn frame_of(app: &EditorApp, cols: usize, rows: usize) -> FrameLayout {
