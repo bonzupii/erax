@@ -43,6 +43,9 @@
               "rust-src"
               "rustfmt"
               "clippy"
+              # llvm-cov / llvm-profdata binaries: cargo-llvm-cov drives
+              # them for the project's coverage gate.
+              "llvm-tools-preview"
             ];
             targets = [ "wasm32-unknown-unknown" ];
           };
@@ -106,6 +109,10 @@
                 # the project ledger, copied into the tree by the audit).
                 pkgs.python3
                 pkgs.semgrep
+                # Coverage: the project targets 100% test coverage;
+                # code no test can reach is restructured until it can
+                # be reached, or removed.
+                pkgs.cargo-llvm-cov
               ]
               ++ fontPackages
               ++ lib.optionals isLinux linuxLibs
