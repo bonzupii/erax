@@ -29,4 +29,4 @@ jobs:
             cargo fetch
             cargo fetch --manifest-path web-shell/Cargo.toml
             cargo test --all-targets
-            cargo clippy --all-targets
+            cargo clippy --all-targets -- -D warnings
