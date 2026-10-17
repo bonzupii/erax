@@ -65,7 +65,7 @@ jobs:
       - name: Group - core::mmap tests
         timeout-minutes: 5
         continue-on-error: true
-        run: cargo test --lib -- core::mmap:: --test-threads=1 --nocapture
+        run: "cargo test --lib -- core::mmap:: --test-threads=1 --nocapture"
 
       - name: Census - lib suite minus the four wedged tests
         timeout-minutes: 30
