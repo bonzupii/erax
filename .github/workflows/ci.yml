@@ -31,6 +31,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libcups2-dev
 
+      # The complex-script shaping tests resolve fonts from the host.
+      # The macOS runner image ships no CJK monospace or Devanagari
+      # font, so shaping falls back to fonts without the conjunct and
+      # wide-character behavior under test. Install the fonts the
+      # product's stack names (Ubuntu's image already carries them).
+      - name: Install shaping test fonts (macOS)
+        if: runner.os == 'macOS'
+        run: brew install --cask font-noto-sans-mono-cjk-sc font-noto-sans-devanagari
+
       # The action's README directs @master when passing an explicit
       # `toolchain` input instead of selecting via @rev.
       - name: Install Rust 1.99.0
