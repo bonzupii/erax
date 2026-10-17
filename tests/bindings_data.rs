@@ -218,7 +218,15 @@ fn strip_test_mods(src: &str, code: &str) -> String {
         };
         let a = i + rel;
         let mut k = a + "#[cfg(test)]".len();
-        while k < n && (code_bytes[k] == b' ' || code_bytes[k] == b'\t' || code_bytes[k] == b'\n')
+        // Whitespace includes '\r': on CRLF checkouts (notably Windows CI)
+        // `#[cfg(test)]` is followed by "\r\n", and without this the test
+        // module is not stripped, so test-only `Command::` references get
+        // counted as production code.
+        while k < n
+            && (code_bytes[k] == b' '
+                || code_bytes[k] == b'\t'
+                || code_bytes[k] == b'\n'
+                || code_bytes[k] == b'\r')
         {
             k += 1;
         }
@@ -231,7 +239,8 @@ fn strip_test_mods(src: &str, code: &str) -> String {
             while q < n
                 && (code_bytes[q] == b' '
                     || code_bytes[q] == b'\t'
-                    || code_bytes[q] == b'\n')
+                    || code_bytes[q] == b'\n'
+                    || code_bytes[q] == b'\r')
             {
                 q += 1;
             }
@@ -560,5 +569,29 @@ fn every_command_bound_or_facility_recorded_per_model() {
          Bind them in the model table, or record them in FACILITY_BINDINGS \
          with the named facility.",
         failures.join(", ")
+    );
+}
+
+#[test]
+fn strip_test_mods_handles_crlf_line_endings() {
+    // Windows checkouts use CRLF. `#[cfg(test)]` modules must still be
+    // stripped so test-only `Command::` references are not counted as
+    // production code. Regression: the whitespace skip after `#[cfg(test)]`
+    // did not accept '\r', so on Windows CI the test module survived and
+    // every file's reference count inflated (or gained a phantom
+    // "no allowlist entry" violation).
+    let src = "fn prod() {\r\n    let _ = Command::ForwardCharacter;\r\n}\r\n\
+               \r\n\
+               #[cfg(test)]\r\n\
+               mod tests {\r\n    #[test]\r\n    fn t() {\r\n        let _ = Command::KillRegion;\r\n    }\r\n}\r\n";
+    let code = blank_code(src);
+    let stripped = strip_test_mods(src, &code);
+    assert!(
+        !stripped.contains("Command::KillRegion"),
+        "test-module reference survived stripping under CRLF:\n{stripped}"
+    );
+    assert!(
+        stripped.contains("Command::ForwardCharacter"),
+        "production reference was stripped under CRLF:\n{stripped}"
     );
 }
