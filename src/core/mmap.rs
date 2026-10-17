@@ -619,9 +619,12 @@ mod guard {
     #[cfg(all(windows, not(miri)))]
     const EXCEPTION_IN_PAGE_ERROR: u32 = 0xC000_0006;
     /// Tell the dispatcher to keep searching: foreign faults behave as if
-    /// we were never installed (the `delegate` counterpart).
+    /// we were never installed (the `delegate` counterpart). Win32
+    /// `EXCEPTION_CONTINUE_SEARCH` is 0; -1 is
+    /// `EXCEPTION_CONTINUE_EXECUTION`, which resumes the excepting
+    /// instruction and faults again.
     #[cfg(all(windows, not(miri)))]
-    const EXCEPTION_CONTINUE_SEARCH: i32 = -1;
+    const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
 
     /// Our vectored exception handler. Checks an in-page-error's fault
     /// address (`ExceptionInformation[1]`) against the armed range and
