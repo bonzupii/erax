@@ -1,11 +1,24 @@
-# Scratch diagnostics for the Windows CI hangs (branch: windows-testing).
+# Scratch diagnostics for the Windows CI panic-then-wedge (branch: windows-testing).
 #
-# The full-suite job wedges all four test threads on four lib tests and
-# the remaining ~460 tests never run. This workflow runs each suspect
-# test alone, single-threaded, under a short step timeout, so a hang is
-# contained to its own step and every step's log survives. A final census
-# step runs the rest of the lib suite with the four suspects skipped, to
-# give the never-reached tests their first Windows verdict.
+# Diagnostic run 39015139199 established the pattern: a test panics while a
+# mapped file view is live (Win32 1224 on truncate-while-mapped), the panic
+# message prints, and the test binary never exits (no FAILED line).
+#
+# THIS REVISION (2026-10-17): bisection probes in
+# `src/core/mmap.rs::wedge_probe`. Four isolated steps, one probe each,
+# single-threaded, 5-min step timeout. A probe that unwinds normally prints
+# its FAILED line (unexpected panic, exit 101) — that IS the signal. A probe
+# that reproduces the wedge prints no FAILED line and hits the timeout.
+#
+# Probe matrix (see the wedge_probe module docs for the discrimination logic):
+#   A: map + guarded read, panic with view live (Drop runs during unwind)
+#   B: map + guarded read, drop region first, panic (VEH stays installed)
+#   C: map only (setjmp never called), panic with view live
+#   D: map + guarded read, mem::forget region, panic with view live
+#
+# Below the probes: verification steps for the diagnosed fixes (terminal
+# DSR reply; per-platform truncation scenarios in the mapped tests;
+# in-place rewrite in the reload-question test), then the full lib suite.
 name: Windows diagnostics
 
 on:
@@ -34,40 +47,60 @@ jobs:
           cargo fetch --manifest-path web-shell/Cargo.toml
 
       - name: Build lib tests
-        timeout-minutes: 40
+        timeout-minutes: 30
         run: cargo test --lib --no-run
 
-      - name: Isolated - v12 pager truncation
+      - name: Probe A - panic with live view
         timeout-minutes: 5
         continue-on-error: true
-        run: cargo test --lib -- --exact core::btext::tests::v12_pager_coherence_and_truncation --test-threads=1 --nocapture
+        run: cargo test --lib -- --exact core::mmap::wedge_probe::probe_a_panic_with_live_view --test-threads=1 --nocapture
 
-      - name: Isolated - mapped truncation delete
+      - name: Probe B - panic after drop
         timeout-minutes: 5
         continue-on-error: true
-        run: cargo test --lib -- --exact core::buffer::tests::test_mapped_truncation_delete_is_noop_with_recorded_error --test-threads=1 --nocapture
+        run: cargo test --lib -- --exact core::mmap::wedge_probe::probe_b_panic_after_drop --test-threads=1 --nocapture
 
-      - name: Isolated - terminal read non-utf8
+      - name: Probe C - panic with live view, guard never armed
+        timeout-minutes: 5
+        continue-on-error: true
+        run: cargo test --lib -- --exact core::mmap::wedge_probe::probe_c_panic_with_live_view_no_guard --test-threads=1 --nocapture
+
+      - name: Probe D - panic with leaked view
+        timeout-minutes: 5
+        continue-on-error: true
+        run: cargo test --lib -- --exact core::mmap::wedge_probe::probe_d_panic_with_leaked_view --test-threads=1 --nocapture
+
+      - name: Verify - terminal read non-utf8 (DSR fix)
         timeout-minutes: 5
         continue-on-error: true
         run: cargo test --lib -- --exact core::commands::terminal::tests::terminal_read_reports_non_utf8_output_as_activity --test-threads=1 --nocapture
 
-      - name: Isolated - terminal send input current line
+      - name: Verify - terminal send input current line (DSR fix)
         timeout-minutes: 5
         continue-on-error: true
         run: cargo test --lib -- --exact core::commands::terminal::tests::terminal_send_input_runs_current_line_and_preserves_focus --test-threads=1 --nocapture
 
-      - name: Isolated - initialize opens every named file
+      - name: Verify - v12 pager truncation
         timeout-minutes: 5
         continue-on-error: true
-        run: cargo test --lib -- --exact core::app::tests::initialize_opens_every_named_file --test-threads=1 --nocapture
+        run: cargo test --lib -- --exact core::btext::tests::v12_pager_coherence_and_truncation --test-threads=1 --nocapture
 
-      - name: Group - core::mmap tests
+      - name: Verify - mapped truncation delete
         timeout-minutes: 5
         continue-on-error: true
-        run: "cargo test --lib -- core::mmap:: --test-threads=1 --nocapture"
+        run: cargo test --lib -- --exact core::buffer::tests::test_mapped_truncation_delete_is_noop_with_recorded_error --test-threads=1 --nocapture
 
-      - name: Census - lib suite minus the four wedged tests
-        timeout-minutes: 30
+      - name: Verify - mmap group
+        timeout-minutes: 5
         continue-on-error: true
-        run: cargo test --lib -- --skip v12_pager_coherence_and_truncation --skip test_mapped_truncation_delete_is_noop_with_recorded_error --skip terminal_read_reports_non_utf8_output_as_activity --skip terminal_send_input_runs_current_line_and_preserves_focus --nocapture
+        run: "cargo test --lib -- core::mmap:: --skip wedge_probe --test-threads=1 --nocapture"
+
+      - name: Verify - colon_w reload question
+        timeout-minutes: 5
+        continue-on-error: true
+        run: cargo test --lib -- --exact core::modal::tests::colon_w_raises_real_reload_question --test-threads=1 --nocapture
+
+      - name: Full lib suite (probes excluded)
+        timeout-minutes: 40
+        continue-on-error: true
+        run: cargo test --lib -- --skip wedge_probe --nocapture
