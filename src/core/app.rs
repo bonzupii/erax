@@ -673,6 +673,12 @@ mod tests {
         let f2 = dir.join(format!("erax-init-b-{}.txt", std::process::id()));
         std::fs::write(&f1, "first").expect("write f1");
         std::fs::write(&f2, "second").expect("write f2");
+        // Buffer filenames are the canonicalized forms of the given
+        // paths; canonicalize the fixtures before comparing (the temp
+        // dir path itself may pass through a symlink, e.g. /var ->
+        // /private/var on macOS).
+        let f1 = f1.canonicalize().expect("canonicalize f1");
+        let f2 = f2.canonicalize().expect("canonicalize f2");
         let app = EditorApp::initialize(&[f1.clone(), f2.clone()]);
         // Scratch plus both files.
         assert_eq!(app.buffers.len(), 3);
