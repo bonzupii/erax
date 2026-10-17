@@ -1385,22 +1385,142 @@ mod region_tests {
         // Sanity: reads fine before truncation.
         region.read_guarded(0, 8192, |_, s| s.to_vec()).expect("baseline");
         // Truncate through a writable handle (the read-only mapped handle
-        // cannot truncate; reopen by path — same inode).
-        std::fs::OpenOptions::new()
-            .write(true)
-            .open(&g.path)
-            .expect("open for truncate")
-            .set_len(100)
-            .expect("set_len failed");
-        match region.read_guarded(0, 8192, |_, s| s.to_vec()) {
-            Err(PagerError::Truncated { offset, wanted }) => {
-                assert_eq!(offset, 0);
-                assert_eq!(wanted, 8192);
+        // cannot truncate; reopen by path — same inode). Windows refuses
+        // the resize while the mapping is open (ERROR_USER_MAPPED_FILE),
+        // so the state this test reaches on Unix cannot occur there; the
+        // Windows branch pins the refusal and the intact region instead.
+        #[cfg(unix)]
+        {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&g.path)
+                .expect("open for truncate")
+                .set_len(100)
+                .expect("set_len failed");
+            match region.read_guarded(0, 8192, |_, s| s.to_vec()) {
+                Err(PagerError::Truncated { offset, wanted }) => {
+                    assert_eq!(offset, 0);
+                    assert_eq!(wanted, 8192);
+                }
+                other => panic!("expected Truncated, got {other:?}"),
             }
-            other => panic!("expected Truncated, got {other:?}"),
+            // The surviving prefix still reads.
+            let prefix = region.read_guarded(0, 100, |_, s| s.to_vec()).expect("prefix read");
+            assert_eq!(prefix, vec![0xABu8; 100]);
         }
-        // The surviving prefix still reads.
-        let prefix = region.read_guarded(0, 100, |_, s| s.to_vec()).expect("prefix read");
-        assert_eq!(prefix, vec![0xABu8; 100]);
+        #[cfg(windows)]
+        {
+            let err = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&g.path)
+                .expect("open for truncate")
+                .set_len(100)
+                .expect_err("Windows must refuse to truncate a mapped file");
+            assert_eq!(err.raw_os_error(), Some(1224));
+            let full = region
+                .read_guarded(0, 8192, |_, s| s.to_vec())
+                .expect("region intact after refused truncate");
+            assert_eq!(full, vec![0xABu8; 8192]);
+        }
+    }
+}
+
+/// Scratch bisection probes for the Windows panic-then-wedge (2026-10-17).
+///
+/// Diagnostic run 39015139199 showed four independent cases of the same
+/// pattern: a test panics with a mapped view live (Win32 1224 on a
+/// truncate-while-mapped the tests assumed was legal), the panic message
+/// prints, and the test binary never exits. These probes intentionally
+/// panic with the mapping in four different states to isolate the trigger:
+///
+/// - `probe_a_panic_with_live_view`: map + one guarded read (the VEH
+///   handler is installed, the hand-declared one-arg `setjmp` has run),
+///   then panic with the view live and `Drop` running during unwind.
+///   This mirrors the real wedge cases.
+/// - `probe_b_panic_after_drop`: same, but the region is dropped (view
+///   unmapped, handles closed) BEFORE the panic. The VEH handler stays
+///   installed (process-lifetime `Once`). Exits-normally here means the
+///   live view at panic time is required; wedging here means the VEH
+///   handler's mere presence during panic unwind is the trigger.
+/// - `probe_c_panic_with_live_view_no_guard`: map but never call
+///   `read_guarded` — the one-arg `setjmp` is never invoked — then panic
+///   with the view live. Wedging here rules out the setjmp ABI-mismatch
+///   hypothesis for the wedge; exiting implicates guard arming.
+/// - `probe_d_panic_with_leaked_view`: map + guarded read, then
+///   `mem::forget` the region (view stays live, `Drop` never runs), then
+///   panic. Wedging here rules out `Drop`-during-unwind
+///   (`UnmapViewOfFile`/`CloseHandle` inside the SEH cleanup); exiting
+///   implicates the drop path.
+///
+/// A probe that unwinds normally is recorded by the harness as FAILED
+/// (unexpected panic) with exit code 101 — that FAILED line IS the signal.
+/// A probe that reproduces the wedge never prints its FAILED line and the
+/// step hits its timeout.
+///
+/// TEMPORARY: remove once the mechanism is confirmed.
+#[cfg(all(test, windows))]
+mod wedge_probe {
+    use super::*;
+
+    struct ProbeTmp {
+        path: std::path::PathBuf,
+    }
+
+    impl Drop for ProbeTmp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    fn make_mapped(tag: &str) -> (ProbeTmp, MmapRegion) {
+        let path = std::env::temp_dir().join(format!(
+            "erax-wedge-probe-{tag}-{}",
+            std::process::id()
+        ));
+        std::fs::write(&path, vec![0xABu8; 8192]).expect("probe fixture write");
+        let file = std::fs::File::open(&path).expect("probe fixture open");
+        let region = MmapRegion::new(file).expect("probe map");
+        (ProbeTmp { path }, region)
+    }
+
+    #[test]
+    fn probe_a_panic_with_live_view() {
+        let (_tmp, region) = make_mapped("a");
+        region
+            .read_guarded(0, 64, |_, s| s.to_vec())
+            .expect("probe baseline read");
+        eprintln!("PROBE A: mapped + guarded read done; panicking with view live");
+        panic!("intentional wedge probe A");
+    }
+
+    #[test]
+    fn probe_b_panic_after_drop() {
+        let (_tmp, region) = make_mapped("b");
+        region
+            .read_guarded(0, 64, |_, s| s.to_vec())
+            .expect("probe baseline read");
+        drop(region);
+        eprintln!("PROBE B: region dropped (view unmapped); panicking");
+        panic!("intentional wedge probe B");
+    }
+
+    #[test]
+    fn probe_c_panic_with_live_view_no_guard() {
+        let (_tmp, _region) = make_mapped("c");
+        // No read_guarded call: the hand-declared one-arg `setjmp` never
+        // runs. Only the VEH install (inside MmapRegion::new) ran.
+        eprintln!("PROBE C: mapped, guard/setjmp never armed; panicking with view live");
+        panic!("intentional wedge probe C");
+    }
+
+    #[test]
+    fn probe_d_panic_with_leaked_view() {
+        let (_tmp, region) = make_mapped("d");
+        region
+            .read_guarded(0, 64, |_, s| s.to_vec())
+            .expect("probe baseline read");
+        std::mem::forget(region);
+        eprintln!("PROBE D: view leaked (Drop never runs); panicking with view live");
+        panic!("intentional wedge probe D");
     }
 }

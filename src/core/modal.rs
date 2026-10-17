@@ -3822,8 +3822,15 @@ mod tests {
         let bid = app.load_file(&path).unwrap();
         let win = app.active_window;
         app.windows.get_mut(&win).unwrap().buffer_id = bid;
-        // External change with a guaranteed-different mtime.
-        std::fs::write(&path, "changed\n").unwrap();
+        // External change with a guaranteed-different mtime, written in
+        // place at the same length: a truncating rewrite of a file the
+        // app holds mapped is refused on Windows, and the reload
+        // question keys on the change itself, not on how it landed.
+        {
+            use std::io::Write as _;
+            let mut f = std::fs::File::options().write(true).open(&path).unwrap();
+            f.write_all(b"changed!\n").unwrap();
+        }
         std::fs::File::options()
             .write(true)
             .open(&path)
@@ -3850,7 +3857,7 @@ mod tests {
             .filter_map(|i| buffer.line(i))
             .collect::<Vec<_>>()
             .join("\n");
-        assert_eq!(text, "changed\n");
+        assert_eq!(text, "changed!\n");
         let _ = std::fs::remove_file(&path);
     }
 

@@ -2751,22 +2751,46 @@ mod tests {
             tu.slice_bytes(0..100).expect("prefix slice"),
             &data[0..100]
         );
-        std::fs::File::options()
-            .write(true)
-            .open(&path)
-            .expect("reopen")
-            .set_len(PAGE_SIZE_BYTES as u64 + 100)
-            .expect("truncate");
-        assert_eq!(tu.len(), data.len(), "len() is the open-time snapshot");
-        match tu.collect_bytes() {
-            Err(PagerError::Truncated { .. }) => {}
-            other => panic!("expected Truncated, got {other:?}"),
+        #[cfg(unix)]
+        {
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .expect("reopen")
+                .set_len(PAGE_SIZE_BYTES as u64 + 100)
+                .expect("truncate");
+            assert_eq!(tu.len(), data.len(), "len() is the open-time snapshot");
+            match tu.collect_bytes() {
+                Err(PagerError::Truncated { .. }) => {}
+                other => panic!("expected Truncated, got {other:?}"),
+            }
+            // The page cached before truncation still reads (snapshot).
+            assert_eq!(
+                tu.slice_bytes(0..100).expect("cached prefix slice"),
+                &data[0..100]
+            );
         }
-        // The page cached before truncation still reads (snapshot).
-        assert_eq!(
-            tu.slice_bytes(0..100).expect("cached prefix slice"),
-            &data[0..100]
-        );
+        #[cfg(windows)]
+        {
+            // Windows refuses to resize a file while a mapping of it is
+            // open (ERROR_USER_MAPPED_FILE), so the truncation cannot be
+            // performed; the attempt fails at the OS and the open tree
+            // keeps reading the open-time bytes.
+            let err = std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .expect("reopen")
+                .set_len(PAGE_SIZE_BYTES as u64 + 100)
+                .expect_err("Windows must refuse to truncate a mapped file");
+            assert_eq!(err.raw_os_error(), Some(1224));
+            assert_eq!(
+                tu.collect_bytes().expect("collect after refused truncate"),
+                data
+            );
+        }
+        drop(tu);
+        drop(t2);
+        drop(t);
 
         // Empty file maps to the empty tree.
         std::fs::write(&path, b"").expect("empty temp file");
