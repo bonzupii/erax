@@ -142,6 +142,42 @@ impl Backend {
     }
 }
 
+/// Windows per-platform shape for the truncate-under-mapping tests.
+///
+/// Windows refuses to resize a file while a mapping of it is open
+/// (ERROR_USER_MAPPED_FILE, 1224), so the truncate-under-mapping state the
+/// Unix half of these tests reaches cannot occur there. The Windows branch
+/// pins the refusal and the intact mapped content instead — the same shape
+/// as the 402bdde scenario-test fixes. Returns `true` when the caller
+/// should return early (Windows + mmap backend); the pager backend keeps
+/// the Unix scenario on every platform.
+#[cfg(windows)]
+fn pin_windows_resize_refusal(
+    backend: Backend,
+    path: &PathBuf,
+    buf: &Buffer,
+    new_len: u64,
+    original: &[u8],
+) -> bool {
+    if backend != Backend::Mmap {
+        return false;
+    }
+    let err = OpenOptions::new()
+        .write(true)
+        .open(path)
+        .expect("open for truncate")
+        .set_len(new_len)
+        .expect_err("Windows must refuse to resize a file with an open mapping");
+    assert_eq!(err.raw_os_error(), Some(1224));
+    assert_eq!(
+        buf.bytes(),
+        original,
+        "the refused resize must leave the mapped content intact"
+    );
+    assert!(!buf.has_pager_error());
+    true
+}
+
 fn extmut_append_storm_snapshot_pinned_impl(backend: Backend) {
     let path = tmp_path(&format!("{}-append-storm", backend.tag()));
     let _guard = TempGuard::new(vec![path.clone()]);
@@ -230,6 +266,10 @@ fn extmut_shrink_midfile_surfaces_truncated_impl(backend: Backend) {
     // Truncate to exactly 1 MiB (a 64 KiB page boundary): every 64 KiB page
     // is then either fully present or fully absent.
     const KEEP: u64 = 1024 * 1024;
+    #[cfg(windows)]
+    if pin_windows_resize_refusal(backend, &path, &buf, KEEP, &expected) {
+        return;
+    }
     OpenOptions::new()
         .write(true)
         .open(&path)
@@ -306,6 +346,10 @@ fn extmut_truncate_zero_then_regrow_impl(backend: Backend) {
     let buf = backend.open(&path).expect("open_mapped failed");
 
     // --- Phase 1: truncate to zero (no pre-read: pages uncached). ---
+    #[cfg(windows)]
+    if pin_windows_resize_refusal(backend, &path, &buf, 0, &old_content) {
+        return;
+    }
     OpenOptions::new()
         .write(true)
         .open(&path)
@@ -383,6 +427,10 @@ fn extmut_regrow_cached_pages_refused_impl(backend: Backend) {
     assert!(!buf.has_pager_error());
 
     // Truncate to zero, then regrow with different content.
+    #[cfg(windows)]
+    if pin_windows_resize_refusal(backend, &path, &buf, 0, &old_content) {
+        return;
+    }
     OpenOptions::new()
         .write(true)
         .open(&path)
@@ -492,6 +540,14 @@ fn extmut_write_burst_storm_with_editor_ops_impl(backend: Backend) {
 
     let mut buf = backend.open(&path).expect("open_mapped failed");
     assert_eq!(buf.bytes(), initial);
+
+    // The storm's writer truncates; Windows refuses resize-under-mapping, so
+    // the racing-truncation state cannot occur there. Pin the refusal and the
+    // intact content instead of running the Unix-shaped storm.
+    #[cfg(windows)]
+    if pin_windows_resize_refusal(backend, &path, &buf, initial_len / 2, &initial) {
+        return;
+    }
 
     // Writer thread: seeded rounds (4 ops per round) of random overwrites
     // / appends / truncates directly on the file while the main thread
@@ -731,6 +787,10 @@ fn extmut_bytes_on_zero_truncated_file_impl(backend: Backend) {
 
     // No reads before truncation: pages uncached, so bytes() hits the
     // zero-length file.
+    #[cfg(windows)]
+    if pin_windows_resize_refusal(backend, &path, &buf, 0, &content) {
+        return;
+    }
     OpenOptions::new()
         .write(true)
         .open(&path)
