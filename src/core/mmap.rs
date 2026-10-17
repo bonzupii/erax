@@ -1385,22 +1385,42 @@ mod region_tests {
         // Sanity: reads fine before truncation.
         region.read_guarded(0, 8192, |_, s| s.to_vec()).expect("baseline");
         // Truncate through a writable handle (the read-only mapped handle
-        // cannot truncate; reopen by path — same inode).
-        std::fs::OpenOptions::new()
-            .write(true)
-            .open(&g.path)
-            .expect("open for truncate")
-            .set_len(100)
-            .expect("set_len failed");
-        match region.read_guarded(0, 8192, |_, s| s.to_vec()) {
-            Err(PagerError::Truncated { offset, wanted }) => {
-                assert_eq!(offset, 0);
-                assert_eq!(wanted, 8192);
+        // cannot truncate; reopen by path — same inode). Windows refuses
+        // the resize while the mapping is open (ERROR_USER_MAPPED_FILE),
+        // so the state this test reaches on Unix cannot occur there; the
+        // Windows branch pins the refusal and the intact region instead.
+        #[cfg(unix)]
+        {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&g.path)
+                .expect("open for truncate")
+                .set_len(100)
+                .expect("set_len failed");
+            match region.read_guarded(0, 8192, |_, s| s.to_vec()) {
+                Err(PagerError::Truncated { offset, wanted }) => {
+                    assert_eq!(offset, 0);
+                    assert_eq!(wanted, 8192);
+                }
+                other => panic!("expected Truncated, got {other:?}"),
             }
-            other => panic!("expected Truncated, got {other:?}"),
+            // The surviving prefix still reads.
+            let prefix = region.read_guarded(0, 100, |_, s| s.to_vec()).expect("prefix read");
+            assert_eq!(prefix, vec![0xABu8; 100]);
         }
-        // The surviving prefix still reads.
-        let prefix = region.read_guarded(0, 100, |_, s| s.to_vec()).expect("prefix read");
-        assert_eq!(prefix, vec![0xABu8; 100]);
+        #[cfg(windows)]
+        {
+            let err = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&g.path)
+                .expect("open for truncate")
+                .set_len(100)
+                .expect_err("Windows must refuse to truncate a mapped file");
+            assert_eq!(err.raw_os_error(), Some(1224));
+            let full = region
+                .read_guarded(0, 8192, |_, s| s.to_vec())
+                .expect("region intact after refused truncate");
+            assert_eq!(full, vec![0xABu8; 8192]);
+        }
     }
 }

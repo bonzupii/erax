@@ -1850,13 +1850,43 @@ mod tests {
         assert_eq!(buf.len(), 2 * 1024 * 1024);
         assert!(buf.undo_stack.is_empty());
 
-        // Adversarial: truncate the file under the open buffer.
-        let t = std::fs::OpenOptions::new()
-            .write(true)
-            .open(&path)
-            .expect("open");
-        t.set_len(100).expect("truncate");
-        drop(t);
+        // Adversarial: truncate the file under the open buffer. Windows
+        // refuses to resize a file while a mapping of it is open
+        // (ERROR_USER_MAPPED_FILE), so the truncated state cannot be
+        // produced there; the Windows branch pins the refusal and the
+        // buffer's continued health instead.
+        #[cfg(unix)]
+        {
+            let t = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .expect("open");
+            t.set_len(100).expect("truncate");
+            drop(t);
+        }
+        #[cfg(windows)]
+        {
+            let t = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .expect("open");
+            let err = t
+                .set_len(100)
+                .expect_err("Windows must refuse to truncate a mapped file");
+            assert_eq!(err.raw_os_error(), Some(1224));
+            drop(t);
+            // The prevented truncation leaves every byte readable: the
+            // delete is an ordinary edit, recorded like any other.
+            buf.delete(500_000, 100);
+            assert!(!buf.has_pager_error());
+            assert_eq!(buf.len(), 2 * 1024 * 1024 - 100);
+            assert!(!buf.undo_stack.is_empty(), "ordinary delete records undo");
+            assert!(buf.modified, "ordinary delete marks modified");
+            assert_eq!(buf.bytes().len(), 2 * 1024 * 1024 - 100);
+            drop(buf);
+            let _ = std::fs::remove_file(&path);
+            return;
+        }
 
         // Deleting now-unreadable mapped bytes: a recorded-error no-op —
         // tree metadata untouched, no undo entry, not marked modified.
