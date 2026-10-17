@@ -1,0 +1,73 @@
+# Scratch diagnostics for the Windows CI hangs (branch: windows-testing).
+#
+# The full-suite job wedges all four test threads on four lib tests and
+# the remaining ~460 tests never run. This workflow runs each suspect
+# test alone, single-threaded, under a short step timeout, so a hang is
+# contained to its own step and every step's log survives. A final census
+# step runs the rest of the lib suite with the four suspects skipped, to
+# give the never-reached tests their first Windows verdict.
+name: Windows diagnostics
+
+on:
+  push:
+    branches: [windows-testing]
+
+jobs:
+  diag:
+    name: diag (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 150
+    env:
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust 1.99.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0
+          targets: wasm32-unknown-unknown
+
+      - name: Warm the registry cache (nested wasm build is --offline)
+        run: |
+          cargo fetch
+          cargo fetch --manifest-path web-shell/Cargo.toml
+
+      - name: Build lib tests
+        timeout-minutes: 40
+        run: cargo test --lib --no-run
+
+      - name: Isolated - v12 pager truncation
+        timeout-minutes: 5
+        continue-on-error: true
+        run: cargo test --lib -- --exact core::btext::tests::v12_pager_coherence_and_truncation --test-threads=1 --nocapture
+
+      - name: Isolated - mapped truncation delete
+        timeout-minutes: 5
+        continue-on-error: true
+        run: cargo test --lib -- --exact core::buffer::tests::test_mapped_truncation_delete_is_noop_with_recorded_error --test-threads=1 --nocapture
+
+      - name: Isolated - terminal read non-utf8
+        timeout-minutes: 5
+        continue-on-error: true
+        run: cargo test --lib -- --exact core::commands::terminal::tests::terminal_read_reports_non_utf8_output_as_activity --test-threads=1 --nocapture
+
+      - name: Isolated - terminal send input current line
+        timeout-minutes: 5
+        continue-on-error: true
+        run: cargo test --lib -- --exact core::commands::terminal::tests::terminal_send_input_runs_current_line_and_preserves_focus --test-threads=1 --nocapture
+
+      - name: Isolated - initialize opens every named file
+        timeout-minutes: 5
+        continue-on-error: true
+        run: cargo test --lib -- --exact core::app::tests::initialize_opens_every_named_file --test-threads=1 --nocapture
+
+      - name: Group - core::mmap tests
+        timeout-minutes: 5
+        continue-on-error: true
+        run: cargo test --lib -- core::mmap:: --test-threads=1 --nocapture
+
+      - name: Census - lib suite minus the four wedged tests
+        timeout-minutes: 30
+        continue-on-error: true
+        run: cargo test --lib -- --skip v12_pager_coherence_and_truncation --skip test_mapped_truncation_delete_is_noop_with_recorded_error --skip terminal_read_reports_non_utf8_output_as_activity --skip terminal_send_input_runs_current_line_and_preserves_focus --nocapture
