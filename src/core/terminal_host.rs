@@ -18,6 +18,9 @@ struct GridHandler {
     rows: usize,
     cursor_x: usize,
     cursor_y: usize,
+    /// Bytes the terminal owes the child (query replies), drained by
+    /// the host into the PTY writer after each parse batch.
+    replies: Vec<u8>,
 }
 
 impl GridHandler {
@@ -33,6 +36,7 @@ impl GridHandler {
             rows,
             cursor_x: 0,
             cursor_y: 0,
+            replies: Vec::new(),
         }
     }
 
@@ -245,6 +249,30 @@ impl Perform for GridHandler {
                 }
             }
             'm' => { /* SGR - ignore colors for now, just handle text */ }
+            'n' => {
+                // Device Status Report. The child blocks until the
+                // terminal answers: shells with line editing query the
+                // cursor position before drawing a prompt, and an
+                // unanswered query stalls the session before any
+                // command runs. Queue the reply; the host writes it to
+                // the PTY after the parse batch.
+                match params.first().copied().unwrap_or_default() {
+                    6 => {
+                        // Cursor Position Report, 1-based row;column.
+                        let reply = format!(
+                            "\u{1b}[{};{}R",
+                            self.cursor_y + 1,
+                            self.cursor_x + 1
+                        );
+                        self.replies.extend_from_slice(reply.as_bytes());
+                    }
+                    5 => {
+                        // Status report: terminal ready.
+                        self.replies.extend_from_slice(b"\x1b[0n");
+                    }
+                    _ => {}
+                }
+            }
             _ => {}
         }
     }
@@ -382,6 +410,14 @@ impl TerminalHost {
             self.parser.advance(&mut self.handler, &data);
         }
 
+        // Deliver any query replies the parse queued (Device Status
+        // Report answers); a child waiting on one cannot proceed
+        // until it arrives.
+        if !self.handler.replies.is_empty() {
+            let replies = std::mem::take(&mut self.handler.replies);
+            self.write(&replies);
+        }
+
         if received { Some(accumulated) } else { None }
     }
 
@@ -427,5 +463,21 @@ mod tests {
         grid.resize(0, 0);
         assert_eq!((grid.cols, grid.rows), (1, 1));
         grid.line_feed();
+    }
+
+    #[test]
+    fn device_status_report_queues_a_cursor_position_reply() {
+        // A child that asks for the cursor position blocks until the
+        // terminal answers; the handler must queue the position report
+        // (1-based) for the host to write back.
+        let mut handler = GridHandler::new(80, 24);
+        let mut parser = Parser::new();
+        parser.advance(&mut handler, b"\x1b[3;5H");
+        parser.advance(&mut handler, b"\x1b[6n");
+        assert_eq!(handler.replies, b"\x1b[3;5R");
+
+        handler.replies.clear();
+        parser.advance(&mut handler, b"\x1b[5n");
+        assert_eq!(handler.replies, b"\x1b[0n");
     }
 }
