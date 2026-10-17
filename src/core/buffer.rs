@@ -1885,28 +1885,30 @@ mod tests {
             assert_eq!(buf.bytes().len(), 2 * 1024 * 1024 - 100);
             drop(buf);
             let _ = std::fs::remove_file(&path);
-            return;
         }
 
         // Deleting now-unreadable mapped bytes: a recorded-error no-op —
         // tree metadata untouched, no undo entry, not marked modified.
         // Never a panic, never SIGBUS.
-        buf.delete(500_000, 100);
-        assert!(buf.has_pager_error(), "truncation must be recorded");
-        assert_eq!(buf.len(), 2 * 1024 * 1024, "tree metadata untouched");
-        assert!(buf.undo_stack.is_empty(), "failed delete pushes no undo entry");
-        assert!(!buf.modified, "failed delete does not mark modified");
-        let err = buf.take_pager_error().expect("error recorded");
-        assert!(!buf.has_pager_error(), "take clears the error");
-        let msg = format!("{err}");
-        assert!(msg.contains("truncat"), "unexpected error: {msg}");
+        #[cfg(unix)]
+        {
+            buf.delete(500_000, 100);
+            assert!(buf.has_pager_error(), "truncation must be recorded");
+            assert_eq!(buf.len(), 2 * 1024 * 1024, "tree metadata untouched");
+            assert!(buf.undo_stack.is_empty(), "failed delete pushes no undo entry");
+            assert!(!buf.modified, "failed delete does not mark modified");
+            let err = buf.take_pager_error().expect("error recorded");
+            assert!(!buf.has_pager_error(), "take clears the error");
+            let msg = format!("{err}");
+            assert!(msg.contains("truncat"), "unexpected error: {msg}");
 
-        // Read path degrades the same way: partial bytes + recorded error.
-        let bytes = buf.bytes();
-        assert!(buf.has_pager_error());
-        assert!(bytes.is_empty(), "first mapped leaf unreadable → nothing collected");
+            // Read path degrades the same way: partial bytes + recorded error.
+            let bytes = buf.bytes();
+            assert!(buf.has_pager_error());
+            assert!(bytes.is_empty(), "first mapped leaf unreadable → nothing collected");
 
-        let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_file(&path);
+        }
     }
 
     #[test]
