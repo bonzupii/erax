@@ -67,6 +67,45 @@ fn cjk_resolves_to_the_cjk_font() {
 }
 
 #[test]
+fn no_system_monospace_face_shadows_the_stack() {
+    let fonts = resolve_config_fonts();
+    if fonts.is_empty() {
+        eprintln!("skip: no configured fonts resolved on this machine");
+        return;
+    }
+    // cosmic-text ranks generic Family::Monospace by codepoint coverage
+    // across every monospace face in the database, without consulting the
+    // configured fallback order. Any non-stack face in that pool can
+    // shadow the stack entry configured for its script (macOS: "GB18030
+    // Bitmap" beat "Noto Sans Mono CJK SC" for CJK). The shaping database
+    // must therefore admit no such face: the predicate mirrors
+    // cosmic-text's own monospace_font_ids filter.
+    let stack_families: Vec<&str> = fonts
+        .iter()
+        .filter_map(|f| f.family.as_deref())
+        .collect();
+    let manager = FontManager::from_font_stack(16.0, 19.2, &fonts);
+    let mut offenders = Vec::new();
+    for face in manager.font_system.db().faces() {
+        if !(face.monospaced && !face.post_script_name.contains("Emoji")) {
+            continue;
+        }
+        let name = face
+            .families
+            .first()
+            .map(|(name, _)| name.clone())
+            .unwrap_or_default();
+        if !stack_families.iter().any(|f| *f == name) {
+            offenders.push(name);
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "system monospace faces in the shaping db would shadow the stack: {offenders:?}"
+    );
+}
+
+#[test]
 fn braille_resolves_to_distinct_glyphs() {
     use std::collections::HashSet;
     if !stack_resolves("DejaVu Sans") {

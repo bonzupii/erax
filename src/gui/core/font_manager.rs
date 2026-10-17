@@ -15,10 +15,15 @@
 //! happens to have. Glyphs the stack cannot cover still resolve through
 //! the system fonts instead of shaping as tofu. Loading the system fonts
 //! last is not font *selection* — selection already happened in the stack
-//! order above; it only keeps uncovered scripts renderable. The primary
-//! family (the stack head) is the shaping family; every entry is a real
-//! fallback candidate, which is what makes ligatures, Braille, box
-//! drawing, and multi-script text work instead of depending on which
+//! order above; it only keeps uncovered scripts renderable. One carve-out:
+//! system faces that cosmic-text would admit to its generic-monospace
+//! candidate pool are left out of the last-resort load (see
+//! [`load_system_fonts_last_resort`]). That pool is ranked by codepoint
+//! coverage without consulting the configured fallback order, so a system
+//! monospace font would shadow the stack entry configured for its script.
+//! The primary family (the stack head) is the shaping family; every entry
+//! is a real fallback candidate, which is what makes ligatures, Braille,
+//! box drawing, and multi-script text work instead of depending on which
 //! single font happened to resolve.
 
 use cosmic_text::fallback::Fallback;
@@ -75,6 +80,64 @@ impl Fallback for StackFallback {
     }
 }
 
+/// Load the system fonts into `db` as the shaping last resort, keeping
+/// the configured stack's priority over platform fonts.
+///
+/// cosmic-text ranks a generic `Family::Monospace` request by codepoint
+/// coverage across every monospace face in the database, without
+/// consulting the configured fallback order: a system monospace font
+/// that happens to cover the script then shadows the stack entry
+/// configured for it. Observed on macOS, where "GB18030 Bitmap" beat the
+/// stack's "Noto Sans Mono CJK SC" for CJK — the CJK font's own
+/// `isFixedPitch` flag is 0, so it never enters that pool, and the
+/// stack-order fallback is never reached.
+///
+/// The exclusion predicate mirrors cosmic-text's own `monospace_font_ids`
+/// filter (`monospaced && !post_script_name.contains("Emoji")`), so
+/// exactly the faces that could shadow the stack stay out; every other
+/// system face remains reachable as the last resort for scripts the
+/// stack does not cover.
+///
+/// Sources load atomically — one `load_font_source` call registers every
+/// face of a collection — so the keep/drop decision is per source: a
+/// source loads when at least one of its faces is keepable. No shipped
+/// collection mixes monospace and proportional faces (surveyed: none in
+/// 1875 system faces), so per-source is exact in practice; a mixed
+/// collection would leak its monospace faces back in.
+fn load_system_fonts_last_resort(db: &mut fontdb::Database) {
+    let mut system = fontdb::Database::new();
+    system.load_system_fonts();
+    // OR-accumulate keepability per source so each source loads at most
+    // once.
+    let mut sources: Vec<(fontdb::Source, bool)> = Vec::new();
+    for face in system.faces() {
+        let keep = !(face.monospaced && !face.post_script_name.contains("Emoji"));
+        match sources
+            .iter_mut()
+            .find(|(source, _)| same_source(source, &face.source))
+        {
+            Some(entry) => entry.1 |= keep,
+            None => sources.push((face.source.clone(), keep)),
+        }
+    }
+    for (source, keep) in sources {
+        if keep {
+            db.load_font_source(source);
+        }
+    }
+}
+
+/// Whether two fontdb sources name the same underlying font data, for
+/// load deduplication.
+fn same_source(a: &fontdb::Source, b: &fontdb::Source) -> bool {
+    match (a, b) {
+        (fontdb::Source::Binary(a), fontdb::Source::Binary(b)) => std::sync::Arc::ptr_eq(a, b),
+        (fontdb::Source::File(a), fontdb::Source::File(b)) => a == b,
+        (fontdb::Source::SharedFile(a, _), fontdb::Source::SharedFile(b, _)) => a == b,
+        _ => false,
+    }
+}
+
 impl FontManager {
     /// System locale for shaping, in BCP 47 form.
     ///
@@ -101,16 +164,27 @@ impl FontManager {
     /// system fonts as a last resort. The shaper's fallback lists are the
     /// resolved stack families in that same order ([`StackFallback`]), so
     /// a configured entry wins its script instead of the platform's
-    /// hardcoded lists shadowing it. An empty stack means "no fonts"
-    /// (empty database, no system scan either); callers should always
-    /// provide the stack.
+    /// hardcoded lists shadowing it. The last-resort system load skips
+    /// the faces cosmic-text would rank as generic-monospace candidates
+    /// (see [`load_system_fonts_last_resort`]): those are ordered by
+    /// codepoint coverage, not by the stack, so they must not compete
+    /// with it. An empty stack means "no configured fonts": the database
+    /// holds the whole system fonts and nothing else; callers should
+    /// always provide the stack.
     pub fn from_font_stack(font_size: f32, line_height: f32, fonts: &[FontSource]) -> Self {
         let mut db = fontdb::Database::new();
         for font in fonts {
             db.load_font_source(fontdb::Source::Binary(font.bytes.clone()));
         }
-        // Last resort only, reached after the whole stack.
-        db.load_system_fonts();
+        // Last resort only, reached after the whole stack. With an empty
+        // stack there is no configured selection to protect, so the
+        // system fonts load whole and generic-monospace still finds a
+        // real monospace font.
+        if fonts.is_empty() {
+            db.load_system_fonts();
+        } else {
+            load_system_fonts_last_resort(&mut db);
+        }
         // Generic-family settings mirror cosmic-text's own defaults so a
         // `Family::Monospace` query behaves the same as through
         // `FontSystem::new_with_fonts`.
