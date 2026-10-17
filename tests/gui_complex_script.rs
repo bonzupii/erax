@@ -189,8 +189,13 @@ fn arabic_contextual_shaping_keeps_caret_sane() {
 
 #[test]
 fn devanagari_conjunct_merges_glyphs_into_clusters() {
-    // "नमस्ते": स + ् + त form one conjunct cluster; त + ो split into two
-    // glyphs sharing one cluster.
+    // "नमस्ते": स + ् + त form a conjunct, त + े a vowel-signed akshara.
+    // Vendors merge different amounts (one font shapes (स+्)|(त+े), another
+    // merges all of स्ते into a single cluster), so the test asserts the
+    // vendor-independent property instead of byte-exact spans: the
+    // virama-joined pieces merge — no cluster boundary falls strictly
+    // inside either piece — and the conjunct region holds fewer clusters
+    // than code points, i.e. merging really happened.
     let (text, clusters, _, glyphs) = shaped("नमस्ते");
     assert_partition(&text, &clusters);
     assert!(
@@ -198,13 +203,35 @@ fn devanagari_conjunct_merges_glyphs_into_clusters() {
         "conjunct parts must merge: {glyphs} glyphs, {n} clusters",
         n = clusters.len()
     );
+    // Piece byte spans, derived from the input text — never from the shaper.
+    for (name, piece) in [("virama-joined स+्", "स\u{94d}"), ("vowel-signed त+े", "त\u{947}")] {
+        let start = text
+            .find(piece)
+            .unwrap_or_else(|| panic!("{name} not present in shaped text"));
+        let end = start + piece.len();
+        let interior = clusters
+            .iter()
+            .filter(|c| c.start > start && c.start < end)
+            .count();
+        assert_eq!(
+            interior, 0,
+            "{name} must merge without an interior cluster boundary: {clusters:?}"
+        );
+    }
+    // Merging happened: fewer clusters than code points over the स्ते region.
+    // A shaper that fails to form the conjunct (one cluster per code point,
+    // dotted-circle fallbacks) trips this.
+    let region_start = text.find("स\u{94d}").expect("conjunct in text");
+    let region_end = region_start + "स्ते".len();
+    let codepoints = text[region_start..region_end].chars().count();
+    let covering = clusters
+        .iter()
+        .filter(|c| c.start < region_end && c.end > region_start)
+        .count();
     assert!(
-        clusters.iter().any(|c| (c.start, c.end) == (6, 12)),
-        "expected conjunct cluster (6,12) in {clusters:?}"
-    );
-    assert!(
-        clusters.iter().any(|c| (c.start, c.end) == (12, 18)),
-        "expected vowel-sign cluster (12,18) in {clusters:?}"
+        covering < codepoints,
+        "conjunct region must merge glyphs into clusters: \
+         {covering} clusters for {codepoints} code points: {clusters:?}"
     );
 }
 
@@ -234,23 +261,72 @@ fn mixed_bidi_boundary_prefers_cluster_start() {
 
 #[test]
 fn cjk_wide_chars_map_columns_to_cluster_edges() {
+    // "日本": two wide chars, two grid columns each (second column hidden).
+    // Vendors account trailing advance differently (one font's end-caret
+    // equals the run's line width, another's does not), so the test asserts
+    // the vendor-independent property, not the shaper's line width: every
+    // wide char maps to whole clusters, so every grid column's caret lands
+    // on a cluster edge and no caret stop falls inside a wide char.
     let cells = cells_for("日本");
     let input = build_shaped_line(&cells);
     assert_eq!(input.col_to_byte, vec![0, 3, 3, 6, 6]);
-    let (clusters, line_w, _) = shape_line(&input.text, &input.spans);
+    let (clusters, _, _) = shape_line(&input.text, &input.spans);
     assert_partition(&input.text, &clusters);
-    assert_eq!(clusters.len(), 2);
-    // Caret at each grid column lands on a cluster boundary.
+
+    // Each wide char starts a cluster and contains no interior cluster
+    // boundary: chars map to whole clusters, never split across one.
+    let mut byte = 0;
+    for ch in "日本".chars() {
+        let end = byte + ch.len_utf8();
+        let cluster = clusters
+            .iter()
+            .find(|c| c.start == byte)
+            .unwrap_or_else(|| panic!("no cluster starts at wide-char boundary {byte}: {clusters:?}"));
+        assert!(
+            clusters.iter().all(|c| c.start <= byte || c.start >= end),
+            "cluster boundary inside wide char [{byte},{end}): {clusters:?}"
+        );
+        let x = caret_x_for_byte_offset(&clusters, &input.text, byte);
+        assert!(
+            (x - cluster.leading_edge()).abs() < 0.01,
+            "char at byte {byte}: caret {x} != cluster leading edge {}",
+            cluster.leading_edge()
+        );
+        byte = end;
+    }
+    assert_eq!(byte, input.text.len());
+
+    // Every grid column's caret lands on a cluster edge (leading or
+    // trailing): columns map to cluster edges, never into a cluster. The
+    // hidden continuation columns share their char's edges — no caret stop
+    // mid-wide-char.
     let xs: Vec<f32> = input
         .col_to_byte
         .iter()
         .map(|&b| caret_x_for_byte_offset(&clusters, &input.text, b))
         .collect();
-    assert_eq!(xs[0], 0.0);
-    assert_eq!(xs[2], clusters[1].leading_edge());
-    assert!((xs[4] - line_w).abs() < 0.01);
-    // Hidden continuation columns share the wide char's trailing edge.
-    assert_eq!(xs[1], xs[2]);
+    assert_eq!(xs[0], 0.0, "line starts at the origin");
+    for (col, &x) in xs.iter().enumerate() {
+        let on_edge = clusters.iter().any(|c| {
+            (c.leading_edge() - x).abs() < 0.01 || (c.trailing_edge() - x).abs() < 0.01
+        });
+        assert!(
+            on_edge,
+            "column {col} caret {x} is not on any cluster edge: {clusters:?}"
+        );
+    }
+    // Column carets advance monotonically left to right.
+    for w in xs.windows(2) {
+        assert!(w[1] + 0.01 >= w[0], "column carets not monotonic: {xs:?}");
+    }
+    // The end caret is the last cluster's trailing edge — defined by the
+    // clusters, not by the shaper's line-width accounting.
+    let end_x = caret_x_for_byte_offset(&clusters, &input.text, input.text.len());
+    let trailing = clusters.last().expect("nonempty line").trailing_edge();
+    assert!(
+        (end_x - trailing).abs() < 0.01,
+        "end caret {end_x} != last cluster trailing edge {trailing}"
+    );
 }
 
 #[test]
